@@ -17,7 +17,7 @@ Date: 2026-08-15
 - `npm run test:privacy-boundary`: passed
 - `npm run typecheck`: passed
 - `npm run compile`: passed
-- `npm test`: 11 passing, 1 pending integration placeholder
+- `npm test`: 12 passing, 1 pending integration placeholder
 - `npm run verify`: passed
 
 The full development graph still reports 46 advisories: 17 high, 10 moderate

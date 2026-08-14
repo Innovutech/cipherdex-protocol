@@ -19,3 +19,24 @@ The harness must:
 
 The harness should be enabled only with explicit environment variables and should
 never run from CI against a funded wallet by default.
+
+## Full scenario runner
+
+After the isolated quote/swap harness is reviewed, run the full scenario with:
+
+```text
+npm run testnet:scenario
+```
+
+It creates a permissionless factory and pool when `COTI_POOL` is unset, resets
+and sets encrypted token approvals, adds liquidity, performs swaps in both
+directions, checks caller-local balance/share changes, exercises a timed lock and
+unlock, creates a permanent lock, and removes the remaining shares. It logs only
+public addresses, transaction hashes, gas, and latency. It does not print any
+amount, ciphertext, signature, AES key, or raw RPC error.
+
+The scenario requires `COTI_TOKEN0`, `COTI_TOKEN1`, their exact public decimals,
+`COTI_LIQUIDITY_AMOUNT0`, `COTI_LIQUIDITY_AMOUNT1`, `COTI_SWAP_AMOUNT0`,
+`COTI_SWAP_AMOUNT1`, `COTI_TESTNET_PRIVATE_KEY`, and `COTI_AES_KEY`. Amount
+variables are expressed in the pool's canonical `token0`/`token1` order after
+address sorting. Use a disposable, funded testnet account only.

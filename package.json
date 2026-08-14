@@ -14,6 +14,7 @@
     "test:integration": "hardhat test test/integration/**/*.ts --network cotiTestnet",
     "test:privacy-boundary": "node scripts/check-privacy-boundary.mjs",
     "testnet:harness": "ts-node scripts/testnet-harness.ts",
+    "testnet:scenario": "hardhat run scripts/testnet-scenario.ts --network cotiTestnet",
     "audit:graph": "npm ls --omit=dev --all",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && npm run compile",
