@@ -13,6 +13,9 @@
 - caller-controlled mutable fee or admin withdrawal paths.
 - administrator-controlled liquidity unlocks or withdrawals.
 - stale signed inputs executing after their intended deadline.
+- launchpad bootstrap changing an initialized pool or bypassing the factory
+  bootstrapper boundary;
+- launchpad price-bound checks bypassing the private normalized-price interval.
 
 ## Not solved by this phase
 
@@ -25,6 +28,9 @@
 - asynchronous PoD callback failures or cross-chain settlement;
 - wallet/UI leakage before a transaction is encrypted;
 - economic review of fee tiers, share fairness, oracle/TWAP or launchpad curves.
+- whether a launchpad's encrypted allowances are economically scoped to its
+  migration transaction; a malicious launchpad can still spend whatever allowance
+  a creator explicitly grants it.
 
 ## Required review before release
 

@@ -40,3 +40,23 @@ The scenario requires `COTI_TOKEN0`, `COTI_TOKEN1`, their exact public decimals,
 `COTI_SWAP_AMOUNT1`, `COTI_TESTNET_PRIVATE_KEY`, and `COTI_AES_KEY`. Amount
 variables are expressed in the pool's canonical `token0`/`token1` order after
 address sorting. Use a disposable, funded testnet account only.
+
+## Launchpad migration runner
+
+Run the atomic migration proof separately with:
+
+```text
+npm run testnet:launchpad
+```
+
+It deploys a fresh factory and migrator, creates exact encrypted allowances for
+the migrator, derives or accepts encrypted normalized price bounds, and executes
+one atomic create/select, pull and bootstrap transaction. It verifies the pool is
+initialized and decrypts the caller-specific share result locally without printing
+it. It uses the same `COTI_TOKEN0`, `COTI_TOKEN1`, decimals, liquidity amounts,
+`COTI_TESTNET_PRIVATE_KEY` and `COTI_AES_KEY` variables as the full scenario.
+
+The two runners are intentionally separate: use `testnet:launchpad` for the
+launchpad boundary, then `testnet:scenario` with a new disposable pool for swaps,
+liquidity exit and locks. Never reuse a funded production account or commit the
+environment file.

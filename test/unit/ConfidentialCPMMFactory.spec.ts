@@ -32,6 +32,19 @@ describe("ConfidentialCPMMFactory", function () {
     expect(await factory.allPoolsLength()).to.equal(1n);
     expect(await factory.allPools(0)).to.equal(pool);
 
+    const poolContract = await ethers.getContractAt("ConfidentialCPMM", pool);
+    expect(await poolContract.bootstrapper()).to.equal(await factory.getAddress());
+    await expect(
+      poolContract.bootstrapLiquidity(
+        await (await ethers.getSigners())[0].getAddress(),
+        1n,
+        1n,
+        1n,
+        0n,
+        2n,
+      ),
+    ).to.be.revertedWithCustomError(poolContract, "BootstrapUnauthorized");
+
     await expect(
       factory.createPool(tokenAAddress, tokenBAddress, 18, 6, 30),
     ).to.be.revertedWithCustomError(factory, "PoolAlreadyExists");

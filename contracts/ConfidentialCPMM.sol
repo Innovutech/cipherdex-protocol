@@ -21,6 +21,7 @@ contract ConfidentialCPMM {
     uint256 public constant PROTOCOL_VERSION = 1;
     uint256 public constant FEE_DENOMINATOR = 10_000;
     uint256 public constant MAX_FEE_BPS = 1_000;
+    uint256 public constant PRICE_SCALE = 1e18;
 
     address public immutable token0;
     address public immutable token1;
@@ -29,6 +30,7 @@ contract ConfidentialCPMM {
     uint256 public immutable scale0;
     uint256 public immutable scale1;
     uint256 public immutable feeBps;
+    address public immutable bootstrapper;
 
     bool public initialized;
 
@@ -64,12 +66,18 @@ contract ConfidentialCPMM {
     error InsufficientPrivateLiquidity();
     error InsufficientPrivateShares();
     error InvalidLiquidityRatio();
+    error InvalidPriceBounds();
+    error PriceOutsideBounds();
+    error BootstrapBalanceMismatch();
+    error BootstrapUnauthorized();
+    error InvalidLiquidityProvider();
     error InputAlreadyConsumed();
     error DeadlineExpired();
     error Reentrancy();
 
     event SwapExecuted(address indexed trader, bool indexed zeroForOne);
     event LiquidityAdded(address indexed provider);
+    event PoolBootstrapped(address indexed provider);
     event LiquidityRemoved(address indexed provider);
     event LiquidityLocked(
         bytes32 indexed lockId,
@@ -108,6 +116,9 @@ contract ConfidentialCPMM {
         scale0 = 10 ** (18 - token0Decimals_);
         scale1 = 10 ** (18 - token1Decimals_);
         feeBps = feeBps_;
+        // When created by the canonical factory this is the factory. Directly
+        // deployed pools deliberately retain the deployer as their bootstrapper.
+        bootstrapper = msg.sender;
     }
 
     /**
@@ -232,6 +243,79 @@ contract ConfidentialCPMM {
 
         emit LiquidityAdded(msg.sender);
         return MpcCore.offBoardToUser(minted, msg.sender);
+    }
+
+    /**
+     * @notice Initializes a factory-created pool from already transferred MPC
+     *         values. This is the only bridge needed by the launchpad migrator.
+     * @dev The caller must be the immutable bootstrapper (the canonical factory
+     *      for factory-created pools). The values are already validated by the
+     *      migrator; this function checks the actual private token balances,
+     *      price bounds, and share floor before committing pool state. No token
+     *      transfer happens here, so a failed bootstrap rolls back the entire
+     *      launchpad transaction.
+     *
+     *      `priceX18` is normalized token1 per normalized token0. Both bounds
+     *      are encrypted MPC values and therefore never appear in an event.
+     */
+    function bootstrapLiquidity(
+        address provider,
+        uint256 amount0_,
+        uint256 amount1_,
+        uint256 minShares_,
+        uint256 minPriceX18_,
+        uint256 maxPriceX18_
+    ) external nonReentrant returns (ctUint256 memory mintedShares) {
+        if (msg.sender != bootstrapper) revert BootstrapUnauthorized();
+        if (initialized) revert PoolAlreadyInitialized();
+        if (provider == address(0)) revert InvalidLiquidityProvider();
+
+        gtUint256 amount0 = gtUint256.wrap(amount0_);
+        gtUint256 amount1 = gtUint256.wrap(amount1_);
+        gtUint256 minimumShares = gtUint256.wrap(minShares_);
+        gtUint256 minimumPrice = gtUint256.wrap(minPriceX18_);
+        gtUint256 maximumPrice = gtUint256.wrap(maxPriceX18_);
+        _requirePositive(amount0);
+        _requirePositive(amount1);
+        _requirePositive(maximumPrice);
+
+        if (MpcCore.decrypt(MpcCore.gt(minimumPrice, maximumPrice))) {
+            revert InvalidPriceBounds();
+        }
+
+        gtUint256 normalized0 = _scale(amount0, scale0);
+        gtUint256 normalized1 = _scale(amount1, scale1);
+        gtUint256 priceNumerator = _mulChecked(normalized1, MpcCore.setPublic256(PRICE_SCALE));
+        gtUint256 lowerBound = _mulChecked(normalized0, minimumPrice);
+        gtUint256 upperBound = _mulChecked(normalized0, maximumPrice);
+        if (!MpcCore.decrypt(MpcCore.ge(priceNumerator, lowerBound))) {
+            revert PriceOutsideBounds();
+        }
+        if (!MpcCore.decrypt(MpcCore.le(priceNumerator, upperBound))) {
+            revert PriceOutsideBounds();
+        }
+
+        if (!MpcCore.decrypt(MpcCore.ge(_reserve0(), amount0))) {
+            revert BootstrapBalanceMismatch();
+        }
+        if (!MpcCore.decrypt(MpcCore.ge(_reserve1(), amount1))) {
+            revert BootstrapBalanceMismatch();
+        }
+
+        // The minimum normalized side defines the initial private share unit.
+        // Unlike ordinary addLiquidity, bootstrap may intentionally establish a
+        // non-1:1 bonding-curve price; full exit still returns both reserves.
+        gtUint256 minted = MpcCore.min(normalized0, normalized1);
+        _requirePositive(minted);
+        if (!MpcCore.decrypt(MpcCore.ge(minted, minimumShares))) {
+            revert SlippageExceeded();
+        }
+
+        initialized = true;
+        totalShares = MpcCore.offBoard(minted);
+        shares[provider] = MpcCore.offBoard(minted);
+        emit PoolBootstrapped(provider);
+        return MpcCore.offBoardToUser(minted, provider);
     }
 
     /**

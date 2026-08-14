@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "./ConfidentialCPMM.sol";
+import "./interfaces/IConfidentialCPMM.sol";
 import "./interfaces/IConfidentialCPMMFactory.sol";
 
 /**
@@ -19,6 +20,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
 
     error InvalidTokenPair();
     error PoolAlreadyExists();
+    error UnknownPool();
 
     function createPool(
         address tokenA,
@@ -60,6 +62,33 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
         uint256 feeBps
     ) public pure returns (bytes32) {
         return keccak256(abi.encode(token0, token1, decimals0, decimals1, feeBps));
+    }
+
+    /**
+     * @notice Completes an atomic launchpad bootstrap for a known factory pool.
+     * @dev The launchpad validates the creator-signed inputs and transfers the
+     *      corresponding private assets before calling this function. The pool
+     *      verifies its actual private balances and price bounds again. No
+     *      plaintext amount crosses this boundary.
+     */
+    function bootstrapPool(
+        address pool,
+        address provider,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18
+    ) external returns (ctUint256 memory mintedShares) {
+        if (!isPool[pool]) revert UnknownPool();
+        return IConfidentialCPMM(pool).bootstrapLiquidity(
+            provider,
+            amount0,
+            amount1,
+            minShares,
+            minPriceX18,
+            maxPriceX18
+        );
     }
 
     function allPoolsLength() external view returns (uint256) {

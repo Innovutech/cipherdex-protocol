@@ -3,6 +3,7 @@ import { Interface } from "ethers";
 import {
   CONFIDENTIAL_CPMM_ABI,
   CONFIDENTIAL_CPMM_FACTORY_ABI,
+  CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
   DISCLOSURE_SCHEMA_VERSION,
   isConfidentialPoolDiscovery,
 } from "../../sdk/src/index";
@@ -11,10 +12,15 @@ describe("stable SDK surface", function () {
   it("parses the published pool and factory ABI fragments", function () {
     const pool = new Interface(CONFIDENTIAL_CPMM_ABI);
     const factory = new Interface(CONFIDENTIAL_CPMM_FACTORY_ABI);
+    const launchpad = new Interface(CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI);
     expect(pool.getFunction("swapExactInput")).to.not.equal(null);
     expect(pool.getFunction("removeLiquidity")).to.not.equal(null);
+    expect(pool.getFunction("bootstrapLiquidity")).to.not.equal(null);
     expect(factory.getFunction("createPool")).to.not.equal(null);
+    expect(factory.getFunction("bootstrapPool")).to.not.equal(null);
     expect(factory.getEvent("PoolCreated")).to.not.equal(null);
+    expect(launchpad.getFunction("migrate")).to.not.equal(null);
+    expect(launchpad.getEvent("LaunchpadMigration")).to.not.equal(null);
   });
 
   it("accepts only the public privacy-minimal discovery shape", function () {

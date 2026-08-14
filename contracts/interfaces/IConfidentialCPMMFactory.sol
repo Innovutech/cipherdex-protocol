@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
+
 interface IConfidentialCPMMFactory {
     event PoolCreated(
         address indexed token0,
@@ -28,6 +30,15 @@ interface IConfidentialCPMMFactory {
         uint8 decimals1,
         uint256 feeBps
     ) external pure returns (bytes32);
+    function bootstrapPool(
+        address pool,
+        address provider,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18
+    ) external returns (ctUint256 memory mintedShares);
     function allPoolsLength() external view returns (uint256);
     function allPools(uint256 index) external view returns (address);
 }

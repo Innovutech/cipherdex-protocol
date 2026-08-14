@@ -6,6 +6,8 @@
   math, swap execution and private LP share accounting.
 - `contracts/ConfidentialCPMMFactory.sol`: permissionless deterministic pool
   creation and public pool discovery.
+- `contracts/ConfidentialLaunchpadMigrator.sol`: atomic creator-signed pool
+  creation/selection, encrypted allowance pulls and price-bounded bootstrap.
 - `contracts/interfaces/`: stable ABI surface for clients and future factory/router
   work.
 - `sdk/`: dependency-free ABI fragments and privacy-minimal discovery types for
@@ -73,3 +75,17 @@ that simply forwards an input would change `msg.sender` at the pool and invalida
 the signature; a router that accepts the original user as an unchecked parameter
 would weaken that binding. A future router therefore needs an official, reviewed
 delegation primitive, not a forwarding wrapper.
+
+## Launchpad migration boundary
+
+The launchpad path does not forward authenticated inputs. The creator signs all
+five encrypted values for the migrator's exact selector. The migrator validates
+them, calls the official `transferFromGT` function under explicit encrypted
+allowances, and then calls the factory's pool bootstrap hook with the resulting MPC
+values. The pool verifies its actual private balances and encrypted normalized
+price bounds before setting its initial reserves/shares. Any failure reverts the
+whole transaction, including the token pulls.
+
+The bootstrap path is restricted to factory-created empty pools and cannot be used
+to withdraw or mutate an initialized pool. The initial share unit is the minimum
+of the normalized private deposits, while full exit remains reserve-complete.

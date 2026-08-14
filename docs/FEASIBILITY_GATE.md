@@ -53,7 +53,7 @@ timeout/refund handling and a separate failure/recovery model.
 PoD should therefore be integrated later through an explicitly asynchronous vault
 or adapter. It must not be silently accepted by this synchronous pool.
 
-## Required testnet gate before expansion
+## Required testnet gate before wider expansion
 
 The following must be demonstrated on COTI testnet with real onboarded test keys and
 official PrivateERC20 test tokens before adding factories, routers, launchpads or
@@ -68,14 +68,19 @@ cross-domain adapters:
 6. Remove liquidity, including a full exit without residual reserve dust.
 7. Record gas and wall-clock latency without logging private values.
 
-Until that gate passes, the safe product claim is “confidential amounts and private
-LP accounting for COTI PrivateERC20 pools,” not fully private trading.
+The factory and launchpad contracts are now implemented as narrow, permissionless
+boundaries, but they are not testnet-proven by this repository yet. Until the gate
+passes, the safe product claim is “confidential amounts and private LP accounting
+for COTI PrivateERC20 pools with an unverified atomic bootstrap adapter,” not fully
+private trading or a production launchpad.
 
 ## Factory and launchpad boundary
 
-The permissionless factory is safe to expose because it only creates immutable
-pair/fee instances and records public addresses. Launchpad migration is not yet
-implemented: a launchpad cannot call the pool on behalf of a creator without
-respecting COTI's authenticated sender/target/function-selector binding for every
-encrypted input. It must wait for a reviewed delegation interface or seed directly
-after the pool address is known and the creator signs inputs for that pool.
+The permissionless factory creates immutable pair/fee instances and records public
+pool addresses. The launchpad migrator avoids the generic-router problem by being
+the authenticated target for creator inputs, using explicit encrypted allowances,
+and passing only already-validated MPC values to a factory-owned bootstrap hook.
+The pool rechecks actual private balances and encrypted normalized price bounds.
+This design still requires the real COTI testnet gate, especially proof that
+`transferFromGT`, MPC validation and the bootstrap callback compose atomically on
+the deployed network.
