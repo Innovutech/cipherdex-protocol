@@ -12,6 +12,7 @@
 - accidental donation of excess proportional liquidity;
 - caller-controlled mutable fee or admin withdrawal paths.
 - administrator-controlled liquidity unlocks or withdrawals.
+- stale signed inputs executing after their intended deadline.
 
 ## Not solved by this phase
 

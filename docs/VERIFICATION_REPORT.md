@@ -17,7 +17,7 @@ Date: 2026-08-14
 - `npm run test:privacy-boundary`: passed
 - `npm run typecheck`: passed
 - `npm run compile`: passed
-- `npm test`: 4 passing, 1 pending integration placeholder
+- `npm test`: 11 passing, 1 pending integration placeholder
 - `npm run verify`: passed
 
 The full development graph still reports 46 advisories: 17 high, 10 moderate
@@ -25,6 +25,11 @@ and 19 low. They are in Hardhat/compiler/test tooling and are documented in
 `DEPENDENCY_AUDIT_REPORT.md`; they are not bundled in the production dependency
 graph. The verification command intentionally keeps the production audit and
 full graph visible and does not suppress those findings.
+
+The local reference-property tests cover the fee-adjusted output formula,
+ceil-rounded retained reserves, invariant preservation, monotonicity and the
+output floor. Solidity construction tests also cover expired deadlines and
+token-decimal metadata validation.
 
 ## Deliberately incomplete checks
 

@@ -3,12 +3,18 @@ import { ethers } from "hardhat";
 
 describe("ConfidentialCPMMFactory", function () {
   it("creates one canonical permissionless pool and rejects duplicates", async function () {
-    const [tokenA, tokenB] = await ethers.getSigners();
+    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
+    const tokenA = await metadataFactory.deploy(18);
+    const tokenB = await metadataFactory.deploy(6);
+    await tokenA.waitForDeployment();
+    await tokenB.waitForDeployment();
     const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory");
     const factory = await factoryFactory.deploy();
     await factory.waitForDeployment();
 
-    const tx = await factory.createPool(tokenB.address, tokenA.address, 6, 18, 30);
+    const tokenAAddress = await tokenA.getAddress();
+    const tokenBAddress = await tokenB.getAddress();
+    const tx = await factory.createPool(tokenBAddress, tokenAAddress, 6, 18, 30);
     const receipt = await tx.wait();
     const created = receipt?.logs
       .map((log) => {
@@ -27,8 +33,7 @@ describe("ConfidentialCPMMFactory", function () {
     expect(await factory.allPools(0)).to.equal(pool);
 
     await expect(
-      factory.createPool(tokenA.address, tokenB.address, 18, 6, 30),
+      factory.createPool(tokenAAddress, tokenBAddress, 18, 6, 30),
     ).to.be.revertedWithCustomError(factory, "PoolAlreadyExists");
   });
 });
-

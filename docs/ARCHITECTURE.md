@@ -8,6 +8,8 @@
   creation and public pool discovery.
 - `contracts/interfaces/`: stable ABI surface for clients and future factory/router
   work.
+- `sdk/`: dependency-free ABI fragments and privacy-minimal discovery types for
+  dashboards, launchpads and third-party integrations.
 - `scripts/`: explicit COTI testnet deployment only.
 - `test/`: construction/ABI guards plus a clearly gated COTI integration harness.
 - `docs/`: privacy, threat, dependency and operational constraints.
@@ -22,12 +24,20 @@ The swap formula is:
 
 `netIn = floor(amountIn * (10000 - feeBps) / 10000)`
 
-`newReserveOut = floor(reserveIn * reserveOut / (reserveIn + netIn))`
+`newReserveOut = ceil(reserveIn * reserveOut / (reserveIn + netIn))`
 
 `amountOut = reserveOut - newReserveOut`
 
-Every intermediate value is an MPC value. Checked operations reject overflow or
-underflow via boolean outcomes; no amount is decrypted for validation.
+Every intermediate value is an MPC value. The retained reserve rounds upward so
+the output rounds down and cannot create value through integer rounding. Checked
+operations reject overflow or underflow via boolean outcomes; no amount is
+decrypted for validation. State-changing operations also carry a caller-chosen
+deadline to prevent stale encrypted quotes from executing.
+
+Pool construction also verifies each token's public `decimals()` response and
+rejects non-contract or incompatible metadata before storing normalization
+scales. The factory remains permissionless, but it cannot create a pool whose
+declared decimals silently disagree with the token contract.
 
 ## LP accounting
 

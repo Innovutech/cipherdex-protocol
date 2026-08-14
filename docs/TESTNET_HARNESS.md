@@ -11,11 +11,11 @@ The harness must:
 - approve the pool with the official private approval flow;
 - add balanced liquidity and decrypt only user-specific ciphertexts locally;
 - quote via the COTI RPC and record whether static simulation works;
-- execute both swap directions with a private minimum output;
+- execute both swap directions with a private minimum output and a short
+  explicit deadline;
 - exercise failed slippage and replayed encrypted-input paths;
 - remove liquidity and check the full-exit path;
 - record gas/latency without printing amounts, AES keys, ciphertexts or signatures.
 
 The harness should be enabled only with explicit environment variables and should
 never run from CI against a funded wallet by default.
-

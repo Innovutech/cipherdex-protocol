@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "./ConfidentialCPMM.sol";
+import "./interfaces/IConfidentialCPMMFactory.sol";
 
 /**
  * @title ConfidentialCPMMFactory
@@ -10,7 +11,7 @@ import "./ConfidentialCPMM.sol";
  * There is no owner, fee manager or withdrawal authority. The pool's fee and pair
  * are fixed in its constructor and the factory only records public pool identity.
  */
-contract ConfidentialCPMMFactory {
+contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
     uint256 public constant PROTOCOL_VERSION = 1;
     mapping(bytes32 => address) public getPool;
     mapping(address => bool) public isPool;
@@ -18,15 +19,6 @@ contract ConfidentialCPMMFactory {
 
     error InvalidTokenPair();
     error PoolAlreadyExists();
-
-    event PoolCreated(
-        address indexed token0,
-        address indexed token1,
-        uint8 token0Decimals,
-        uint8 token1Decimals,
-        uint256 feeBps,
-        address pool
-    );
 
     function createPool(
         address tokenA,

@@ -3,11 +3,15 @@ import { ethers } from "hardhat";
 
 describe("ConfidentialCPMM metadata and construction guards", function () {
   async function deploy(feeBps = 30) {
-    const [token0, token1] = await ethers.getSigners();
+    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
+    const token0 = await metadataFactory.deploy(18);
+    const token1 = await metadataFactory.deploy(6);
+    await token0.waitForDeployment();
+    await token1.waitForDeployment();
     const factory = await ethers.getContractFactory("ConfidentialCPMM");
     const pool = await factory.deploy(
-      token0.address,
-      token1.address,
+      await token0.getAddress(),
+      await token1.getAddress(),
       18,
       6,
       feeBps,
@@ -18,8 +22,8 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
 
   it("pins the pair, fee, decimals and normalization scales", async function () {
     const { pool, token0, token1 } = await deploy();
-    expect(await pool.token0()).to.equal(token0.address);
-    expect(await pool.token1()).to.equal(token1.address);
+    expect(await pool.token0()).to.equal(await token0.getAddress());
+    expect(await pool.token1()).to.equal(await token1.getAddress());
     expect(await pool.feeBps()).to.equal(30n);
     expect(await pool.scale0()).to.equal(1n);
     expect(await pool.scale1()).to.equal(1_000_000_000_000n);
@@ -27,22 +31,50 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
   });
 
   it("rejects an excessive fee", async function () {
-    const [token0, token1] = await ethers.getSigners();
+    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
+    const token0 = await metadataFactory.deploy(18);
+    const token1 = await metadataFactory.deploy(18);
+    await token0.waitForDeployment();
+    await token1.waitForDeployment();
     const factory = await ethers.getContractFactory("ConfidentialCPMM");
     await expect(
-      factory.deploy(token0.address, token1.address, 18, 18, 1_001),
+      factory.deploy(await token0.getAddress(), await token1.getAddress(), 18, 18, 1_001),
     ).to.be.revertedWithCustomError(factory, "InvalidFee");
   });
 
-  it("rejects a zero or identical token pair", async function () {
-    const [token0] = await ethers.getSigners();
+  it("rejects token decimals that do not match public token metadata", async function () {
+    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
+    const token0 = await metadataFactory.deploy(18);
+    const token1 = await metadataFactory.deploy(6);
+    await token0.waitForDeployment();
+    await token1.waitForDeployment();
     const factory = await ethers.getContractFactory("ConfidentialCPMM");
     await expect(
-      factory.deploy(ethers.ZeroAddress, token0.address, 18, 18, 30),
+      factory.deploy(await token0.getAddress(), await token1.getAddress(), 18, 18, 30),
+    ).to.be.revertedWithCustomError(factory, "InvalidDecimals");
+  });
+
+  it("rejects a zero or identical token pair", async function () {
+    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
+    const token0 = await metadataFactory.deploy(18);
+    await token0.waitForDeployment();
+    const factory = await ethers.getContractFactory("ConfidentialCPMM");
+    await expect(
+      factory.deploy(ethers.ZeroAddress, await token0.getAddress(), 18, 18, 30),
     ).to.be.revertedWithCustomError(factory, "InvalidTokenPair");
     await expect(
-      factory.deploy(token0.address, token0.address, 18, 18, 30),
+      factory.deploy(await token0.getAddress(), await token0.getAddress(), 18, 18, 30),
     ).to.be.revertedWithCustomError(factory, "InvalidTokenPair");
   });
-});
 
+  it("rejects an expired swap before touching encrypted inputs", async function () {
+    const { pool } = await deploy();
+    const emptyInput = {
+      ciphertext: { ciphertextHigh: 0n, ciphertextLow: 0n },
+      signature: "0x",
+    };
+    await expect(
+      pool.swapExactInput(emptyInput, emptyInput, true, 0),
+    ).to.be.revertedWithCustomError(pool, "DeadlineExpired");
+  });
+});

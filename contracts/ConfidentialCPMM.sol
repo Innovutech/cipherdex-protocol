@@ -65,6 +65,7 @@ contract ConfidentialCPMM {
     error InsufficientPrivateShares();
     error InvalidLiquidityRatio();
     error InputAlreadyConsumed();
+    error DeadlineExpired();
     error Reentrancy();
 
     event SwapExecuted(address indexed trader, bool indexed zeroForOne);
@@ -97,6 +98,8 @@ contract ConfidentialCPMM {
         }
         if (token0Decimals_ > 18 || token1Decimals_ > 18) revert InvalidDecimals();
         if (feeBps_ > MAX_FEE_BPS) revert InvalidFee();
+        if (_readTokenDecimals(token0_) != token0Decimals_) revert InvalidDecimals();
+        if (_readTokenDecimals(token1_) != token1Decimals_) revert InvalidDecimals();
 
         token0 = token0_;
         token1 = token1_;
@@ -141,8 +144,10 @@ contract ConfidentialCPMM {
     function swapExactInput(
         itUint256 calldata amountIn,
         itUint256 calldata minAmountOut,
-        bool zeroForOne
+        bool zeroForOne,
+        uint64 deadline
     ) external nonReentrant returns (ctUint256 memory amountOut) {
+        _requireBeforeDeadline(deadline);
         gtUint256 input = _validateAndConsume(amountIn);
         gtUint256 minimum = MpcCore.validateCiphertext(minAmountOut);
         gtUint256 reserveIn = zeroForOne ? _reserve0() : _reserve1();
@@ -172,8 +177,10 @@ contract ConfidentialCPMM {
     function addLiquidity(
         itUint256 calldata amount0,
         itUint256 calldata amount1,
-        itUint256 calldata minShares
+        itUint256 calldata minShares,
+        uint64 deadline
     ) external nonReentrant returns (ctUint256 memory mintedShares) {
+        _requireBeforeDeadline(deadline);
         gtUint256 input0 = _validateAndConsume(amount0);
         gtUint256 input1 = _validateAndConsume(amount1);
         gtUint256 minimum = MpcCore.validateCiphertext(minShares);
@@ -233,8 +240,10 @@ contract ConfidentialCPMM {
     function removeLiquidity(
         itUint256 calldata shareInput,
         itUint256 calldata minAmount0,
-        itUint256 calldata minAmount1
+        itUint256 calldata minAmount1,
+        uint64 deadline
     ) external nonReentrant returns (ctUint256 memory amount0, ctUint256 memory amount1) {
+        _requireBeforeDeadline(deadline);
         gtUint256 requestedShares = _validateAndConsume(shareInput);
         gtUint256 minimum0 = MpcCore.validateCiphertext(minAmount0);
         gtUint256 minimum1 = MpcCore.validateCiphertext(minAmount1);
@@ -283,8 +292,10 @@ contract ConfidentialCPMM {
     function lockShares(
         itUint256 calldata shareInput,
         uint64 unlockTime,
-        bool permanent
+        bool permanent,
+        uint64 deadline
     ) external nonReentrant returns (bytes32 lockId) {
+        _requireBeforeDeadline(deadline);
         if (!permanent && unlockTime <= block.timestamp) revert InvalidLiquidityRatio();
 
         gtUint256 requestedShares = _validateAndConsume(shareInput);
@@ -360,8 +371,12 @@ contract ConfidentialCPMM {
         _requirePositive(netAmount);
         gtUint256 newReserveIn = _addChecked(reserveIn, netAmount);
         gtUint256 invariant = _mulChecked(reserveIn, reserveOut);
-        gtUint256 newReserveOut = _divChecked(invariant, newReserveIn);
-        return _subChecked(reserveOut, newReserveOut);
+        // Round the retained reserve up. Subtracting a floored retained reserve
+        // would round output upward and can violate x*y >= k after the swap.
+        gtUint256 newReserveOut = _ceilDiv(invariant, newReserveIn);
+        gtUint256 output = _subChecked(reserveOut, newReserveOut);
+        _requirePositive(output);
+        return output;
     }
 
     function _scale(gtUint256 value, uint256 factor) internal returns (gtUint256) {
@@ -391,6 +406,17 @@ contract ConfidentialCPMM {
         return MpcCore.div(a, b);
     }
 
+    function _ceilDiv(gtUint256 numerator, gtUint256 denominator) internal returns (gtUint256) {
+        gtUint256 quotient = _divChecked(numerator, denominator);
+        gtUint256 product = _mulChecked(quotient, denominator);
+        gtBool exact = MpcCore.eq(product, numerator);
+        return MpcCore.mux(
+            exact,
+            quotient,
+            _addChecked(quotient, MpcCore.setPublic256(uint256(1)))
+        );
+    }
+
     function _requirePositive(gtUint256 value) internal {
         if (!MpcCore.decrypt(MpcCore.gt(value, MpcCore.setPublic256(uint256(0))))) {
             revert InvalidPrivateAmount();
@@ -402,7 +428,10 @@ contract ConfidentialCPMM {
             abi.encode(
                 ctUint128.unwrap(input.ciphertext.ciphertextHigh),
                 ctUint128.unwrap(input.ciphertext.ciphertextLow),
-                input.signature
+                input.signature,
+                address(this),
+                msg.sender,
+                msg.sig
             )
         );
         if (consumedInputs[digest]) revert InputAlreadyConsumed();
@@ -419,5 +448,19 @@ contract ConfidentialCPMM {
             return MpcCore.setPublic256(uint256(0));
         }
         return MpcCore.onBoard(value);
+    }
+
+    function _requireBeforeDeadline(uint64 deadline) internal view {
+        if (deadline < block.timestamp) revert DeadlineExpired();
+    }
+
+    function _readTokenDecimals(address token) internal view returns (uint8) {
+        (bool ok, bytes memory data) = token.staticcall(
+            abi.encodeWithSignature("decimals()")
+        );
+        if (!ok || data.length != 32) revert InvalidDecimals();
+        uint256 value = abi.decode(data, (uint256));
+        if (value > 18) revert InvalidDecimals();
+        return uint8(value);
     }
 }

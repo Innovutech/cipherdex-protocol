@@ -21,17 +21,27 @@ async function main(): Promise<void> {
   wallet.setAesKey(aesKey);
 
   const abi = [
-    "function quoteExactInput((uint256,uint256,bytes),bool) returns ((uint256,uint256))",
-    "function swapExactInput((uint256,uint256,bytes),(uint256,uint256,bytes),bool) returns ((uint256,uint256))",
+    "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))",
+    "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
   ];
   const pool = new Contract(poolAddress, abi, wallet);
+  const quoteSelector = pool.interface.getFunction("quoteExactInput")?.selector;
   const swapSelector = pool.interface.getFunction("swapExactInput")?.selector;
-  if (!swapSelector) throw new Error("swapExactInput selector is unavailable");
+  if (!quoteSelector || !swapSelector) throw new Error("COTI pool selectors are unavailable");
 
-  const encryptedAmount = await wallet.encryptValue256(BigInt(amountIn), poolAddress, swapSelector);
-  const encryptedZero = await wallet.encryptValue256(0n, poolAddress, swapSelector);
+  const encryptedAmountForQuote = await wallet.encryptValue256(
+    BigInt(amountIn),
+    poolAddress,
+    quoteSelector,
+  );
+  const encryptedAmountForSwap = await wallet.encryptValue256(
+    BigInt(amountIn),
+    poolAddress,
+    swapSelector,
+  );
+  const encryptedZeroForSwap = await wallet.encryptValue256(0n, poolAddress, swapSelector);
   const started = Date.now();
-  const quoted = await pool.quoteExactInput(encryptedAmount, true);
+  const quoted = await pool.quoteExactInput.staticCall(encryptedAmountForQuote, true);
   const quoteElapsedMs = Date.now() - started;
   const decryptedQuote = await wallet.decryptValue256(quoted);
 
@@ -40,7 +50,13 @@ async function main(): Promise<void> {
   console.log(`COTI testnet quote completed in ${quoteElapsedMs}ms`);
   void decryptedQuote;
 
-  const tx = await pool.swapExactInput(encryptedAmount, encryptedZero, true);
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+  const tx = await pool.swapExactInput(
+    encryptedAmountForSwap,
+    encryptedZeroForSwap,
+    true,
+    deadline,
+  );
   const receipt = await tx.wait();
   console.log(`COTI testnet swap submitted: ${receipt?.hash ?? tx.hash}`);
 }
