@@ -27,6 +27,14 @@ describe("PublicCPMM", function () {
       6,
       30,
     );
+    const reverseKey = await factory.poolKey(
+      await tokenB.getAddress(),
+      await tokenA.getAddress(),
+      6,
+      18,
+      30,
+    );
+    expect(reverseKey).to.equal(key);
     const poolAddress = await factory.getPool(key);
     const pool = await ethers.getContractAt("PublicCPMM", poolAddress);
 
@@ -39,18 +47,19 @@ describe("PublicCPMM", function () {
 
   it("creates canonical pools and preserves the public invariant through a swap", async function () {
     const { owner, trader, tokenA, tokenB, pool } = await deployPool();
-    const amountA = ethers.parseEther("100");
-    const amountB = 100_000_000n;
-    await tokenA.approve(await pool.getAddress(), amountA);
-    await tokenB.approve(await pool.getAddress(), amountB);
-    await pool.addLiquidity(amountA, amountB, 1n, 0xffffffff);
+    const token0IsA = (await pool.token0()).toLowerCase() === (await tokenA.getAddress()).toLowerCase();
+    const amount0 = token0IsA ? ethers.parseEther("100") : 100_000_000n;
+    const amount1 = token0IsA ? 100_000_000n : ethers.parseEther("100");
+    await (token0IsA ? tokenA : tokenB).approve(await pool.getAddress(), amount0);
+    await (token0IsA ? tokenB : tokenA).approve(await pool.getAddress(), amount1);
+    await pool.addLiquidity(amount0, amount1, 1n, 0xffffffff);
 
     const beforeProduct =
       (await tokenA.balanceOf(await pool.getAddress())) *
       (await tokenB.balanceOf(await pool.getAddress()));
-    const input = ethers.parseEther("1");
+    const input = token0IsA ? ethers.parseEther("1") : 1_000_000n;
     const quoted = await pool.quoteExactInput(input, true);
-    await tokenA.connect(trader).approve(await pool.getAddress(), input);
+    await (token0IsA ? tokenA : tokenB).connect(trader).approve(await pool.getAddress(), input);
     await pool.connect(trader).swapExactInput(input, quoted, true, 0xffffffff);
     const afterProduct =
       (await tokenA.balanceOf(await pool.getAddress())) *
@@ -63,14 +72,19 @@ describe("PublicCPMM", function () {
 
   it("requires exact proportional public deposits and enforces permanent locks", async function () {
     const { owner, tokenA, tokenB, pool } = await deployPool();
-    await tokenA.approve(await pool.getAddress(), ethers.parseEther("100"));
-    await tokenB.approve(await pool.getAddress(), 100_000_000n);
-    await pool.addLiquidity(ethers.parseEther("100"), 100_000_000n, 1n, 0xffffffff);
+    const token0IsA = (await pool.token0()).toLowerCase() === (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const amount0 = token0IsA ? ethers.parseEther("100") : 100_000_000n;
+    const amount1 = token0IsA ? 100_000_000n : ethers.parseEther("100");
+    await token0.approve(await pool.getAddress(), amount0);
+    await token1.approve(await pool.getAddress(), amount1);
+    await pool.addLiquidity(amount0, amount1, 1n, 0xffffffff);
 
-    await tokenA.approve(await pool.getAddress(), ethers.parseEther("1"));
-    await tokenB.approve(await pool.getAddress(), 1_000_001n);
+    await token0.approve(await pool.getAddress(), token0IsA ? ethers.parseEther("1") : 1_000_001n);
+    await token1.approve(await pool.getAddress(), token0IsA ? 1_000_001n : ethers.parseEther("1"));
     await expect(
-      pool.addLiquidity(ethers.parseEther("1"), 1_000_001n, 1n, 0xffffffff),
+      pool.addLiquidity(token0IsA ? ethers.parseEther("1") : 1_000_001n, token0IsA ? 1_000_001n : ethers.parseEther("1"), 1n, 0xffffffff),
     ).to.be.revertedWithCustomError(pool, "InvalidLiquidityRatio");
 
     const tx = await pool.lockShares(ethers.parseEther("10"), 0, true, 0xffffffff);

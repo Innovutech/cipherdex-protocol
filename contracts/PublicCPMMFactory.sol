@@ -56,7 +56,9 @@ contract PublicCPMMFactory {
         uint8 decimals1,
         uint256 feeBps
     ) public pure returns (bytes32) {
-        return keccak256(abi.encode(token0, token1, decimals0, decimals1, feeBps));
+        return token0 < token1
+            ? keccak256(abi.encode(token0, token1, decimals0, decimals1, feeBps))
+            : keccak256(abi.encode(token1, token0, decimals1, decimals0, feeBps));
     }
 
     function allPoolsLength() external view returns (uint256) {

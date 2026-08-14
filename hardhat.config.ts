@@ -24,16 +24,152 @@ const accounts = privateKey ? [privateKey] : [];
 const config: HardhatUserConfig = {
   defaultNetwork: "hardhat",
   solidity: {
-    version: "0.8.28",
-    settings: {
-      evmVersion: "paris",
-      viaIR: true,
-      optimizer: {
-        enabled: true,
-        runs: 200,
+    compilers: [
+      {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
       },
-      metadata: {
-        bytecodeHash: "none",
+    ],
+    // Keep large COTI MPC graphs in separate solc-js jobs. The one-job graph
+    // can exhaust solc-js memory; the one-step optimizer differences preserve
+    // the same compiler, target, IR mode, and optimization policy while making
+    // the split deterministic.
+    overrides: {
+      "contracts/ConfidentialCPMM.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/ConfidentialCPMMFactory.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 201,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/ConfidentialLaunchpadMigrator.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 202,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/PublicCPMM.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: false,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/PublicCPMMFactory.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: false,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/interfaces/IPublicCPMM.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: false,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/interfaces/IPublicCPMMFactory.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: false,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/mocks/MockERC20.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: false,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/mocks/MockTokenMetadata.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: false,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
       },
     },
   },
