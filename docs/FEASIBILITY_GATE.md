@@ -17,6 +17,10 @@ disclosures of transaction outcome or pool lifecycle, not amount disclosure.
 
 ## What is feasible
 
+For ordinary ERC-20 assets, a conventional public/public CPMM is feasible and is
+implemented separately as `PublicCPMM`. Its public events, balances and LP
+accounting are intentionally not treated as privacy-preserving.
+
 For synchronous COTI PrivateERC20 assets, an amount-confidential CPMM is technically
 feasible:
 
@@ -84,3 +88,12 @@ The pool rechecks actual private balances and encrypted normalized price bounds.
 This design still requires the real COTI testnet gate, especially proof that
 `transferFromGT`, MPC validation and the bootstrap callback compose atomically on
 the deployed network.
+
+## Public/private boundary still gated
+
+A public/private pool cannot simply reuse either existing pool. The private leg
+can be settled with `transferGT` while keeping its amount encrypted, but a
+public-leg withdrawal needs an explicit user-visible amount. Any implementation
+must bind that public amount to the MPC-calculated result and handle pending
+withdrawal recovery without decrypting private state in the contract. This is a
+separate design and testnet gate, not an implicit fallback to public amounts.

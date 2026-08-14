@@ -55,6 +55,43 @@ export const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI = [
   "event LaunchpadMigration(address indexed creator,address indexed pool)",
 ] as const;
 
+export const PUBLIC_CPMM_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function token0() view returns (address)",
+  "function token1() view returns (address)",
+  "function token0Decimals() view returns (uint8)",
+  "function token1Decimals() view returns (uint8)",
+  "function scale0() view returns (uint256)",
+  "function scale1() view returns (uint256)",
+  "function feeBps() view returns (uint256)",
+  "function initialized() view returns (bool)",
+  "function totalShares() view returns (uint256)",
+  "function shares(address) view returns (uint256)",
+  "function quoteExactInput(uint256,bool) view returns (uint256)",
+  "function swapExactInput(uint256,uint256,bool,uint64) returns (uint256)",
+  "function addLiquidity(uint256,uint256,uint256,uint64) returns (uint256)",
+  "function removeLiquidity(uint256,uint256,uint256,uint64) returns (uint256,uint256)",
+  "function lockShares(uint256,uint64,bool,uint64) returns (bytes32)",
+  "function unlockShares(bytes32)",
+  "function lockInfo(bytes32) view returns (address,uint64,bool,bool,uint256)",
+  "event SwapExecuted(address indexed trader,bool indexed zeroForOne,uint256 amountIn,uint256 amountOut)",
+  "event LiquidityAdded(address indexed provider,uint256 amount0,uint256 amount1,uint256 shares)",
+  "event LiquidityRemoved(address indexed provider,uint256 amount0,uint256 amount1,uint256 shares)",
+  "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent,uint256 shares)",
+  "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner,uint256 shares)",
+] as const;
+
+export const PUBLIC_CPMM_FACTORY_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function getPool(bytes32) view returns (address)",
+  "function isPool(address) view returns (bool)",
+  "function createPool(address,address,uint8,uint8,uint256) returns (address)",
+  "function poolKey(address,address,uint8,uint8,uint256) pure returns (bytes32)",
+  "function allPoolsLength() view returns (uint256)",
+  "function allPools(uint256) view returns (address)",
+  "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
+] as const;
+
 export type Ciphertext256 = {
   ciphertextHigh: bigint;
   ciphertextLow: bigint;
@@ -77,6 +114,18 @@ export type ConfidentialPoolDiscovery = {
   poolKind: "private-erc20-cpmm-v1";
 };
 
+export type PublicPoolDiscovery = {
+  disclosureSchemaVersion: typeof DISCLOSURE_SCHEMA_VERSION;
+  protocolVersion: number;
+  pool: string;
+  token0: string;
+  token1: string;
+  token0Decimals: number;
+  token1Decimals: number;
+  feeBps: number;
+  poolKind: "public-erc20-cpmm-v1";
+};
+
 export type ConfidentialLockMetadata = {
   lockId: string;
   owner: string;
@@ -93,6 +142,22 @@ export function isConfidentialPoolDiscovery(
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     candidate.poolKind === "private-erc20-cpmm-v1" &&
+    typeof candidate.pool === "string" &&
+    typeof candidate.token0 === "string" &&
+    typeof candidate.token1 === "string" &&
+    typeof candidate.protocolVersion === "number" &&
+    typeof candidate.token0Decimals === "number" &&
+    typeof candidate.token1Decimals === "number" &&
+    typeof candidate.feeBps === "number"
+  );
+}
+
+export function isPublicPoolDiscovery(value: unknown): value is PublicPoolDiscovery {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PublicPoolDiscovery>;
+  return (
+    candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
+    candidate.poolKind === "public-erc20-cpmm-v1" &&
     typeof candidate.pool === "string" &&
     typeof candidate.token0 === "string" &&
     typeof candidate.token1 === "string" &&

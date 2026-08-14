@@ -17,12 +17,13 @@ const contractsDirectory = fileURLToPath(new URL("../contracts/", import.meta.ur
 const files = await solidityFiles(contractsDirectory);
 for (const file of files) {
   const source = await readFile(file, "utf8");
+  const confidentialSurface = /(?:Confidential|IConfidential)/i.test(file);
   const events = [...source.matchAll(/event\s+[^;]+;/g)].map(([event]) => event);
-  if (events.some((event) => /amount|reserve|share|value|input|output/i.test(event))) {
+  if (confidentialSurface && events.some((event) => /amount|reserve|share|value|input|output/i.test(event))) {
     throw new Error(`Private amount-like data was added to a public event declaration: ${file}`);
   }
 
-  if (/emit\s+[^;]*(amount|reserve|share|value|input|output)/i.test(source)) {
+  if (confidentialSurface && /emit\s+[^;]*(amount|reserve|share|value|input|output)/i.test(source)) {
     throw new Error(`Private amount-like data was added to an emitted event: ${file}`);
   }
 

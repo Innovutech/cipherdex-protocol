@@ -6,6 +6,9 @@
   math, swap execution and private LP share accounting.
 - `contracts/ConfidentialCPMMFactory.sol`: permissionless deterministic pool
   creation and public pool discovery.
+- `contracts/PublicCPMM.sol`: ordinary public/public ERC-20 CPMM with public
+  amounts, fees, swaps, liquidity accounting and locks.
+- `contracts/PublicCPMMFactory.sol`: separate public/public pool registry.
 - `contracts/ConfidentialLaunchpadMigrator.sol`: atomic creator-signed pool
   creation/selection, encrypted allowance pulls and price-bounded bootstrap.
 - `contracts/interfaces/`: stable ABI surface for clients and future factory/router
@@ -61,6 +64,8 @@ administrator or the original provider.
 ## Explicit non-goals
 
 - no concentrated liquidity in the first protocol version;
+- no assumption that public/public and confidential pools share event or balance
+  disclosure; their pool kinds are explicit in discovery metadata;
 - no COTI PoD assets in the synchronous pool;
 - no mainnet deployment;
 - no admin withdrawal or mutable fee authority;
@@ -89,3 +94,11 @@ whole transaction, including the token pulls.
 The bootstrap path is restricted to factory-created empty pools and cannot be used
 to withdraw or mutate an initialized pool. The initial share unit is the minimum
 of the normalized private deposits, while full exit remains reserve-complete.
+
+## Public/public boundary
+
+`PublicCPMM` uses standard ERC-20 transfers and exposes public settlement amounts.
+It requires exact proportional deposits after measuring the actual received token
+amounts, which rejects fee-on-transfer mismatch instead of silently donating
+assets. It uses OpenZeppelin full-precision multiplication/division and rounds
+the retained reserve upward, matching the confidential invariant convention.

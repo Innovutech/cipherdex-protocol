@@ -1,11 +1,11 @@
 # CipherDEX Protocol
 
-Independent COTI-native confidential AMM protocol work for the CipherDEX ecosystem.
+Independent COTI-native AMM protocol work for the CipherDEX ecosystem.
 
 This repository is separate from CipherTrade and CipherTools. The first phase is a
-testnet-only feasibility implementation for an amount-confidential constant-product
-pool over COTI `PrivateERC20` assets. It is not a mainnet deployment and has not
-received an external audit.
+testnet-only feasibility implementation for public/public ordinary ERC-20 pools
+and an amount-confidential constant-product pool over COTI `PrivateERC20` assets.
+It is not a mainnet deployment and has not received an external audit.
 
 ## Current boundary
 
@@ -20,6 +20,11 @@ signs inputs for the migrator, grants it explicit encrypted allowances, and can
 create/select and seed an empty factory pool in one transaction. Encrypted price
 bounds let a launchpad preserve a bonding-curve final price without exposing the
 ratio. The migrator is permissionless and has no withdrawal authority.
+
+`PublicCPMM` and `PublicCPMMFactory` are a separate public/public mode. Their
+public amount events and share accounting are not reused by the confidential
+mode. A public/private mode will only be added where COTI MPC can settle the
+private leg without decrypting it inside the contract.
 
 PoD assets are not accepted by this synchronous pool. PoD transfer and approval
 operations are asynchronous cross-chain callback workflows and require a separate
