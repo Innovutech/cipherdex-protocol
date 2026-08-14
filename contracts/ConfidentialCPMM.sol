@@ -1,0 +1,423 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@coti-io/coti-contracts/contracts/token/PrivateERC20/IPrivateERC20.sol";
+import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
+
+/**
+ * @title ConfidentialCPMM
+ * @notice Amount-confidential constant-product pool for COTI PrivateERC20 assets.
+ *
+ * The pool deliberately does not claim anonymous or hidden-recipient execution.
+ * The standard PrivateERC20 interface takes public addresses and emits public
+ * participant addresses in Transfer events. Amounts, reserves, LP shares and
+ * pass/fail values remain confidential; pool identity, token addresses, direction,
+ * and participant addresses remain observable.
+ *
+ * This contract is a testnet feasibility implementation. It is not a mainnet
+ * deployment and has not received an external audit.
+ */
+contract ConfidentialCPMM {
+    uint256 public constant PROTOCOL_VERSION = 1;
+    uint256 public constant FEE_DENOMINATOR = 10_000;
+    uint256 public constant MAX_FEE_BPS = 1_000;
+
+    address public immutable token0;
+    address public immutable token1;
+    uint8 public immutable token0Decimals;
+    uint8 public immutable token1Decimals;
+    uint256 public immutable scale0;
+    uint256 public immutable scale1;
+    uint256 public immutable feeBps;
+
+    bool public initialized;
+
+    // Ciphertext storage is intentionally not exposed through public getters.
+    ctUint256 private totalShares;
+    mapping(address => ctUint256) private shares;
+    mapping(bytes32 => bool) private consumedInputs;
+    uint256 public nextLockNonce;
+
+    struct LockRecord {
+        address owner;
+        uint64 unlockTime;
+        bool permanent;
+        bool released;
+        ctUint256 amount;
+    }
+
+    mapping(bytes32 => LockRecord) private locks;
+
+    uint256 private reentrancyState = 1;
+
+    error InvalidTokenPair();
+    error InvalidDecimals();
+    error InvalidFee();
+    error InvalidPrivateAmount();
+    error PoolNotInitialized();
+    error PoolAlreadyInitialized();
+    error UnbalancedInitialLiquidity();
+    error ArithmeticOverflow();
+    error ArithmeticUnderflow();
+    error DivisionByZero();
+    error SlippageExceeded();
+    error InsufficientPrivateLiquidity();
+    error InsufficientPrivateShares();
+    error InvalidLiquidityRatio();
+    error InputAlreadyConsumed();
+    error Reentrancy();
+
+    event SwapExecuted(address indexed trader, bool indexed zeroForOne);
+    event LiquidityAdded(address indexed provider);
+    event LiquidityRemoved(address indexed provider);
+    event LiquidityLocked(
+        bytes32 indexed lockId,
+        address indexed owner,
+        uint64 unlockTime,
+        bool permanent
+    );
+    event LiquidityUnlocked(bytes32 indexed lockId, address indexed owner);
+
+    modifier nonReentrant() {
+        if (reentrancyState != 1) revert Reentrancy();
+        reentrancyState = 2;
+        _;
+        reentrancyState = 1;
+    }
+
+    constructor(
+        address token0_,
+        address token1_,
+        uint8 token0Decimals_,
+        uint8 token1Decimals_,
+        uint256 feeBps_
+    ) {
+        if (token0_ == address(0) || token1_ == address(0) || token0_ == token1_) {
+            revert InvalidTokenPair();
+        }
+        if (token0Decimals_ > 18 || token1Decimals_ > 18) revert InvalidDecimals();
+        if (feeBps_ > MAX_FEE_BPS) revert InvalidFee();
+
+        token0 = token0_;
+        token1 = token1_;
+        token0Decimals = token0Decimals_;
+        token1Decimals = token1Decimals_;
+        scale0 = 10 ** (18 - token0Decimals_);
+        scale1 = 10 ** (18 - token1Decimals_);
+        feeBps = feeBps_;
+    }
+
+    /**
+     * @notice Returns a user-specific encrypted LP-share balance.
+     * @dev This is intentionally non-view because MPC onboarding/offboarding is
+     *      not a normal EVM static read on COTI.
+     */
+    function myShares() external returns (ctUint256 memory) {
+        return MpcCore.offBoardToUser(_readPrivate(shares[msg.sender]), msg.sender);
+    }
+
+    /**
+     * @notice Simulates a private quote and returns the result encrypted for the caller.
+     * @dev Clients must verify on the COTI-compatible RPC whether eth_call supports
+     *      the MPC precompile operations used by private balance reads. It is not a
+     *      conventional view function by design.
+     */
+    function quoteExactInput(
+        itUint256 calldata amountIn,
+        bool zeroForOne
+    ) external returns (ctUint256 memory amountOut) {
+        gtUint256 input = MpcCore.validateCiphertext(amountIn);
+        gtUint256 reserveIn = zeroForOne ? _reserve0() : _reserve1();
+        gtUint256 reserveOut = zeroForOne ? _reserve1() : _reserve0();
+        gtUint256 output = _amountOut(input, reserveIn, reserveOut);
+        return MpcCore.offBoardToUser(output, msg.sender);
+    }
+
+    /**
+     * @notice Executes a swap with encrypted input and encrypted minimum output.
+     * @dev The recipient is msg.sender and therefore public at the EVM layer. The
+     *      amount and resulting output are never placed in this pool's events/errors.
+     */
+    function swapExactInput(
+        itUint256 calldata amountIn,
+        itUint256 calldata minAmountOut,
+        bool zeroForOne
+    ) external nonReentrant returns (ctUint256 memory amountOut) {
+        gtUint256 input = _validateAndConsume(amountIn);
+        gtUint256 minimum = MpcCore.validateCiphertext(minAmountOut);
+        gtUint256 reserveIn = zeroForOne ? _reserve0() : _reserve1();
+        gtUint256 reserveOut = zeroForOne ? _reserve1() : _reserve0();
+        gtUint256 output = _amountOut(input, reserveIn, reserveOut);
+
+        if (!MpcCore.decrypt(MpcCore.ge(output, minimum))) revert SlippageExceeded();
+
+        if (zeroForOne) {
+            IPrivateERC20(token0).transferFromGT(msg.sender, address(this), input);
+            IPrivateERC20(token1).transferGT(msg.sender, output);
+        } else {
+            IPrivateERC20(token1).transferFromGT(msg.sender, address(this), input);
+            IPrivateERC20(token0).transferGT(msg.sender, output);
+        }
+
+        emit SwapExecuted(msg.sender, zeroForOne);
+        return MpcCore.offBoardToUser(output, msg.sender);
+    }
+
+    /**
+     * @notice Adds proportional private liquidity and mints private shares.
+     * @dev Initial liquidity must be balanced after normalizing both assets to
+     *      18 decimals. Later deposits transfer only the exact proportional amount;
+     *      excess input remains with the caller instead of becoming a donation.
+     */
+    function addLiquidity(
+        itUint256 calldata amount0,
+        itUint256 calldata amount1,
+        itUint256 calldata minShares
+    ) external nonReentrant returns (ctUint256 memory mintedShares) {
+        gtUint256 input0 = _validateAndConsume(amount0);
+        gtUint256 input1 = _validateAndConsume(amount1);
+        gtUint256 minimum = MpcCore.validateCiphertext(minShares);
+        _requirePositive(input0);
+        _requirePositive(input1);
+
+        gtUint256 deposit0 = input0;
+        gtUint256 deposit1 = input1;
+        gtUint256 minted;
+
+        if (!initialized) {
+            gtUint256 normalized0 = _scale(input0, scale0);
+            gtUint256 normalized1 = _scale(input1, scale1);
+            if (!MpcCore.decrypt(MpcCore.eq(normalized0, normalized1))) {
+                revert UnbalancedInitialLiquidity();
+            }
+            minted = normalized0;
+            if (!MpcCore.decrypt(MpcCore.ge(minted, minimum))) revert SlippageExceeded();
+            initialized = true;
+        } else {
+            gtUint256 reserve0 = _reserve0();
+            gtUint256 reserve1 = _reserve1();
+            gtUint256 currentTotal = _readPrivate(totalShares);
+            _requirePositive(reserve0);
+            _requirePositive(reserve1);
+            _requirePositive(currentTotal);
+
+            gtUint256 share0 = _divChecked(_mulChecked(input0, currentTotal), reserve0);
+            gtUint256 share1 = _divChecked(_mulChecked(input1, currentTotal), reserve1);
+            minted = MpcCore.min(share0, share1);
+            _requirePositive(minted);
+            if (!MpcCore.decrypt(MpcCore.ge(minted, minimum))) revert SlippageExceeded();
+
+            deposit0 = _divChecked(_mulChecked(minted, reserve0), currentTotal);
+            deposit1 = _divChecked(_mulChecked(minted, reserve1), currentTotal);
+            _requirePositive(deposit0);
+            _requirePositive(deposit1);
+            if (!MpcCore.decrypt(MpcCore.ge(input0, deposit0))) revert InvalidLiquidityRatio();
+            if (!MpcCore.decrypt(MpcCore.ge(input1, deposit1))) revert InvalidLiquidityRatio();
+        }
+
+        totalShares = MpcCore.offBoard(_addChecked(_readPrivate(totalShares), minted));
+        shares[msg.sender] = MpcCore.offBoard(
+            _addChecked(_readPrivate(shares[msg.sender]), minted)
+        );
+
+        IPrivateERC20(token0).transferFromGT(msg.sender, address(this), deposit0);
+        IPrivateERC20(token1).transferFromGT(msg.sender, address(this), deposit1);
+
+        emit LiquidityAdded(msg.sender);
+        return MpcCore.offBoardToUser(minted, msg.sender);
+    }
+
+    /**
+     * @notice Burns private LP shares and withdraws the corresponding private reserves.
+     */
+    function removeLiquidity(
+        itUint256 calldata shareInput,
+        itUint256 calldata minAmount0,
+        itUint256 calldata minAmount1
+    ) external nonReentrant returns (ctUint256 memory amount0, ctUint256 memory amount1) {
+        gtUint256 requestedShares = _validateAndConsume(shareInput);
+        gtUint256 minimum0 = MpcCore.validateCiphertext(minAmount0);
+        gtUint256 minimum1 = MpcCore.validateCiphertext(minAmount1);
+        gtUint256 currentTotal = _readPrivate(totalShares);
+        gtUint256 userShares = _readPrivate(shares[msg.sender]);
+
+        _requirePositive(requestedShares);
+        _requirePositive(currentTotal);
+        if (!MpcCore.decrypt(MpcCore.le(requestedShares, userShares))) {
+            revert InsufficientPrivateShares();
+        }
+
+        gtUint256 reserve0 = _reserve0();
+        gtUint256 reserve1 = _reserve1();
+        gtUint256 amount0Calculated = _divChecked(_mulChecked(requestedShares, reserve0), currentTotal);
+        gtUint256 amount1Calculated = _divChecked(_mulChecked(requestedShares, reserve1), currentTotal);
+        gtBool fullExit = MpcCore.eq(requestedShares, currentTotal);
+        amount0Calculated = MpcCore.mux(fullExit, reserve0, amount0Calculated);
+        amount1Calculated = MpcCore.mux(fullExit, reserve1, amount1Calculated);
+
+        if (!MpcCore.decrypt(MpcCore.ge(amount0Calculated, minimum0))) revert SlippageExceeded();
+        if (!MpcCore.decrypt(MpcCore.ge(amount1Calculated, minimum1))) revert SlippageExceeded();
+
+        totalShares = MpcCore.offBoard(
+            MpcCore.mux(fullExit, MpcCore.setPublic256(uint256(0)), _subChecked(currentTotal, requestedShares))
+        );
+        shares[msg.sender] = MpcCore.offBoard(
+            _subChecked(userShares, requestedShares)
+        );
+        if (MpcCore.decrypt(fullExit)) initialized = false;
+
+        IPrivateERC20(token0).transferGT(msg.sender, amount0Calculated);
+        IPrivateERC20(token1).transferGT(msg.sender, amount1Calculated);
+
+        emit LiquidityRemoved(msg.sender);
+        return (
+            MpcCore.offBoardToUser(amount0Calculated, msg.sender),
+            MpcCore.offBoardToUser(amount1Calculated, msg.sender)
+        );
+    }
+
+    /**
+     * @notice Moves private LP shares into a time lock or irreversible permanent lock.
+     * @dev The locked amount is never emitted or returned publicly.
+     */
+    function lockShares(
+        itUint256 calldata shareInput,
+        uint64 unlockTime,
+        bool permanent
+    ) external nonReentrant returns (bytes32 lockId) {
+        if (!permanent && unlockTime <= block.timestamp) revert InvalidLiquidityRatio();
+
+        gtUint256 requestedShares = _validateAndConsume(shareInput);
+        gtUint256 userShares = _readPrivate(shares[msg.sender]);
+        _requirePositive(requestedShares);
+        if (!MpcCore.decrypt(MpcCore.le(requestedShares, userShares))) {
+            revert InsufficientPrivateShares();
+        }
+
+        lockId = keccak256(abi.encode(address(this), msg.sender, nextLockNonce++));
+        locks[lockId] = LockRecord({
+            owner: msg.sender,
+            unlockTime: unlockTime,
+            permanent: permanent,
+            released: false,
+            amount: MpcCore.offBoard(requestedShares)
+        });
+        shares[msg.sender] = MpcCore.offBoard(_subChecked(userShares, requestedShares));
+
+        emit LiquidityLocked(lockId, msg.sender, unlockTime, permanent);
+    }
+
+    /**
+     * @notice Releases a non-permanent lock back to its original provider.
+     */
+    function unlockShares(bytes32 lockId) external nonReentrant {
+        LockRecord storage record = locks[lockId];
+        if (record.owner != msg.sender || record.released) revert InsufficientPrivateShares();
+        if (record.permanent || block.timestamp < record.unlockTime) {
+            revert InvalidLiquidityRatio();
+        }
+
+        gtUint256 locked = _readPrivate(record.amount);
+        shares[msg.sender] = MpcCore.offBoard(_addChecked(_readPrivate(shares[msg.sender]), locked));
+        record.released = true;
+
+        emit LiquidityUnlocked(lockId, msg.sender);
+    }
+
+    /**
+     * @notice Returns only public lock metadata. The locked share amount is private.
+     */
+    function lockInfo(bytes32 lockId)
+        external
+        view
+        returns (address owner, uint64 unlockTime, bool permanent, bool released)
+    {
+        LockRecord storage record = locks[lockId];
+        return (record.owner, record.unlockTime, record.permanent, record.released);
+    }
+
+    function _reserve0() internal returns (gtUint256) {
+        return IPrivateERC20(token0).balanceOf();
+    }
+
+    function _reserve1() internal returns (gtUint256) {
+        return IPrivateERC20(token1).balanceOf();
+    }
+
+    function _amountOut(
+        gtUint256 amountIn,
+        gtUint256 reserveIn,
+        gtUint256 reserveOut
+    ) internal returns (gtUint256) {
+        _requirePositive(amountIn);
+        _requirePositive(reserveIn);
+        _requirePositive(reserveOut);
+
+        gtUint256 feeFactor = MpcCore.setPublic256(FEE_DENOMINATOR - feeBps);
+        gtUint256 feeDenominator = MpcCore.setPublic256(FEE_DENOMINATOR);
+        gtUint256 netProduct = _mulChecked(amountIn, feeFactor);
+        gtUint256 netAmount = MpcCore.div(netProduct, feeDenominator);
+        _requirePositive(netAmount);
+        gtUint256 newReserveIn = _addChecked(reserveIn, netAmount);
+        gtUint256 invariant = _mulChecked(reserveIn, reserveOut);
+        gtUint256 newReserveOut = _divChecked(invariant, newReserveIn);
+        return _subChecked(reserveOut, newReserveOut);
+    }
+
+    function _scale(gtUint256 value, uint256 factor) internal returns (gtUint256) {
+        return _mulChecked(value, MpcCore.setPublic256(factor));
+    }
+
+    function _mulChecked(gtUint256 a, gtUint256 b) internal returns (gtUint256) {
+        (gtBool overflow, gtUint256 result) = MpcCore.checkedMulWithOverflowBit(a, b);
+        if (MpcCore.decrypt(overflow)) revert ArithmeticOverflow();
+        return result;
+    }
+
+    function _addChecked(gtUint256 a, gtUint256 b) internal returns (gtUint256) {
+        (gtBool overflow, gtUint256 result) = MpcCore.checkedAddWithOverflowBit(a, b);
+        if (MpcCore.decrypt(overflow)) revert ArithmeticOverflow();
+        return result;
+    }
+
+    function _subChecked(gtUint256 a, gtUint256 b) internal returns (gtUint256) {
+        (gtBool underflow, gtUint256 result) = MpcCore.checkedSubWithOverflowBit(a, b);
+        if (MpcCore.decrypt(underflow)) revert ArithmeticUnderflow();
+        return result;
+    }
+
+    function _divChecked(gtUint256 a, gtUint256 b) internal returns (gtUint256) {
+        if (MpcCore.decrypt(MpcCore.eq(b, MpcCore.setPublic256(uint256(0))))) revert DivisionByZero();
+        return MpcCore.div(a, b);
+    }
+
+    function _requirePositive(gtUint256 value) internal {
+        if (!MpcCore.decrypt(MpcCore.gt(value, MpcCore.setPublic256(uint256(0))))) {
+            revert InvalidPrivateAmount();
+        }
+    }
+
+    function _validateAndConsume(itUint256 memory input) internal returns (gtUint256) {
+        bytes32 digest = keccak256(
+            abi.encode(
+                ctUint128.unwrap(input.ciphertext.ciphertextHigh),
+                ctUint128.unwrap(input.ciphertext.ciphertextLow),
+                input.signature
+            )
+        );
+        if (consumedInputs[digest]) revert InputAlreadyConsumed();
+        gtUint256 value = MpcCore.validateCiphertext(input);
+        consumedInputs[digest] = true;
+        return value;
+    }
+
+    function _readPrivate(ctUint256 memory value) internal returns (gtUint256) {
+        if (
+            ctUint128.unwrap(value.ciphertextHigh) == 0 &&
+            ctUint128.unwrap(value.ciphertextLow) == 0
+        ) {
+            return MpcCore.setPublic256(uint256(0));
+        }
+        return MpcCore.onBoard(value);
+    }
+}

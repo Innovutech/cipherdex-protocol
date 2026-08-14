@@ -1,0 +1,39 @@
+{
+  "name": "@cipherdex/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "COTI-native confidential AMM protocol proof of concept.",
+  "engines": {
+    "node": "24.16.x",
+    "npm": "11.13.x"
+  },
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:unit": "hardhat test test/unit/**/*.ts",
+    "test:integration": "hardhat test test/integration/**/*.ts --network cotiTestnet",
+    "test:privacy-boundary": "node scripts/check-privacy-boundary.mjs",
+    "testnet:harness": "ts-node scripts/testnet-harness.ts",
+    "audit:graph": "npm ls --omit=dev --all",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && npm run compile",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
+    "verify": "npm run audit:production && npm run audit:graph && npm run test:privacy-boundary && npm run typecheck && npm run compile && npm test",
+    "deploy:testnet": "hardhat run scripts/deploy-testnet.ts --network cotiTestnet"
+  },
+  "dependencies": {
+    "@coti-io/coti-contracts": "1.3.5",
+    "@openzeppelin/contracts": "5.4.0",
+    "dotenv": "16.4.5"
+  },
+  "devDependencies": {
+    "@coti-io/coti-ethers": "1.0.6",
+    "@nomicfoundation/hardhat-toolbox": "5.0.0",
+    "@types/node": "26.1.1",
+    "chai": "4.5.0",
+    "hardhat": "2.29.0",
+    "solc": "0.8.28",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  }
+}
