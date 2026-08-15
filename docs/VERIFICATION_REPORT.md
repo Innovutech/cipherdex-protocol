@@ -17,7 +17,7 @@ Date: 2026-08-15
 - `npm run test:privacy-boundary`: passed
 - `npm run typecheck`: passed
 - `npm run compile`: passed
-- `npm test`: 13 passing, 1 pending integration placeholder
+- `npm test`: 17 passing, 1 pending integration placeholder
 - `npm run verify`: passed
 
 The full development graph still reports 46 advisories: 17 high, 10 moderate
@@ -49,11 +49,14 @@ but has not been executed against COTI testnet in this repository:
 4. Failed slippage execution with unchanged balances.
 5. Partial and full liquidity removal.
 6. Gas and wall-clock latency without logging private values.
-7. Launchpad migration with canonical token ordering, explicit encrypted
+7. Factory-created private LP-token mint/burn/transfer behavior and encrypted
+   caller-specific share recovery.
+8. Launchpad migration with canonical token ordering, explicit encrypted
    allowances, encrypted price bounds and atomic rollback on a failed bound.
 
-No mainnet deployment, generic router, PoD adapter, or cross-chain adapter is
-included in this foundation. See `FEASIBILITY_GATE.md` for why the standard
+No mainnet deployment, confidential generic router, PoD adapter, or cross-chain
+adapter is included in this foundation. Public pools do have a factory-gated
+router/quoter. See `FEASIBILITY_GATE.md` for why the standard
 PrivateERC20 interface cannot hide participant addresses and why asynchronous
 PoD transfers cannot be treated as atomic CPMM legs.
 

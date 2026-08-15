@@ -10,6 +10,11 @@
 - amounts held in timed/permanent LP locks;
 - amounts in the pool's own events and errors.
 
+Factory-created LP shares are represented by the pool-bound `PrivateLPToken`.
+Its standard transfer and approval events still reveal participant addresses, but
+not the encrypted amount. The token's public metadata and pool address are
+discoverable by design.
+
 ## Public
 
 - pool and token contract addresses;

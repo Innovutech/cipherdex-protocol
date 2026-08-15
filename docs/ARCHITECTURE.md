@@ -6,9 +6,17 @@
   math, swap execution and private LP share accounting.
 - `contracts/ConfidentialCPMMFactory.sol`: permissionless deterministic pool
   creation and public pool discovery.
+- `contracts/PrivateLPToken.sol`: pool-bound encrypted LP-share token using the
+  official COTI `PrivateERC20` implementation.
+- `contracts/PrivateLPTokenFactory.sol`: factory-owned deployer that keeps the
+  COTI token creation bytecode out of the canonical CPMM factory runtime.
 - `contracts/PublicCPMM.sol`: ordinary public/public ERC-20 CPMM with public
   amounts, fees, swaps, liquidity accounting and locks.
 - `contracts/PublicCPMMFactory.sol`: separate public/public pool registry.
+- `contracts/PublicCPMMQuoter.sol`: factory-gated read-only quotes for public
+  pools.
+- `contracts/PublicCPMMRouter.sol`: factory-gated exact-input routing for
+  public pools only.
 - `contracts/ConfidentialLaunchpadMigrator.sol`: atomic creator-signed pool
   creation/selection, encrypted allowance pulls and price-bounded bootstrap.
 - `contracts/interfaces/`: stable ABI surface for clients and future factory/router
@@ -46,11 +54,15 @@ declared decimals silently disagree with the token contract.
 
 ## LP accounting
 
-LP shares are ciphertext stored per provider and in aggregate. Initial liquidity is
-required to be balanced after decimal normalization. Subsequent deposits mint the
-minimum proportional share and transfer only the exact proportional amounts, so
-surplus input is not silently donated. Full exits withdraw the full private reserve
-values to avoid rounding dust.
+LP shares are ciphertext stored in aggregate by the pool. Factory-created pools
+also mint a pool-bound `PrivateLPToken` for each provider, so the encrypted share
+position can use the official COTI transfer and approval paths. The pool remains
+the only minter/burner. Directly deployed pools retain the internal ledger as a
+backward-compatible deployment mode. Initial liquidity is required to be balanced
+after decimal normalization. Subsequent deposits mint the minimum proportional
+share and transfer only the exact proportional amounts, so surplus input is not
+silently donated. Full exits withdraw the full private reserve values to avoid
+rounding dust.
 
 The share formula is intentionally conservative and should not be treated as a
 finished economic design until testnet benchmarks and independent review confirm
@@ -60,6 +72,10 @@ LP shares can be moved into a pool-enforced timelock or irreversible permanent
 lock. Lock metadata is public, but the locked share amount remains ciphertext. A
 permanent lock is excluded from provider balances and cannot be released by an
 administrator or the original provider.
+
+The LP token deliberately does not expose a public circulating supply: the base
+COTI `PrivateERC20` implementation returns zero for aggregate `totalSupply()`.
+Dashboards must not infer private TVL or aggregate LP supply from that method.
 
 ## Explicit non-goals
 
@@ -74,12 +90,17 @@ administrator or the original provider.
 
 ## Router boundary
 
-The first pool is intentionally called directly. COTI authenticated `itUint256`
+`PublicCPMMRouter` is intentionally limited to factory-registered ordinary
+ERC-20 pools. It temporarily holds the caller's public input, calls the pool,
+and forwards the public output; it has no admin withdrawal or token rescue path.
+The public quoter applies the same factory gate.
+
+Confidential pools are still called directly. COTI authenticated `itUint256`
 inputs bind the sender, target contract and function selector. A generic router
-that simply forwards an input would change `msg.sender` at the pool and invalidate
-the signature; a router that accepts the original user as an unchecked parameter
-would weaken that binding. A future router therefore needs an official, reviewed
-delegation primitive, not a forwarding wrapper.
+that simply forwards an input would change `msg.sender` at the pool and
+invalidate the signature; a router that accepts the original user as an
+unchecked parameter would weaken that binding. Private routing therefore needs
+an official, reviewed delegation primitive, not a forwarding wrapper.
 
 ## Launchpad migration boundary
 

@@ -12,8 +12,10 @@ interface IConfidentialCPMMFactory {
         uint256 feeBps,
         address pool
     );
+    event PrivateLPTokenCreated(address indexed pool, address indexed token);
 
     function PROTOCOL_VERSION() external view returns (uint256);
+    function lpTokenFactory() external view returns (address);
     function getPool(bytes32 key) external view returns (address);
     function isPool(address pool) external view returns (bool);
     function createPool(

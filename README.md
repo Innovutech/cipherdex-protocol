@@ -26,6 +26,15 @@ public amount events and share accounting are not reused by the confidential
 mode. A public/private mode will only be added where COTI MPC can settle the
 private leg without decrypting it inside the contract.
 
+Factory-created confidential pools bind a dedicated `PrivateLPToken` to the pool.
+Its balances and transfers use the official encrypted `PrivateERC20` paths; only
+the pool can mint or burn shares when liquidity is added, removed, or locked.
+Directly deployed pools keep the original internal share ledger for compatibility.
+
+Public pools additionally expose a factory-gated exact-input router and quoter.
+Confidential pools are called directly because their encrypted input signatures
+bind the caller and target pool.
+
 PoD assets are not accepted by this synchronous pool. PoD transfer and approval
 operations are asynchronous cross-chain callback workflows and require a separate
 adapter/state machine; treating them as ordinary ERC-20 calls would be incorrect.

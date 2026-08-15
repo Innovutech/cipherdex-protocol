@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@coti-io/coti-contracts/contracts/token/PrivateERC20/IPrivateERC20.sol";
 import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
+import "./interfaces/IPrivateLPToken.sol";
 
 /**
  * @title ConfidentialCPMM
@@ -31,6 +32,7 @@ contract ConfidentialCPMM {
     uint256 public immutable scale1;
     uint256 public immutable feeBps;
     address public immutable bootstrapper;
+    address public lpToken;
 
     bool public initialized;
 
@@ -70,6 +72,8 @@ contract ConfidentialCPMM {
     error PriceOutsideBounds();
     error BootstrapBalanceMismatch();
     error BootstrapUnauthorized();
+    error InvalidLPToken();
+    error LPTokenAlreadyInitialized();
     error InvalidLiquidityProvider();
     error InputAlreadyConsumed();
     error DeadlineExpired();
@@ -122,12 +126,26 @@ contract ConfidentialCPMM {
     }
 
     /**
+     * @notice Binds the factory-created private LP share token exactly once.
+     * @dev The factory deploys the pool first, then deploys a token whose
+     *      immutable pool address points back here. Directly deployed pools may
+     *      leave this unset and use the internal compatibility accounting.
+     */
+    function initializeLPToken(address lpToken_) external {
+        if (msg.sender != bootstrapper) revert BootstrapUnauthorized();
+        if (initialized || lpToken != address(0)) revert LPTokenAlreadyInitialized();
+        if (lpToken_.code.length == 0) revert InvalidLPToken();
+        if (IPrivateLPToken(lpToken_).pool() != address(this)) revert InvalidLPToken();
+        lpToken = lpToken_;
+    }
+
+    /**
      * @notice Returns a user-specific encrypted LP-share balance.
      * @dev This is intentionally non-view because MPC onboarding/offboarding is
      *      not a normal EVM static read on COTI.
      */
     function myShares() external returns (ctUint256 memory) {
-        return MpcCore.offBoardToUser(_readPrivate(shares[msg.sender]), msg.sender);
+        return MpcCore.offBoardToUser(_shareBalance(msg.sender), msg.sender);
     }
 
     /**
@@ -234,9 +252,13 @@ contract ConfidentialCPMM {
         }
 
         totalShares = MpcCore.offBoard(_addChecked(_readPrivate(totalShares), minted));
-        shares[msg.sender] = MpcCore.offBoard(
-            _addChecked(_readPrivate(shares[msg.sender]), minted)
-        );
+        if (lpToken == address(0)) {
+            shares[msg.sender] = MpcCore.offBoard(
+                _addChecked(_readPrivate(shares[msg.sender]), minted)
+            );
+        } else {
+            IPrivateLPToken(lpToken).mintGt(msg.sender, minted);
+        }
 
         IPrivateERC20(token0).transferFromGT(msg.sender, address(this), deposit0);
         IPrivateERC20(token1).transferFromGT(msg.sender, address(this), deposit1);
@@ -313,7 +335,11 @@ contract ConfidentialCPMM {
 
         initialized = true;
         totalShares = MpcCore.offBoard(minted);
-        shares[provider] = MpcCore.offBoard(minted);
+        if (lpToken == address(0)) {
+            shares[provider] = MpcCore.offBoard(minted);
+        } else {
+            IPrivateLPToken(lpToken).mintGt(provider, minted);
+        }
         emit PoolBootstrapped(provider);
         return MpcCore.offBoardToUser(minted, provider);
     }
@@ -332,7 +358,7 @@ contract ConfidentialCPMM {
         gtUint256 minimum0 = MpcCore.validateCiphertext(minAmount0);
         gtUint256 minimum1 = MpcCore.validateCiphertext(minAmount1);
         gtUint256 currentTotal = _readPrivate(totalShares);
-        gtUint256 userShares = _readPrivate(shares[msg.sender]);
+        gtUint256 userShares = _shareBalance(msg.sender);
 
         _requirePositive(requestedShares);
         _requirePositive(currentTotal);
@@ -354,9 +380,13 @@ contract ConfidentialCPMM {
         totalShares = MpcCore.offBoard(
             MpcCore.mux(fullExit, MpcCore.setPublic256(uint256(0)), _subChecked(currentTotal, requestedShares))
         );
-        shares[msg.sender] = MpcCore.offBoard(
-            _subChecked(userShares, requestedShares)
-        );
+        if (lpToken == address(0)) {
+            shares[msg.sender] = MpcCore.offBoard(
+                _subChecked(userShares, requestedShares)
+            );
+        } else {
+            IPrivateLPToken(lpToken).burnFromPool(msg.sender, requestedShares);
+        }
         if (MpcCore.decrypt(fullExit)) initialized = false;
 
         IPrivateERC20(token0).transferGT(msg.sender, amount0Calculated);
@@ -383,7 +413,7 @@ contract ConfidentialCPMM {
         if (!permanent && unlockTime <= block.timestamp) revert InvalidLiquidityRatio();
 
         gtUint256 requestedShares = _validateAndConsume(shareInput);
-        gtUint256 userShares = _readPrivate(shares[msg.sender]);
+        gtUint256 userShares = _shareBalance(msg.sender);
         _requirePositive(requestedShares);
         if (!MpcCore.decrypt(MpcCore.le(requestedShares, userShares))) {
             revert InsufficientPrivateShares();
@@ -397,7 +427,11 @@ contract ConfidentialCPMM {
             released: false,
             amount: MpcCore.offBoard(requestedShares)
         });
-        shares[msg.sender] = MpcCore.offBoard(_subChecked(userShares, requestedShares));
+        if (lpToken == address(0)) {
+            shares[msg.sender] = MpcCore.offBoard(_subChecked(userShares, requestedShares));
+        } else {
+            IPrivateLPToken(lpToken).burnFromPool(msg.sender, requestedShares);
+        }
 
         emit LiquidityLocked(lockId, msg.sender, unlockTime, permanent);
     }
@@ -413,7 +447,11 @@ contract ConfidentialCPMM {
         }
 
         gtUint256 locked = _readPrivate(record.amount);
-        shares[msg.sender] = MpcCore.offBoard(_addChecked(_readPrivate(shares[msg.sender]), locked));
+        if (lpToken == address(0)) {
+            shares[msg.sender] = MpcCore.offBoard(_addChecked(_readPrivate(shares[msg.sender]), locked));
+        } else {
+            IPrivateLPToken(lpToken).mintGt(msg.sender, locked);
+        }
         record.released = true;
 
         emit LiquidityUnlocked(lockId, msg.sender);
@@ -437,6 +475,11 @@ contract ConfidentialCPMM {
 
     function _reserve1() internal returns (gtUint256) {
         return IPrivateERC20(token1).balanceOf();
+    }
+
+    function _shareBalance(address account) internal returns (gtUint256) {
+        if (lpToken == address(0)) return _readPrivate(shares[account]);
+        return IPrivateLPToken(lpToken).balanceOfGT(account);
     }
 
     function _amountOut(

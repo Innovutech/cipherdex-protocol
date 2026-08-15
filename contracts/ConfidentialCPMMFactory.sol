@@ -2,8 +2,10 @@
 pragma solidity ^0.8.20;
 
 import "./ConfidentialCPMM.sol";
+import "./PrivateLPTokenFactory.sol";
 import "./interfaces/IConfidentialCPMM.sol";
 import "./interfaces/IConfidentialCPMMFactory.sol";
+import "./interfaces/IPrivateLPTokenFactory.sol";
 
 /**
  * @title ConfidentialCPMMFactory
@@ -17,10 +19,17 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
     mapping(bytes32 => address) public getPool;
     mapping(address => bool) public isPool;
     address[] private pools;
+    address public immutable lpTokenFactory;
 
     error InvalidTokenPair();
     error PoolAlreadyExists();
     error UnknownPool();
+
+    event PrivateLPTokenCreated(address indexed pool, address indexed token);
+
+    constructor() {
+        lpTokenFactory = address(new PrivateLPTokenFactory());
+    }
 
     function createPool(
         address tokenA,
@@ -47,11 +56,14 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
             decimals1,
             feeBps
         ));
+        address lpTokenAddress = IPrivateLPTokenFactory(lpTokenFactory).create(pool);
+        IConfidentialCPMM(pool).initializeLPToken(lpTokenAddress);
         getPool[key] = pool;
         isPool[pool] = true;
         pools.push(pool);
 
         emit PoolCreated(token0, token1, decimals0, decimals1, feeBps, pool);
+        emit PrivateLPTokenCreated(pool, lpTokenAddress);
     }
 
     function poolKey(

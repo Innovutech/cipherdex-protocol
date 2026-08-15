@@ -13,7 +13,10 @@ interface IConfidentialCPMM {
     function scale1() external view returns (uint256);
     function feeBps() external view returns (uint256);
     function bootstrapper() external view returns (address);
+    function lpToken() external view returns (address);
     function initialized() external view returns (bool);
+
+    function initializeLPToken(address lpToken_) external;
 
     function quoteExactInput(
         itUint256 calldata amountIn,

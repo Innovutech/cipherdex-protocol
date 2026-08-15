@@ -18,6 +18,7 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "function scale1() view returns (uint256)",
   "function feeBps() view returns (uint256)",
   "function bootstrapper() view returns (address)",
+  "function lpToken() view returns (address)",
   "function initialized() view returns (bool)",
   "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))",
   "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
@@ -38,6 +39,7 @@ export const CONFIDENTIAL_CPMM_ABI = [
 
 export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
+  "function lpTokenFactory() view returns (address)",
   "function getPool(bytes32) view returns (address)",
   "function isPool(address) view returns (bool)",
   "function createPool(address,address,uint8,uint8,uint256) returns (address)",
@@ -46,6 +48,21 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function allPools(uint256) view returns (address)",
   "function bootstrapPool(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))",
   "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
+  "event PrivateLPTokenCreated(address indexed pool,address indexed token)",
+] as const;
+
+export const PRIVATE_LP_TOKEN_ABI = [
+  "function pool() view returns (address)",
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)",
+  "function publicAmountsEnabled() view returns (bool)",
+  "function balanceOf() returns (uint256)",
+  "function transfer(address,((uint256,uint256),bytes))",
+  "function approve(address,((uint256,uint256),bytes))",
+  "event Transfer(address indexed from,address indexed to,(uint256,uint256),(uint256,uint256))",
+  "event Approval(address indexed owner,address indexed spender,(uint256,uint256),(uint256,uint256))",
+  "event AllowanceReencrypted(address indexed owner,address indexed spender,bool isSpender)",
 ] as const;
 
 export const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI = [
@@ -90,6 +107,19 @@ export const PUBLIC_CPMM_FACTORY_ABI = [
   "function allPoolsLength() view returns (uint256)",
   "function allPools(uint256) view returns (address)",
   "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
+] as const;
+
+export const PUBLIC_CPMM_QUOTER_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function factory() view returns (address)",
+  "function quoteExactInput(address,uint256,bool) view returns (uint256)",
+] as const;
+
+export const PUBLIC_CPMM_ROUTER_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function factory() view returns (address)",
+  "function swapExactInput(address,uint256,uint256,bool,uint64) returns (uint256)",
+  "event SwapRouted(address indexed trader,address indexed pool,address indexed inputToken,address outputToken,uint256 amountIn,uint256 amountOut)",
 ] as const;
 
 export type Ciphertext256 = {

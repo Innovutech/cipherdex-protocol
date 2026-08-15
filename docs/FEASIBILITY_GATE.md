@@ -60,8 +60,8 @@ or adapter. It must not be silently accepted by this synchronous pool.
 ## Required testnet gate before wider expansion
 
 The following must be demonstrated on COTI testnet with real onboarded test keys and
-official PrivateERC20 test tokens before adding factories, routers, launchpads or
-cross-domain adapters:
+official PrivateERC20 test tokens before treating the factory, router/quoter and
+launchpad boundaries as testnet-proven or adding cross-domain adapters:
 
 1. Encrypt and sign two input values with the official COTI SDK.
 2. Add balanced liquidity and decrypt only the caller-specific share result.
@@ -72,8 +72,9 @@ cross-domain adapters:
 6. Remove liquidity, including a full exit without residual reserve dust.
 7. Record gas and wall-clock latency without logging private values.
 
-The factory and launchpad contracts are now implemented as narrow, permissionless
-boundaries, but they are not testnet-proven by this repository yet. Until the gate
+The factory, pool-bound LP token and launchpad contracts are implemented as narrow,
+permissionless boundaries, but they are not testnet-proven by this repository yet.
+Until the gate
 passes, the safe product claim is “confidential amounts and private LP accounting
 for COTI PrivateERC20 pools with an unverified atomic bootstrap adapter,” not fully
 private trading or a production launchpad.
