@@ -87,6 +87,10 @@ describe("PublicCPMM", function () {
       pool.addLiquidity(token0IsA ? ethers.parseEther("1") : 1_000_001n, token0IsA ? 1_000_001n : ethers.parseEther("1"), 1n, 0xffffffff),
     ).to.be.revertedWithCustomError(pool, "InvalidLiquidityRatio");
 
+    await expect(
+      pool.lockShares(ethers.parseEther("1"), 1, true, 0xffffffff),
+    ).to.be.revertedWithCustomError(pool, "InvalidLock");
+
     const tx = await pool.lockShares(ethers.parseEther("10"), 0, true, 0xffffffff);
     const receipt = await tx.wait();
     const parsed = receipt?.logs

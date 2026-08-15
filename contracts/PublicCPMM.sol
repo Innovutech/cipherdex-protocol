@@ -226,7 +226,11 @@ contract PublicCPMM {
     ) external nonReentrant returns (bytes32 lockId) {
         _requireBeforeDeadline(deadline);
         if (shareInput == 0 || shareInput > shares[msg.sender]) revert InsufficientShares();
-        if (!permanent && unlockTime <= block.timestamp) revert InvalidLock();
+        if (
+            permanent
+                ? unlockTime != 0
+                : unlockTime <= block.timestamp
+        ) revert InvalidLock();
 
         lockId = keccak256(abi.encode(address(this), msg.sender, nextLockNonce++));
         locks[lockId] = LockRecord({

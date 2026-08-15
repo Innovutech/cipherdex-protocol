@@ -17,6 +17,7 @@ const MIGRATOR_ABI = [
 const POOL_ABI = [
   "function initialized() view returns (bool)",
   "function myShares() returns ((uint256,uint256))",
+  "function lockInfo(bytes32) view returns (address owner,uint64 unlockTime,bool permanent,bool released)",
 ];
 
 const requiredAddress = (name: string): string => {
@@ -226,7 +227,12 @@ async function main(): Promise<void> {
   } else {
     if (!lockDisposition) throw new Error("launchpad lock disposition event missing");
     if (lockDisposition.disposition !== disposition) throw new Error("launchpad lock disposition mismatch");
-    if (lockDisposition.lockId === ethers.ZeroHash) throw new Error("launchpad lock id missing");
+    if (disposition === 0 && lockDisposition.lockId !== ethers.ZeroHash) {
+      throw new Error("unexpected creator-held launchpad lock id");
+    }
+    if (disposition !== 0 && lockDisposition.lockId === ethers.ZeroHash) {
+      throw new Error("launchpad lock id missing");
+    }
     if (disposition === 1 && lockDisposition.unlockTime !== unlockTime) {
       throw new Error("launchpad unlock time mismatch");
     }
@@ -238,7 +244,26 @@ async function main(): Promise<void> {
   const pool = new Contract(poolAddress, POOL_ABI, wallet);
   if (!(await pool.initialized())) throw new Error("launchpad pool was not initialized");
   const shares = await pool.myShares.staticCall();
-  await wallet.decryptValue256(shares);
+  const decryptedShares = await wallet.decryptValue256(shares);
+  if (disposition === undefined || disposition === 0) {
+    if (decryptedShares <= 0n) throw new Error("creator-held launchpad shares were not minted");
+  } else {
+    if (decryptedShares !== 0n) throw new Error("locked launchpad shares were exposed to creator");
+    if (!lockDisposition || lockDisposition.lockId === ethers.ZeroHash) {
+      throw new Error("locked launchpad disposition state missing");
+    }
+    const lockInfo = await pool.lockInfo(lockDisposition.lockId);
+    if ((lockInfo.owner as string).toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new Error("launchpad lock owner mismatch");
+    }
+    if (Boolean(lockInfo.permanent) !== (disposition === 2)) {
+      throw new Error("launchpad lock permanence mismatch");
+    }
+    if (Boolean(lockInfo.released)) throw new Error("launchpad lock was released unexpectedly");
+    if (disposition === 1 && BigInt(lockInfo.unlockTime) !== unlockTime) {
+      throw new Error("launchpad pool lock time mismatch");
+    }
+  }
   console.log(`launchpad pool: ${poolAddress}`);
   console.log("COTI launchpad migration completed without printing private values.");
 }

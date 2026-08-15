@@ -489,7 +489,11 @@ contract ConfidentialCPMM {
         uint64 deadline
     ) external nonReentrant returns (bytes32 lockId) {
         _requireBeforeDeadline(deadline);
-        if (!permanent && unlockTime <= block.timestamp) revert InvalidLiquidityRatio();
+        if (
+            permanent
+                ? unlockTime != 0
+                : unlockTime <= block.timestamp
+        ) revert InvalidLPDisposition();
 
         gtUint256 requestedShares = _validateAndConsume(shareInput);
         gtUint256 userShares = _shareBalance(msg.sender);
