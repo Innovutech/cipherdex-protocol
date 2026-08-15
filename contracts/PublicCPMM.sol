@@ -180,6 +180,11 @@ contract PublicCPMM {
             initialized = true;
         } else {
             if (before0 == 0 || before1 == 0 || totalShares == 0) revert PoolNotInitialized();
+            uint256 proportionalReceived1 = Math.mulDiv(received0, before1, before0);
+            if (
+                proportionalReceived1 != received1 ||
+                mulmod(received0, before1, before0) != 0
+            ) revert InvalidLiquidityRatio();
             uint256 share0 = Math.mulDiv(received0, totalShares, before0);
             uint256 share1 = Math.mulDiv(received1, totalShares, before1);
             if (share0 == 0 || share0 != share1) revert InvalidLiquidityRatio();

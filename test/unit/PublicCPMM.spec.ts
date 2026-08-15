@@ -107,4 +107,36 @@ describe("PublicCPMM", function () {
     await expect(pool.unlockShares(lockId)).to.be.revertedWithCustomError(pool, "InvalidLock");
     expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("90"));
   });
+
+  it("rejects floored-share deposits that would donate public tokens", async function () {
+    const [owner] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const token0 = await tokenFactory.deploy("Token 0", "TK0", 18);
+    const token1 = await tokenFactory.deploy("Token 1", "TK1", 18);
+    await token0.waitForDeployment();
+    await token1.waitForDeployment();
+
+    const poolFactory = await ethers.getContractFactory("PublicCPMM");
+    const pool = await poolFactory.deploy(
+      await token0.getAddress(),
+      await token1.getAddress(),
+      18,
+      18,
+      30,
+    );
+    await pool.waitForDeployment();
+
+    await token0.mint(owner.address, ethers.parseEther("20"));
+    await token1.mint(owner.address, ethers.parseEther("20"));
+    await token0.approve(await pool.getAddress(), ethers.MaxUint256);
+    await token1.approve(await pool.getAddress(), ethers.MaxUint256);
+    await pool.addLiquidity(ethers.parseEther("10"), ethers.parseEther("10"), 1n, 0xffffffff);
+
+    // The extra wei makes the raw reserve ratio 11:10. The 2:1 deposit would
+    // produce the same floored share value under the old implementation, but
+    // is not actually proportional and must not donate the excess token.
+    await token0.transfer(await pool.getAddress(), 1n);
+    await expect(pool.addLiquidity(2n, 1n, 1n, 0xffffffff))
+      .to.be.revertedWithCustomError(pool, "InvalidLiquidityRatio");
+  });
 });
