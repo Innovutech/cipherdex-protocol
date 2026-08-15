@@ -34,6 +34,8 @@ describe("stable SDK surface", function () {
     expect(pool.getFunction("bootstrapLiquidity")).to.not.equal(null);
     expect(pool.getFunction("bootstrapLiquidityWithDisposition")).to.not.equal(null);
     expect(factory.getFunction("createPool")).to.not.equal(null);
+    expect(factory.getFunction("setBootstrapAdapter")).to.not.equal(null);
+    expect(factory.getFunction("bootstrapAdapter")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPool")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPoolWithDisposition")).to.not.equal(null);
     expect(factory.getEvent("PoolCreated")).to.not.equal(null);

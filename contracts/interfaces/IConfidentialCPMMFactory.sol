@@ -13,9 +13,12 @@ interface IConfidentialCPMMFactory {
         address pool
     );
     event PrivateLPTokenCreated(address indexed pool, address indexed token);
+    event BootstrapAdapterConfigured(address indexed adapter);
 
     function PROTOCOL_VERSION() external view returns (uint256);
     function lpTokenFactory() external view returns (address);
+    function bootstrapConfigurator() external view returns (address);
+    function bootstrapAdapter() external view returns (address);
     function getPool(bytes32 key) external view returns (address);
     function isPool(address pool) external view returns (bool);
     function createPool(
@@ -25,6 +28,7 @@ interface IConfidentialCPMMFactory {
         uint8 decimalsB,
         uint256 feeBps
     ) external returns (address pool);
+    function setBootstrapAdapter(address adapter) external;
     function poolKey(
         address token0,
         address token1,

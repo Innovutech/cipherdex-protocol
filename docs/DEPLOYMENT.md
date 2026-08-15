@@ -12,8 +12,10 @@ is no mainnet deployment script or mainnet network entry.
 5. Run `npm run verify`.
 6. Run `npm run deploy:testnet`. This deploys the confidential permissionless
    factory, its pool-bound LP-token deployer, the atomic encrypted launchpad
-   migrator, and the public factory/quoter/router. It does not create a pool or
-   move tokens.
+   migrator, binds that migrator as the factory's one-time bootstrap adapter,
+   and deploys the public factory/quoter/router. It does not create a pool or
+   move tokens. The factory bootstrap hooks remain disabled until that one-time
+   adapter binding succeeds.
 7. Record every printed public address, deployment transaction hash, gas value,
    compiler settings, and testnet RPC in a local release record. Do not commit
    private keys or private ciphertexts.

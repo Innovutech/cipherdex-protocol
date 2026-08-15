@@ -28,6 +28,12 @@ async function main(): Promise<void> {
     launchpadFactory,
     await factory.getAddress(),
   );
+  const adapterTx = await factory.setBootstrapAdapter(await launchpad.getAddress());
+  const adapterReceipt = await adapterTx.wait();
+  console.log(
+    `launchpad adapter configured: ${await launchpad.getAddress()} ` +
+      `tx=${adapterTx.hash} gas=${adapterReceipt?.gasUsed?.toString() ?? "unknown"}`,
+  );
 
   const publicFactoryFactory = await ethers.getContractFactory("PublicCPMMFactory");
   const publicFactory = await deployAndReport("PublicCPMMFactory", publicFactoryFactory);

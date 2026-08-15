@@ -7,6 +7,12 @@ launchpad that must migrate a creator's final bonding-curve liquidity into a new
 or empty `ConfidentialCPMM` pool. It is separate from CipherTools and has no admin,
 withdrawal, fee-manager or token-rescue authority.
 
+The confidential factory accepts bootstrap calls only from the migrator address
+bound once by `setBootstrapAdapter` during deployment. This prevents a third party
+from front-running a deterministic empty pool with an unsolicited donation and
+initializing it before the intended migration. The binding cannot be changed
+after configuration and does not grant withdrawal or fee-management authority.
+
 ## Atomic sequence
 
 1. The creator determines the canonical pool token order, final seed amounts and

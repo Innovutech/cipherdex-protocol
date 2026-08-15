@@ -31,12 +31,37 @@ describe("ConfidentialCPMMFactory", function () {
     expect(await factory.isPool(pool)).to.equal(true);
     const lpTokenFactoryAddress = await factory.lpTokenFactory();
     expect(lpTokenFactoryAddress).to.not.equal(ethers.ZeroAddress);
+    expect(await factory.bootstrapAdapter()).to.equal(ethers.ZeroAddress);
     const lpTokenFactory = await ethers.getContractAt("PrivateLPTokenFactory", lpTokenFactoryAddress);
     expect(await lpTokenFactory.owner()).to.equal(await factory.getAddress());
-    const [, outsider] = await ethers.getSigners();
+    const [deployer, outsider] = await ethers.getSigners();
+    expect(await factory.bootstrapConfigurator()).to.equal(deployer.address);
     await expect(
       lpTokenFactory.connect(outsider).create(pool),
     ).to.be.revertedWithCustomError(lpTokenFactory, "Unauthorized");
+
+    const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
+    const migrator = await migratorFactory.deploy(await factory.getAddress());
+    await migrator.waitForDeployment();
+    await expect(
+      factory.connect(outsider).setBootstrapAdapter(await migrator.getAddress()),
+    ).to.be.revertedWithCustomError(factory, "BootstrapAdapterUnauthorized");
+    await factory.setBootstrapAdapter(await migrator.getAddress());
+    expect(await factory.bootstrapAdapter()).to.equal(await migrator.getAddress());
+    await expect(
+      factory.setBootstrapAdapter(await migrator.getAddress()),
+    ).to.be.revertedWithCustomError(factory, "BootstrapAdapterAlreadyConfigured");
+    await expect(
+      factory.connect(outsider).bootstrapPool(
+        pool,
+        outsider.address,
+        1n,
+        1n,
+        1n,
+        0n,
+        2n,
+      ),
+    ).to.be.revertedWithCustomError(factory, "BootstrapAdapterUnauthorized");
     expect(await factory.allPoolsLength()).to.equal(1n);
     expect(await factory.allPools(0)).to.equal(pool);
 

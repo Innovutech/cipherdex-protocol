@@ -56,9 +56,12 @@ export const CONFIDENTIAL_CPMM_ABI = [
 export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function lpTokenFactory() view returns (address)",
+  "function bootstrapConfigurator() view returns (address)",
+  "function bootstrapAdapter() view returns (address)",
   "function getPool(bytes32) view returns (address)",
   "function isPool(address) view returns (bool)",
   "function createPool(address,address,uint8,uint8,uint256) returns (address)",
+  "function setBootstrapAdapter(address)",
   "function poolKey(address,address,uint8,uint8,uint256) pure returns (bytes32)",
   "function allPoolsLength() view returns (uint256)",
   "function allPools(uint256) view returns (address)",
@@ -66,6 +69,7 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function bootstrapPoolWithDisposition(address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)",
   "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
   "event PrivateLPTokenCreated(address indexed pool,address indexed token)",
+  "event BootstrapAdapterConfigured(address indexed adapter)",
 ] as const;
 
 export const PRIVATE_LP_TOKEN_ABI = [

@@ -20,13 +20,32 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
     mapping(address => bool) public isPool;
     address[] private pools;
     address public immutable lpTokenFactory;
+    address public immutable bootstrapConfigurator;
+    address public bootstrapAdapter;
 
     error InvalidTokenPair();
     error PoolAlreadyExists();
     error UnknownPool();
+    error BootstrapAdapterUnauthorized();
+    error BootstrapAdapterAlreadyConfigured();
+    error InvalidBootstrapAdapter();
 
     constructor() {
+        bootstrapConfigurator = msg.sender;
         lpTokenFactory = address(new PrivateLPTokenFactory());
+    }
+
+    /**
+     * @notice Binds the one launchpad adapter allowed to initialize a factory pool.
+     * @dev This is a one-time deployment operation. It cannot change pool
+     *      parameters, withdraw tokens, or be repeated after configuration.
+     */
+    function setBootstrapAdapter(address adapter) external {
+        if (msg.sender != bootstrapConfigurator) revert BootstrapAdapterUnauthorized();
+        if (bootstrapAdapter != address(0)) revert BootstrapAdapterAlreadyConfigured();
+        if (adapter.code.length == 0) revert InvalidBootstrapAdapter();
+        bootstrapAdapter = adapter;
+        emit BootstrapAdapterConfigured(adapter);
     }
 
     function createPool(
@@ -92,6 +111,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
         uint256 minPriceX18,
         uint256 maxPriceX18
     ) external returns (ctUint256 memory mintedShares) {
+        if (msg.sender != bootstrapAdapter) revert BootstrapAdapterUnauthorized();
         if (!isPool[pool]) revert UnknownPool();
         return IConfidentialCPMM(pool).bootstrapLiquidity(
             provider,
@@ -118,6 +138,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
         uint8 disposition,
         uint64 unlockTime
     ) external returns (ctUint256 memory mintedShares, bytes32 lockId) {
+        if (msg.sender != bootstrapAdapter) revert BootstrapAdapterUnauthorized();
         if (!isPool[pool]) revert UnknownPool();
         return IConfidentialCPMM(pool).bootstrapLiquidityWithDisposition(
             provider,
