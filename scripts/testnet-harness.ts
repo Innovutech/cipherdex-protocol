@@ -1,5 +1,6 @@
 import { CotiNetwork, Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { Contract, JsonRpcProvider } from "ethers";
+import { CONFIDENTIAL_POOL_TESTNET_ABI } from "./coti-testnet-abi";
 
 async function main(): Promise<void> {
   const poolAddress = process.env.COTI_POOL?.trim();
@@ -20,11 +21,7 @@ async function main(): Promise<void> {
   const wallet = new CotiWallet(privateKey, provider, { aesKey });
   wallet.setAesKey(aesKey);
 
-  const abi = [
-    "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))",
-    "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
-  ];
-  const pool = new Contract(poolAddress, abi, wallet);
+  const pool = new Contract(poolAddress, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
   const quoteSelector = pool.interface.getFunction("quoteExactInput")?.selector;
   const swapSelector = pool.interface.getFunction("swapExactInput")?.selector;
   if (!quoteSelector || !swapSelector) throw new Error("COTI pool selectors are unavailable");

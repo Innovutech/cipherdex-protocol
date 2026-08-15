@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import "./CipherDEXFeePolicy.sol";
 
 /**
  * @title PublicCPMM
@@ -14,14 +15,11 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
  * the normal ERC-20 settlement data. It shares the same fee and rounding
  * conventions, but does not read or write COTI MPC values.
  */
-contract PublicCPMM {
+contract PublicCPMM is CipherDEXFeePolicy {
     using SafeERC20 for IERC20;
 
     uint256 public constant PROTOCOL_VERSION = 1;
     uint8 public constant PRIVACY_MODE = 0;
-    uint256 public constant FEE_DENOMINATOR = 10_000;
-    uint256 public constant MAX_FEE_BPS = 1_000;
-
     address public immutable token0;
     address public immutable token1;
     uint8 public immutable token0Decimals;
@@ -29,10 +27,13 @@ contract PublicCPMM {
     uint256 public immutable scale0;
     uint256 public immutable scale1;
     uint256 public immutable feeBps;
+    address public immutable feeVault;
 
     bool public initialized;
     uint256 public totalShares;
     mapping(address => uint256) public shares;
+    uint256 public protocolFees0;
+    uint256 public protocolFees1;
     uint256 public nextLockNonce;
 
     struct LockRecord {
@@ -49,6 +50,7 @@ contract PublicCPMM {
     error InvalidTokenPair();
     error InvalidDecimals();
     error InvalidFee();
+    error InvalidFeeVault();
     error InvalidAmount();
     error PoolNotInitialized();
     error PoolAlreadyInitialized();
@@ -62,6 +64,8 @@ contract PublicCPMM {
     error Reentrancy();
     error UnmanagedBalance();
     error TransferAmountMismatch();
+    error ProtocolFeeAccountingMismatch();
+    error NoProtocolFees();
 
     event SwapExecuted(
         address indexed trader,
@@ -89,6 +93,12 @@ contract PublicCPMM {
         uint256 shares
     );
     event LiquidityUnlocked(bytes32 indexed lockId, address indexed owner, uint256 shares);
+    event ProtocolFeeAccrued(address indexed token, uint256 amount);
+    event ProtocolFeesCollected(
+        address indexed feeVault,
+        uint256 token0Amount,
+        uint256 token1Amount
+    );
 
     modifier nonReentrant() {
         if (reentrancyState != 1) revert Reentrancy();
@@ -102,13 +112,15 @@ contract PublicCPMM {
         address token1_,
         uint8 token0Decimals_,
         uint8 token1Decimals_,
-        uint256 feeBps_
+        uint256 feeBps_,
+        address feeVault_
     ) {
         if (token0_ == address(0) || token1_ == address(0) || token0_ == token1_) {
             revert InvalidTokenPair();
         }
         if (token0Decimals_ > 18 || token1Decimals_ > 18) revert InvalidDecimals();
-        if (feeBps_ > MAX_FEE_BPS) revert InvalidFee();
+        if (!isApprovedFeeTier(feeBps_)) revert InvalidFee();
+        if (feeVault_.code.length == 0) revert InvalidFeeVault();
         if (_readTokenDecimals(token0_) != token0Decimals_) revert InvalidDecimals();
         if (_readTokenDecimals(token1_) != token1Decimals_) revert InvalidDecimals();
 
@@ -119,6 +131,7 @@ contract PublicCPMM {
         scale0 = 10 ** (18 - token0Decimals_);
         scale1 = 10 ** (18 - token1Decimals_);
         feeBps = feeBps_;
+        feeVault = feeVault_;
     }
 
     function quoteExactInput(uint256 amountIn, bool zeroForOne)
@@ -141,15 +154,23 @@ contract PublicCPMM {
 
         IERC20 inputToken = IERC20(zeroForOne ? token0 : token1);
         IERC20 outputToken = IERC20(zeroForOne ? token1 : token0);
-        uint256 reserveIn = inputToken.balanceOf(address(this));
-        uint256 reserveOut = outputToken.balanceOf(address(this));
+        (uint256 reserveIn, uint256 reserveOut) = _reserves(zeroForOne);
+        uint256 rawInputBefore = inputToken.balanceOf(address(this));
         inputToken.safeTransferFrom(msg.sender, address(this), amountIn);
-        uint256 received = inputToken.balanceOf(address(this)) - reserveIn;
+        uint256 received = inputToken.balanceOf(address(this)) - rawInputBefore;
         if (received == 0) revert TransferAmountMismatch();
 
         amountOut = _amountOut(received, reserveIn, reserveOut);
         if (amountOut < minAmountOut) revert SlippageExceeded();
+        uint256 netAmountIn = _netAmount(received);
+        uint256 protocolFee = _protocolFeeFromTotal(received - netAmountIn);
+        if (zeroForOne) {
+            protocolFees0 += protocolFee;
+        } else {
+            protocolFees1 += protocolFee;
+        }
         outputToken.safeTransfer(msg.sender, amountOut);
+        if (protocolFee != 0) emit ProtocolFeeAccrued(address(inputToken), protocolFee);
         emit SwapExecuted(msg.sender, zeroForOne, received, amountOut);
     }
 
@@ -164,12 +185,14 @@ contract PublicCPMM {
 
         IERC20 first = IERC20(token0);
         IERC20 second = IERC20(token1);
-        uint256 before0 = first.balanceOf(address(this));
-        uint256 before1 = second.balanceOf(address(this));
+        uint256 rawBefore0 = first.balanceOf(address(this));
+        uint256 rawBefore1 = second.balanceOf(address(this));
+        uint256 before0 = _effectiveBalance(rawBefore0, protocolFees0);
+        uint256 before1 = _effectiveBalance(rawBefore1, protocolFees1);
         first.safeTransferFrom(msg.sender, address(this), amount0);
         second.safeTransferFrom(msg.sender, address(this), amount1);
-        uint256 received0 = first.balanceOf(address(this)) - before0;
-        uint256 received1 = second.balanceOf(address(this)) - before1;
+        uint256 received0 = first.balanceOf(address(this)) - rawBefore0;
+        uint256 received1 = second.balanceOf(address(this)) - rawBefore1;
         if (received0 == 0 || received1 == 0) revert TransferAmountMismatch();
 
         if (!initialized) {
@@ -208,8 +231,7 @@ contract PublicCPMM {
         if (shareInput == 0 || totalShares == 0) revert InsufficientShares();
         if (shareInput > shares[msg.sender]) revert InsufficientShares();
 
-        uint256 reserve0 = IERC20(token0).balanceOf(address(this));
-        uint256 reserve1 = IERC20(token1).balanceOf(address(this));
+        (uint256 reserve0, uint256 reserve1) = _effectiveReserves();
         if (reserve0 == 0 || reserve1 == 0) revert InsufficientLiquidity();
         bool fullExit = shareInput == totalShares;
         amount0 = fullExit ? reserve0 : Math.mulDiv(shareInput, reserve0, totalShares);
@@ -222,6 +244,32 @@ contract PublicCPMM {
         IERC20(token0).safeTransfer(msg.sender, amount0);
         IERC20(token1).safeTransfer(msg.sender, amount1);
         emit LiquidityRemoved(msg.sender, amount0, amount1, shareInput);
+    }
+
+    /**
+     * @notice Moves only accrued protocol-owned balances to the immutable vault.
+     * @dev Permissionless execution is safe because the destination cannot be
+     *      changed. State is cleared before external transfers and restored by
+     *      transaction rollback if either transfer fails.
+     */
+    function collectProtocolFees()
+        external
+        nonReentrant
+        returns (uint256 amount0, uint256 amount1)
+    {
+        amount0 = protocolFees0;
+        amount1 = protocolFees1;
+        if (amount0 == 0 && amount1 == 0) revert NoProtocolFees();
+
+        protocolFees0 = 0;
+        protocolFees1 = 0;
+        if (amount0 != 0) IERC20(token0).safeTransfer(feeVault, amount0);
+        if (amount1 != 0) IERC20(token1).safeTransfer(feeVault, amount1);
+        emit ProtocolFeesCollected(feeVault, amount0, amount1);
+    }
+
+    function effectiveReserves() external view returns (uint256 reserve0, uint256 reserve1) {
+        return _effectiveReserves();
     }
 
     function lockShares(
@@ -273,8 +321,32 @@ contract PublicCPMM {
         view
         returns (uint256 reserveIn, uint256 reserveOut)
     {
-        reserveIn = IERC20(zeroForOne ? token0 : token1).balanceOf(address(this));
-        reserveOut = IERC20(zeroForOne ? token1 : token0).balanceOf(address(this));
+        (uint256 reserve0, uint256 reserve1) = _effectiveReserves();
+        return zeroForOne ? (reserve0, reserve1) : (reserve1, reserve0);
+    }
+
+    function _effectiveReserves()
+        internal
+        view
+        returns (uint256 reserve0, uint256 reserve1)
+    {
+        reserve0 = _effectiveBalance(
+            IERC20(token0).balanceOf(address(this)),
+            protocolFees0
+        );
+        reserve1 = _effectiveBalance(
+            IERC20(token1).balanceOf(address(this)),
+            protocolFees1
+        );
+    }
+
+    function _effectiveBalance(uint256 rawBalance, uint256 accruedProtocolFee)
+        internal
+        pure
+        returns (uint256)
+    {
+        if (rawBalance < accruedProtocolFee) revert ProtocolFeeAccountingMismatch();
+        return rawBalance - accruedProtocolFee;
     }
 
     function _amountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut)
@@ -283,7 +355,7 @@ contract PublicCPMM {
         returns (uint256 amountOut)
     {
         if (amountIn == 0 || reserveIn == 0 || reserveOut == 0) revert InsufficientLiquidity();
-        uint256 netIn = Math.mulDiv(amountIn, FEE_DENOMINATOR - feeBps, FEE_DENOMINATOR);
+        uint256 netIn = _netAmount(amountIn);
         if (netIn == 0) revert InvalidAmount();
         uint256 newReserveIn = reserveIn + netIn;
         if (newReserveIn < reserveIn) revert InsufficientLiquidity();
@@ -296,6 +368,10 @@ contract PublicCPMM {
         if (retained >= reserveOut) revert InsufficientLiquidity();
         amountOut = reserveOut - retained;
         if (amountOut == 0) revert InsufficientLiquidity();
+    }
+
+    function _netAmount(uint256 amountIn) internal view returns (uint256) {
+        return Math.mulDiv(amountIn, FEE_DENOMINATOR - feeBps, FEE_DENOMINATOR);
     }
 
     function _requireBeforeDeadline(uint64 deadline) internal view {

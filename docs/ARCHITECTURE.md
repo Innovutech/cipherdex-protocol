@@ -13,6 +13,10 @@
 - `contracts/PublicCPMM.sol`: ordinary public/public ERC-20 CPMM with public
   amounts, fees, swaps, liquidity accounting and locks.
 - `contracts/PublicCPMMFactory.sol`: separate public/public pool registry.
+- `contracts/CipherDEXFeePolicy.sol`: immutable approved v1 total-fee tiers and
+  LP/protocol split shared by both pool modes.
+- `contracts/CipherDEXFeeVault.sol`: immutable protocol-fee destination with
+  mode-separated public/private sweeps and delayed private aggregation.
 - `contracts/PublicCPMMQuoter.sol`: factory-gated read-only quotes for public
   pools.
 - `contracts/PublicCPMMRouter.sol`: factory-gated exact-input routing for
@@ -21,6 +25,16 @@
   creation/selection, encrypted allowance pulls and price-bounded bootstrap.
 - `contracts/interfaces/`: stable ABI surface for clients and future factory/router
   work.
+- `periphery/`: documented boundary for routing, quoter and future adapters;
+  current public periphery contracts remain under `contracts/` for shared
+factory-gate compilation.
+
+Protocol-owned public input fees are tracked per token and subtracted from raw
+balances before quoting, liquidity accounting, and invariant checks. LP exits
+cannot claim them, and moving them to the fixed vault leaves effective reserves
+unchanged.
+- `deployments/`: sanitized public deployment-record boundary; secrets and
+  unreviewed generated records are excluded.
 - `sdk/`: dependency-free ABI fragments and privacy-minimal discovery types for
   dashboards, launchpads and third-party integrations.
 - `scripts/`: explicit COTI testnet deployment only.
@@ -36,12 +50,12 @@ represented as an enabled value; recipient and participant addresses remain
 public under the official PrivateERC20 interface.
 
 The pool is a non-custodial pair of official COTI PrivateERC20-compatible assets.
-It reads actual pool balances as MPC values rather than maintaining a second public
-reserve ledger. This avoids a public duplicate of confidential reserves.
-The first ordinary liquidity add requires both pre-existing reserves to be zero,
-and launchpad bootstrap requires the post-transfer balances to equal the signed
-seed values exactly; unsolicited private-token donations cannot alter the initial
-share or price relationship.
+It maintains encrypted protocol-accounting reserves rather than a public reserve
+ledger or a raw-balance price oracle. Compatible token transfers revert
+atomically on failure. Unsolicited private-token donations remain outside the
+accounting reserves and cannot alter price or LP claims. The first ordinary
+liquidity add requires both accounting reserves to be zero; the first LP may
+establish any non-zero normalized token ratio.
 
 The swap formula is:
 
@@ -57,6 +71,18 @@ operations reject overflow or underflow via boolean outcomes; no amount is
 decrypted for validation. State-changing operations also carry a caller-chosen
 deadline to prevent stale encrypted quotes from executing.
 
+The fee deducted by this formula is the complete advertised swap fee. One sixth
+of its integer-rounded value accrues to the protocol and the remainder stays in
+effective reserves for LPs. There is no additional native-COTI swap payment.
+Public pools track each token's protocol fees in public counters; confidential
+pools use encrypted counters. Both collect only to an immutable fee vault, and
+collection never changes effective reserves or price. See `FEE_ECONOMICS.md`.
+
+Exact private quotes remain caller-encrypted. The core pool exposes no public
+reserve, TVL, spot-price, TWAP, or exact-quote getter. Public market data would
+be an intentional disclosure and therefore belongs, if ever added, in a
+separately reviewed optional oracle rather than the settlement pool.
+
 Pool construction also verifies each token's public `decimals()` response and
 rejects non-contract or incompatible metadata before storing normalization
 scales. The factory remains permissionless, but it cannot create a pool whose
@@ -68,11 +94,14 @@ LP shares are ciphertext stored in aggregate by the pool. Factory-created pools
 also mint a pool-bound `PrivateLPToken` for each provider, so the encrypted share
 position can use the official COTI transfer and approval paths. The pool remains
 the only minter/burner. Directly deployed pools retain the internal ledger as a
-backward-compatible deployment mode. Initial liquidity is required to be balanced
-after decimal normalization. Subsequent deposits mint the minimum proportional
-share and transfer only the exact proportional amounts, so surplus input is not
-silently donated. Full exits withdraw the full private reserve values to avoid
-rounding dust.
+backward-compatible deployment mode. Initial shares equal the smaller of the two
+18-decimal-normalized deposits. This supports an arbitrary non-zero initial price,
+avoids an overflow-prone encrypted product and square-root loop, and does not
+change ownership because the first LP receives 100% of issued shares. Subsequent
+deposits round shares down and accepted reserve contributions up, so a joining LP
+cannot dilute existing holders. The pool transfers only those accepted
+proportional amounts, so surplus input is not silently donated. Full exits
+withdraw the full private reserve values to avoid rounding dust.
 
 The share formula is intentionally conservative and should not be treated as a
 finished economic design until testnet benchmarks and independent review confirm
@@ -95,6 +124,7 @@ Dashboards must not infer private TVL or aggregate LP supply from that method.
 - no COTI PoD assets in the synchronous pool;
 - no mainnet deployment;
 - no admin withdrawal or mutable fee authority;
+- no extra native-COTI fee on swaps and no v1 pool-creation fee;
 - no dependency on CipherTools, CipherTrade, a centralized API or an indexer;
 - no promise of hidden recipient addresses under the standard PrivateERC20 events.
 
@@ -112,11 +142,21 @@ invalidate the signature; a router that accepts the original user as an
 unchecked parameter would weaken that binding. Private routing therefore needs
 an official, reviewed delegation primitive, not a forwarding wrapper.
 
+Off-chain routing does not require a protocol router. A quote service may use a
+dedicated onboarded COTI identity and AES key to request the same logical input
+against each canonical fee-tier candidate, decrypt the results only in process,
+and select the largest output. The current testnet uses encrypted transaction
+result events; a compatible future RPC may execute the same MPC path under
+`eth_call`. The service never holds funds or signs swaps. The user must
+re-encrypt fresh amount and slippage inputs for the selected pool and execute
+directly.
+
 ## Launchpad migration boundary
 
 The launchpad path does not forward authenticated inputs. The creator signs all
-five encrypted values for the migrator's exact selector. The migrator validates
-them, calls the official `transferFromGT` function under explicit encrypted
+five encrypted values for the migrator's exact selector and separately signs an
+EIP-712 migration authorization containing their ordered ciphertext commitment
+hash and public migration context. The migrator validates both layers, calls the official `transferFromGT` function under explicit encrypted
 allowances, and then calls the factory's pool bootstrap hook with the resulting MPC
 values. The pool verifies its actual private balances and encrypted normalized
 price bounds before setting its initial reserves/shares. Any failure reverts the

@@ -4,6 +4,21 @@ pragma solidity ^0.8.20;
 import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
 
 interface IConfidentialLaunchpadMigrator {
+    struct MigrationRequest {
+        address tokenA;
+        address tokenB;
+        uint8 decimalsA;
+        uint8 decimalsB;
+        uint256 feeBps;
+        itUint256 amount0;
+        itUint256 amount1;
+        itUint256 minShares;
+        itUint256 minPriceX18;
+        itUint256 maxPriceX18;
+        uint64 deadline;
+        bytes authorization;
+    }
+
     event LaunchpadMigration(address indexed creator, address indexed pool);
     event LaunchpadLockDisposition(
         address indexed creator,
@@ -16,33 +31,14 @@ interface IConfidentialLaunchpadMigrator {
     function PROTOCOL_VERSION() external view returns (uint256);
     function factory() external view returns (address);
 
-    function migrate(
-        address tokenA,
-        address tokenB,
-        uint8 decimalsA,
-        uint8 decimalsB,
-        uint256 feeBps,
-        itUint256 calldata amount0,
-        itUint256 calldata amount1,
-        itUint256 calldata minShares,
-        itUint256 calldata minPriceX18,
-        itUint256 calldata maxPriceX18,
-        uint64 deadline
-    ) external returns (address pool, ctUint256 memory mintedShares);
+    function migrate(MigrationRequest calldata request)
+        external
+        returns (address pool, ctUint256 memory mintedShares);
 
     function migrateWithDisposition(
-        address tokenA,
-        address tokenB,
-        uint8 decimalsA,
-        uint8 decimalsB,
-        uint256 feeBps,
-        itUint256 calldata amount0,
-        itUint256 calldata amount1,
-        itUint256 calldata minShares,
-        itUint256 calldata minPriceX18,
-        itUint256 calldata maxPriceX18,
-        uint64 deadline,
+        MigrationRequest calldata request,
         uint8 disposition,
         uint64 unlockTime
     ) external returns (address pool, ctUint256 memory mintedShares, bytes32 lockId);
+
 }

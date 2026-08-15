@@ -2,84 +2,171 @@
 
 Date: 2026-08-15
 
-## Environment
+## Scope and environment
 
 - Node: `v24.16.0`
 - npm: `11.13.0`
-- install: `npm ci --ignore-scripts`
-- Solidity compiler: pinned `solc@0.8.28`, loaded locally by Hardhat
-- deployment target: COTI testnet only (`7082400`)
+- Solidity: pinned local `solc@0.8.28`, Paris EVM
+- target: COTI testnet (`7082400`) only
+- install policy: `npm ci --ignore-scripts`
 
-## Passed checks
+This report covers the public and amount-confidential CPMMs, canonical factories,
+fee vault, public periphery, confidential quoting flow, private LP accounting,
+locks, atomic launchpad migration, SDK surface and testnet runners. It does not
+claim an external audit or mainnet readiness.
 
-- `npm audit --omit=dev --audit-level=high`: zero production findings
+## Automated verification
+
+- `npm audit --omit=dev --audit-level=high --json`: 0 production findings
 - `npm ls --omit=dev --all`: production graph resolved cleanly
-- `npm run test:privacy-boundary`: passed
-- `npm run typecheck`: passed
-- `npm run compile`: passed
-- `npm test`: 19 passing, 1 pending integration placeholder
-- `npm run verify`: all constituent checks passed; the aggregate rerun in this
-  environment was blocked only by the sandbox's npm advisory endpoint access
-  and was rerun successfully as separate checks with network access
+- full development audit: 46 findings (0 critical, 17 high, 10 moderate, 19 low)
+- privacy-boundary check: passed
+- security-boundary check: passed
+- TypeScript: passed
+- clean compile and TypeChain generation: passed
+- full local suite: 52 passing, 1 intentionally gated integration placeholder
+- deployment gas measurement: passed
 
-The full development graph still reports 46 advisories: 17 high, 10 moderate
-and 19 low. They are in Hardhat/compiler/test tooling and are documented in
-`DEPENDENCY_AUDIT_REPORT.md`; they are not bundled in the production dependency
-graph. The verification command intentionally keeps the production audit and
-full graph visible and does not suppress those findings.
+No dependency version or lockfile changed in this work. Development-only
+advisories and lifecycle/native-module review are recorded in
+`DEPENDENCY_AUDIT_REPORT.md`; none occurs in the production dependency graph.
 
-The local reference-property tests cover the fee-adjusted output formula,
-ceil-rounded retained reserves, invariant preservation, monotonicity and the
-output floor. Solidity construction tests also cover expired deadlines,
-token-decimal metadata validation, explicit public/confidential privacy modes,
-exact public liquidity ratios, rejection of unmanaged confidential reserves,
-explicit launchpad lock dispositions, and one-time factory binding of the
-launchpad bootstrap adapter.
+## Fee-economics evidence
 
-The confidential pool rejects nonzero private reserves that were not created by
-the pool's own accounting path before first initialization. Public pools reject
-deposits that are not exactly proportional to the existing reserves, including
-deposits that would otherwise be accepted after integer division rounded the
-share calculation down. The confidential factory does not expose an open
-bootstrap surface: the deployer binds the launchpad adapter once, and later
-bootstrap calls from other senders are rejected.
+The implementation and tests establish one advertised exact-input swap fee with
+no additional native-COTI platform payment. Approved immutable v1 tiers are 5,
+30 and 100 bps. One sixth of the integer-rounded total fee accrues to the
+protocol and the remainder stays in the pool for LPs.
 
-## Deliberately incomplete checks
+Public tests cover:
 
-The COTI testnet integration test remains pending because this repository does
-not contain a private key, AES key, pool address, or funded/onboarded test
-PrivateERC20 tokens. Supplying those values through `.env` and running
-`npm run testnet:harness` is required before a testnet demonstration can be
-claimed. Secrets must never be committed or printed.
+- separate token0/token1 protocol-fee counters;
+- quote/execution parity and fee rounding at tiny-value thresholds;
+- effective-reserve and invariant preservation in both directions;
+- permissionless collection only to the immutable vault;
+- unchanged price and effective reserves across collection;
+- beneficiary-only vault withdrawal and public/private token-mode separation;
+- malicious token callback rollback during vault collection;
+- partial/full LP exits excluding protocol-owned balances;
+- reinitialization while accrued protocol balances remain excluded.
 
-The following must be measured on testnet before considering a production
-release. The atomic launchpad migration path is compiled and locally guarded,
-but has not been executed against COTI testnet in this repository:
+Confidential construction, SDK and live-testnet checks establish encrypted
+per-token accumulators with no amount getter or amount-bearing event. Collection
+requires eight swaps and a one-hour pool window per selected side, then moves one
+encrypted aggregate to the immutable vault. The separate vault sweep has a
+24-hour per-token delay and emits no confidential amount.
 
-1. Encrypted liquidity add and caller-only share decryption.
-2. Both swap directions with encrypted minimum output.
-3. Quote behavior through the COTI-compatible RPC.
-4. Failed slippage execution with unchanged balances.
-5. Partial and full liquidity removal.
-6. Gas and wall-clock latency without logging private values.
-7. Factory-created private LP-token mint/burn/transfer behavior and encrypted
-   caller-specific share recovery.
-8. Launchpad migration with canonical token ordering, explicit encrypted
-   allowances, encrypted price bounds and atomic rollback on a failed bound.
-9. Launchpad creator-held, timed-lock and permanent-lock dispositions on COTI
-   testnet, including lock recovery and public lock metadata.
-10. Factory adapter binding and launchpad bootstrap on COTI testnet using the
-    deployed launchpad address.
+## COTI testnet evidence
 
-No mainnet deployment, confidential generic router, PoD adapter, or cross-chain
-adapter is included in this foundation. Public pools do have a factory-gated
-router/quoter. See `FEASIBILITY_GATE.md` for why the standard
-PrivateERC20 interface cannot hide participant addresses and why asynchronous
-PoD transfers cannot be treated as atomic CPMM legs.
+The preflight passed for two funded LP identities and a separate quote-service
+identity against two official `PrivateERC20`-compatible assets. It validated
+chain ID, gas, code, decimals, AES binding and caller-local encrypted balance
+recovery. Private keys, AES keys, balances, ciphertexts and decrypted values were
+not logged or persisted.
+
+The full confidential scenario completed against fresh v1 deployments:
+
+- fee vault: `0xB0DbEA341566E0B5B57148284C4EcDfdAD71cc93`
+- canonical factory: `0x6cdcBa60053119cB1bc8df2C5533cd36f0d79f75`
+- primary pool: `0xaD4E2F96c07f6ed54F3fDFc77009B25A0ee460F4`
+- quote candidate: `0x8604103B36F2Cf98215574335F715021BC5478bD`
+
+Observed behavior included arbitrary-ratio initialization, a proportional second
+LP join without surplus donation, two fee-tier candidates, transactional
+caller-encrypted quotes, local best-pool selection, direct swaps in both
+directions, expired/slippage/replay rejection, fee-batch counter isolation,
+premature collection rejection, second-LP exit, timed lock/unlock, permanent
+lock and a true full exit. A representative confidential swap used approximately
+6.50 million gas.
+
+The atomic launchpad scenario also completed against fresh contracts:
+
+- factory: `0xa145AF8e5D4Ae8fB359535A3F9D2A1252FF9c0F9`
+- migrator: `0xA8d73ED84Abf119F16Bf9E1Dc20b236385fd1022`
+- pool: `0x286b6D5E2D71BaBf1Da9b7D891C288B7340DdFa2`
+- migration transaction:
+  `0x68748b9c1643cb6191dc4209d9f3e93b0932371911b1869cd814de8c6bae3939`
+- migration gas: 13,036,844
+
+The runner proved rollback for an impossible encrypted price interval, then a
+successful canonical migration using the same immutable fee policy and vault.
+It rejected replay of the successful request without additional token movement.
+The EIP-712 ciphertext commitment encodes COTI `ctUint128` limbs as Solidity
+`uint256`; a greater-than-128-bit fixture prevents regression to the incorrect
+narrow encoding.
+
+The mature confidential fee-batch runner prepared the disposable quote pool with
+eight swaps in each direction and observed the immutable one-hour window. After
+the contract timestamp became eligible, it completed a full LP exit and then
+collected both encrypted protocol-fee aggregates to the fixed vault:
+
+- full LP exit transaction:
+  `0x4f0022127a28c99205cbf542e12e0cb0905f6d5864cc5305d5b613688279ee68`
+  (5,405,114 gas)
+- encrypted fee collection transaction:
+  `0x2937344fe59120d54e730f6cbd395eb28ac0d1d8781d1323c0e3b03299617cc6`
+  (1,206,913 gas)
+
+Both public batch counters were zero after collection. No confidential amount
+was decrypted, returned or emitted.
+
+## Compiler, size and gas review
+
+| Contract | Creation bytes | Runtime bytes | Local deployment gas |
+| --- | ---: | ---: | ---: |
+| `CipherDEXFeeVault` | 1,917 | 1,714 | 447,550 |
+| `ConfidentialCPMM` | 15,329 | 14,326 | deployed by factory |
+| `ConfidentialCPMMFactory` | 32,340 | 18,677 | 6,999,610 |
+| `ConfidentialLaunchpadMigrator` | 8,557 | 8,193 | 1,850,333 |
+| `PublicCPMM` | 8,976 | 7,453 | deployed by factory |
+| `PublicCPMMFactory` | 10,860 | 10,671 | 2,352,988 |
+| `PublicCPMMRouter` | 2,096 | 1,908 | 489,742 |
+| `PublicCPMMQuoter` | 816 | 640 | 193,697 |
+
+All runtime bytecode remains below the 24,576-byte EIP-170 limit. Factory
+initcode remains below the 49,152-byte EIP-3860 limit. COTI testnet runners use
+an explicit gas ceiling below the observed 120,000,000 block limit because the
+RPC does not support Hardhat's pending-block estimation path; receipts still
+record and charge actual gas.
+
+## Privacy conclusions
+
+The pool never decrypts an amount. It decrypts only policy booleans needed to
+accept or reject an operation. Confidential reserves, LP shares, liquidity
+amounts, quote values, slippage and protocol-fee values have no public plaintext
+read model. Participant addresses, direction, timing and fee-batch counts remain
+public at the EVM layer.
+
+Permissionless encrypted quoting protects a caller's individual request/result
+from passive observers but does not make a deterministic public CPMM curve
+unknowable to an active caller that repeatedly probes it. Fee batching similarly
+prevents routine per-swap fee disclosure but cannot create unknown traffic in a
+quiet pool; active differencing remains a documented residual risk.
+
+Current COTI testnet does not execute this MPC path under `eth_call`, so the
+reference integration uses a transaction that emits a caller-encrypted result.
+The quote identity never receives user funds or signs user swaps.
+
+## Remaining gates
+
+Before any mainnet decision:
+
+1. Operationally validate the separate 24-hour confidential vault sweep without
+   shortening or bypassing its delay.
+2. Exercise all three launchpad LP dispositions in separate fresh deployments;
+   the underlying pool lock paths have already been exercised.
+3. Obtain independent Solidity, economic and COTI MPC integration review.
+4. Run longer stateful/fuzz campaigns and revalidate against the target COTI
+   mainnet compiler/RPC/MPC release.
+5. Replace the testnet EOA beneficiary with a reviewed multisig/governance
+   boundary for any production deployment.
+
+PoD, a generic confidential router, private multi-hop execution and a public
+confidential-pool oracle are intentionally outside v1.
 
 ## Release decision
 
-This commit is a testnet feasibility foundation, not a production deployment.
-The implementation is suitable for controlled testnet validation after an
-independent contract review. It must not be presented as fully anonymous or
-mainnet-ready until the remaining testnet and security gates pass.
+This is a reproducible COTI testnet implementation, not an audited production
+release. It must not be deployed to mainnet or marketed as anonymous: amount
+confidentiality does not hide participant addresses, and the documented active
+probing/differencing limits remain.

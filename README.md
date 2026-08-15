@@ -26,6 +26,14 @@ public amount events and share accounting are not reused by the confidential
 mode. A public/private mode will only be added where COTI MPC can settle the
 private leg without decrypting it inside the contract.
 
+Both modes use the immutable CipherDEX v1 fee policy. The advertised fee is
+charged once from the swap input, one sixth of that fee accrues to the protocol,
+and the remainder grows LP value. There is no extra native-COTI swap payment.
+Protocol balances are excluded from effective reserves and collect only to a
+fixed fee vault. Confidential fees remain encrypted and are collected in
+time/count-batched aggregates. See
+[docs/FEE_ECONOMICS.md](docs/FEE_ECONOMICS.md).
+
 Factory-created confidential pools bind a dedicated `PrivateLPToken` to the pool.
 Its balances and transfers use the official encrypted `PrivateERC20` paths; only
 the pool can mint or burn shares when liquidity is added, removed, or locked.
@@ -41,7 +49,17 @@ PoD assets are not accepted by this synchronous pool. PoD transfer and approval
 operations are asynchronous cross-chain callback workflows and require a separate
 adapter/state machine; treating them as ordinary ERC-20 calls would be incorrect.
 
-Read [docs/FEASIBILITY_GATE.md](docs/FEASIBILITY_GATE.md) and
+Confidential pools deliberately expose no public reserve-derived market data:
+no reserves, TVL, aggregate LP supply, spot price, TWAP, or exact quote. A
+dedicated non-custodial COTI quote identity may discover canonical candidate
+pools, simulate encrypted quotes, decrypt only its own results, and choose the
+best pool off-chain. On the current COTI testnet the same encrypted computation
+uses a transaction/result event because MPC `eth_call` is unavailable. The user
+then creates fresh authenticated inputs and calls
+that pool directly. Read
+[docs/QUOTE_MARKET_DATA_REVIEW.md](docs/QUOTE_MARKET_DATA_REVIEW.md),
+[docs/FEE_ECONOMICS.md](docs/FEE_ECONOMICS.md),
+[docs/FEASIBILITY_GATE.md](docs/FEASIBILITY_GATE.md) and
 [docs/LAUNCHPAD_MIGRATION.md](docs/LAUNCHPAD_MIGRATION.md) before extending the
 protocol.
 
@@ -50,8 +68,27 @@ protocol.
 ```text
 npm ci --ignore-scripts
 npm run verify
+npm run testnet:preflight
 npm run deploy:testnet
 ```
+
+`testnet:preflight` requires explicit local `.env` values for two funded,
+already-onboarded COTI testnet LP wallets, a separate onboarded quote identity,
+their AES keys, and two official PrivateERC20-compatible token addresses. It
+validates isolated private balance access without printing balances,
+ciphertexts, keys or raw RPC payloads.
+
+## Monorepo boundaries
+
+- `contracts/`: protocol pools, factories, private LP token and public
+  periphery contracts;
+- `periphery/`: routing/adapter boundary and integration notes;
+- `sdk/`: stable dependency-free ABI and discovery types;
+- `deployments/`: sanitized public deployment-record boundary;
+- `scripts/`: explicit testnet deployment and COTI scenario runners;
+- `test/`: local security/property tests and the gated real-COTI integration
+  placeholder;
+- `docs/`: feasibility, privacy, threat, dependency and operational records.
 
 The deployment script requires explicit COTI testnet token addresses and never
 contains a mainnet network or private key fallback.

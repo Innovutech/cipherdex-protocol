@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFeeVault } from "../helpers/deployFeeVault";
 
 describe("PublicCPMM periphery", function () {
   async function deployFixture() {
@@ -10,7 +11,10 @@ describe("PublicCPMM periphery", function () {
     await tokenA.waitForDeployment();
     await tokenB.waitForDeployment();
 
-    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy();
+    const vault = await deployFeeVault();
+    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
+      await vault.getAddress(),
+    );
     await factory.waitForDeployment();
     await factory.createPool(
       await tokenA.getAddress(),

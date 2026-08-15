@@ -1,24 +1,54 @@
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { Contract, ethers } from "ethers";
 import { ethers as hardhatEthers } from "hardhat";
-
-const TOKEN_ABI = [
-  "function decimals() view returns (uint8)",
-  "function approve(address,((uint256,uint256),bytes))",
-];
+import {
+  LAUNCHPAD_MIGRATION_EIP712_TYPES,
+  LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
+} from "../sdk/src/index";
+import {
+  CONFIDENTIAL_POOL_TESTNET_ABI,
+  CT_UINT256,
+  IT_UINT256,
+  PRIVATE_ERC20_TESTNET_ABI,
+} from "./coti-testnet-abi";
 
 const MIGRATOR_ABI = [
-  "function migrate(address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns (address,(uint256,uint256))",
-  "function migrateWithDisposition(address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,uint8,uint64) returns (address,(uint256,uint256),bytes32)",
+  `function migrate((address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,${IT_UINT256} amountA,${IT_UINT256} amountB,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,uint64 deadline,bytes authorization) request) returns (address pool,${CT_UINT256} shares)`,
+  `function migrateWithDisposition((address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,${IT_UINT256} amountA,${IT_UINT256} amountB,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,uint64 deadline,bytes authorization) request,uint8 disposition,uint64 unlockTime) returns (address pool,${CT_UINT256} shares,bytes32 lockId)`,
   "event LaunchpadMigration(address indexed creator,address indexed pool)",
   "event LaunchpadLockDisposition(address indexed creator,address indexed pool,uint8 disposition,bytes32 lockId,uint64 unlockTime)",
 ];
 
-const POOL_ABI = [
-  "function initialized() view returns (bool)",
-  "function myShares() returns ((uint256,uint256))",
-  "function lockInfo(bytes32) view returns (address owner,uint64 unlockTime,bool permanent,bool released)",
-];
+const FEE_VAULT_DEPLOY_GAS_LIMIT = 1_000_000n;
+const CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
+const LAUNCHPAD_MIGRATOR_DEPLOY_GAS_LIMIT = 2_500_000n;
+const LAUNCHPAD_ADAPTER_BIND_GAS_LIMIT = 250_000n;
+const COTI_TESTNET_TX_GAS_LIMIT = BigInt(
+  process.env.COTI_TESTNET_GAS_LIMIT ?? "30000000",
+);
+
+let stage = "configuration";
+
+function safeErrorSummary(error: unknown): string {
+  if (!error || typeof error !== "object") return "code=unknown";
+  const record = error as {
+    name?: unknown;
+    message?: unknown;
+    code?: unknown;
+    shortMessage?: unknown;
+    info?: { error?: { message?: unknown } };
+  };
+  const code = typeof record.code === "string" ? record.code : "unknown";
+  const name = typeof record.name === "string" ? record.name : "Error";
+  const detail = [record.shortMessage, record.info?.error?.message, record.message]
+    .find((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
+  if (!detail) return `name=${name} code=${code}`;
+  const redacted = detail
+    .replace(/0x[0-9a-fA-F]{16,}/g, "[redacted-hex]")
+    .replace(/\s+/g, " ")
+    .slice(0, 240);
+  return `name=${name} code=${code} detail=${redacted}`;
+}
 
 const requiredAddress = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -46,6 +76,9 @@ const optionalBigInt = (name: string, fallback: bigint): bigint => {
   if (!/^\d+$/.test(value)) throw new Error(`invalid ${name}`);
   return BigInt(value);
 };
+
+const defaultTestAmount = (decimals: number): bigint =>
+  decimals >= 3 ? 10n ** BigInt(decimals - 3) : 1n;
 
 const optionalDisposition = (): number | undefined => {
   const value = process.env.COTI_LAUNCHPAD_DISPOSITION?.trim();
@@ -81,6 +114,28 @@ const scaleTo18 = (amount: bigint, decimals: number): bigint => {
   return amount * 10n ** BigInt(18 - decimals);
 };
 
+const inputCommitment = (input: {
+  ciphertext: { ciphertextHigh: bigint; ciphertextLow: bigint };
+  signature: string | Uint8Array;
+}): string => ethers.keccak256(
+  ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint256", "uint256", "bytes32"],
+    [
+      input.ciphertext.ciphertextHigh,
+      input.ciphertext.ciphertextLow,
+      ethers.keccak256(input.signature),
+    ],
+  ),
+);
+
+const encryptedInputsHash = (...inputs: Parameters<typeof inputCommitment>[0][]): string =>
+  ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32"],
+      inputs.map(inputCommitment),
+    ),
+  );
+
 async function main(): Promise<void> {
   const privateKey = requiredPrivateKey();
   const aesKey = process.env.COTI_AES_KEY?.trim();
@@ -91,8 +146,14 @@ async function main(): Promise<void> {
   const decimalsA = requiredUInt("COTI_TOKEN0_DECIMALS");
   const decimalsB = requiredUInt("COTI_TOKEN1_DECIMALS");
   const feeBps = requiredUInt("COTI_LAUNCHPAD_FEE_BPS", 30);
-  const suppliedAmountA = requiredBigInt("COTI_LIQUIDITY_AMOUNT0");
-  const suppliedAmountB = requiredBigInt("COTI_LIQUIDITY_AMOUNT1");
+  const suppliedAmountA = optionalBigInt(
+    "COTI_LAUNCHPAD_AMOUNT0",
+    defaultTestAmount(decimalsA),
+  );
+  const suppliedAmountB = optionalBigInt(
+    "COTI_LAUNCHPAD_AMOUNT1",
+    defaultTestAmount(decimalsB),
+  );
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
 
   const [canonicalToken0, canonicalToken1, canonicalDecimals0, canonicalDecimals1] =
@@ -130,20 +191,46 @@ async function main(): Promise<void> {
     throw new Error("configured deployer and COTI wallet do not match");
   }
 
+  const feeVault = await (
+    await hardhatEthers.getContractFactory("CipherDEXFeeVault", deployer)
+  ).deploy(walletAddress, { gasLimit: FEE_VAULT_DEPLOY_GAS_LIMIT });
+  await feeVault.waitForDeployment();
   const factoryFactory = await hardhatEthers.getContractFactory("ConfidentialCPMMFactory", deployer);
-  const factory = await factoryFactory.deploy();
+  const factory = await factoryFactory.deploy(await feeVault.getAddress(), {
+    gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT,
+  });
   await factory.waitForDeployment();
   const factoryAddress = await factory.getAddress();
 
   const migratorFactory = await hardhatEthers.getContractFactory("ConfidentialLaunchpadMigrator", deployer);
-  const migratorDeployment = await migratorFactory.deploy(factoryAddress);
+  const migratorDeployment = await migratorFactory.deploy(factoryAddress, {
+    gasLimit: LAUNCHPAD_MIGRATOR_DEPLOY_GAS_LIMIT,
+  });
   await migratorDeployment.waitForDeployment();
   const migratorAddress = await migratorDeployment.getAddress();
+  await submit(
+    "launchpad adapter binding",
+    factory.setBootstrapAdapter(migratorAddress, {
+      gasLimit: LAUNCHPAD_ADAPTER_BIND_GAS_LIMIT,
+    }),
+  );
+
+async function readPrivateBalance(
+  token: Contract,
+  owner: string,
+  wallet: CotiWallet,
+): Promise<bigint> {
+  const ciphertext = await token.balanceOf.staticCall(owner);
+  return wallet.decryptValue256(ciphertext);
+}
+  if ((await factory.bootstrapAdapter()).toLowerCase() !== migratorAddress.toLowerCase()) {
+    throw new Error("factory did not bind the launchpad adapter");
+  }
   console.log(`factory deployed: ${factoryAddress}`);
   console.log(`launchpad migrator deployed: ${migratorAddress}`);
 
-  const token0 = new Contract(canonicalToken0, TOKEN_ABI, wallet);
-  const token1 = new Contract(canonicalToken1, TOKEN_ABI, wallet);
+  const token0 = new Contract(canonicalToken0, PRIVATE_ERC20_TESTNET_ABI, wallet);
+  const token1 = new Contract(canonicalToken1, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const approveSelector0 = token0.interface.getFunction("approve")?.selector;
   const approveSelector1 = token1.interface.getFunction("approve")?.selector;
   const migrator = new Contract(migratorAddress, MIGRATOR_ABI, wallet);
@@ -157,46 +244,185 @@ async function main(): Promise<void> {
   const zeroApproval1 = await wallet.encryptValue256(0n, canonicalToken1, approveSelector1);
   const approval0 = await wallet.encryptValue256(amount0, canonicalToken0, approveSelector0);
   const approval1 = await wallet.encryptValue256(amount1, canonicalToken1, approveSelector1);
-  await submit("token0 launchpad approval reset", token0.approve(migratorAddress, zeroApproval0));
-  await submit("token1 launchpad approval reset", token1.approve(migratorAddress, zeroApproval1));
-  await submit("token0 launchpad approval", token0.approve(migratorAddress, approval0));
-  await submit("token1 launchpad approval", token1.approve(migratorAddress, approval1));
+  stage = "token0 launchpad approval reset";
+  await submit(stage, token0.approve(migratorAddress, zeroApproval0, {
+    gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+  }));
+  stage = "token1 launchpad approval reset";
+  await submit(stage, token1.approve(migratorAddress, zeroApproval1, {
+    gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+  }));
+  stage = "token0 launchpad approval";
+  await submit(stage, token0.approve(migratorAddress, approval0, {
+    gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+  }));
+  stage = "token1 launchpad approval";
+  await submit(stage, token1.approve(migratorAddress, approval1, {
+    gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+  }));
 
+  stage = "migration input encryption";
   const input0 = await wallet.encryptValue256(amount0, migratorAddress, migrateSelector);
   const input1 = await wallet.encryptValue256(amount1, migratorAddress, migrateSelector);
   const minSharesInput = await wallet.encryptValue256(minShares, migratorAddress, migrateSelector);
   const minPriceInput = await wallet.encryptValue256(minPrice, migratorAddress, migrateSelector);
   const maxPriceInput = await wallet.encryptValue256(maxPrice, migratorAddress, migrateSelector);
+  const network = await hardhatEthers.provider.getNetwork();
+  const withDisposition = disposition !== undefined;
+  const signAuthorization = (
+    signedAmount0: typeof input0,
+    signedAmount1: typeof input1,
+    signedMinShares: typeof minSharesInput,
+    signedMinPrice: typeof minPriceInput,
+    signedMaxPrice: typeof maxPriceInput,
+  ) => wallet.signTypedData(
+      {
+        ...LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
+        chainId: network.chainId,
+        verifyingContract: migratorAddress,
+      },
+      { Migration: [...LAUNCHPAD_MIGRATION_EIP712_TYPES] },
+      {
+        creator: walletAddress,
+        tokenA,
+        tokenB,
+        decimalsA,
+        decimalsB,
+        feeBps,
+        encryptedInputsHash: encryptedInputsHash(
+          signedAmount0,
+          signedAmount1,
+          signedMinShares,
+          signedMinPrice,
+          signedMaxPrice,
+        ),
+        deadline,
+        withDisposition,
+        disposition: disposition ?? 0,
+        unlockTime,
+      },
+    );
+  stage = "migration authorization signing";
+  const authorization = await signAuthorization(
+    input0,
+    input1,
+    minSharesInput,
+    minPriceInput,
+    maxPriceInput,
+  );
+  const migrationRequest = [
+    tokenA,
+    tokenB,
+    decimalsA,
+    decimalsB,
+    feeBps,
+    input0,
+    input1,
+    minSharesInput,
+    minPriceInput,
+    maxPriceInput,
+    deadline,
+    authorization,
+  ];
+
+  if (maxDerivedPrice >= ethers.MaxUint256) {
+    throw new Error("derived launchpad price leaves no room for a rollback probe");
+  }
+  const rejectedPrice = maxDerivedPrice + 1n;
+  stage = "rollback probe input encryption";
+  const rejectedInput0 = await wallet.encryptValue256(amount0, migratorAddress, migrateSelector);
+  const rejectedInput1 = await wallet.encryptValue256(amount1, migratorAddress, migrateSelector);
+  const rejectedMinSharesInput = await wallet.encryptValue256(
+    minShares,
+    migratorAddress,
+    migrateSelector,
+  );
+  const rejectedMinPriceInput = await wallet.encryptValue256(
+    rejectedPrice,
+    migratorAddress,
+    migrateSelector,
+  );
+  const rejectedMaxPriceInput = await wallet.encryptValue256(
+    rejectedPrice,
+    migratorAddress,
+    migrateSelector,
+  );
+  stage = "rollback probe authorization signing";
+  const rejectedAuthorization = await signAuthorization(
+    rejectedInput0,
+    rejectedInput1,
+    rejectedMinSharesInput,
+    rejectedMinPriceInput,
+    rejectedMaxPriceInput,
+  );
+  const rejectedRequest = [
+    tokenA,
+    tokenB,
+    decimalsA,
+    decimalsB,
+    feeBps,
+    rejectedInput0,
+    rejectedInput1,
+    rejectedMinSharesInput,
+    rejectedMinPriceInput,
+    rejectedMaxPriceInput,
+    deadline,
+    rejectedAuthorization,
+  ];
+  const canonicalPoolKey = await factory.poolKey(
+    canonicalToken0,
+    canonicalToken1,
+    canonicalDecimals0,
+    canonicalDecimals1,
+    feeBps,
+  );
+  if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
+    throw new Error("launchpad rollback probe requires an empty canonical pool slot");
+  }
+  stage = "rollback probe balance snapshot";
+  const beforeRejected0 = await readPrivateBalance(token0, walletAddress, wallet);
+  const beforeRejected1 = await readPrivateBalance(token1, walletAddress, wallet);
+  if (beforeRejected0 < amount0 || beforeRejected1 < amount1) {
+    throw new Error("configured launchpad amounts exceed the available private balance");
+  }
+  let rejectedBoundRolledBack = false;
+  try {
+    stage = "rejected launchpad price-bound probe";
+    await submit(
+      stage,
+      disposition === undefined
+        ? migrator.migrate(rejectedRequest, { gasLimit: COTI_TESTNET_TX_GAS_LIMIT })
+        : migrator.migrateWithDisposition(rejectedRequest, disposition, unlockTime, {
+            gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+          }),
+    );
+  } catch {
+    rejectedBoundRolledBack = true;
+  }
+  if (!rejectedBoundRolledBack) throw new Error("launchpad accepted an impossible price bound");
+  if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
+    throw new Error("failed launchpad migration left a canonical pool behind");
+  }
+  if (
+    (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeRejected0 ||
+    (await readPrivateBalance(token1, walletAddress, wallet)) !== beforeRejected1
+  ) {
+    throw new Error("failed launchpad migration did not roll back private token pulls");
+  }
+
+  stage = "atomic launchpad migration";
   const receipt = await submit(
-    "atomic launchpad migration",
+    stage,
     disposition === undefined
       ? migrator.migrate(
-          tokenA,
-          tokenB,
-          decimalsA,
-          decimalsB,
-          feeBps,
-          input0,
-          input1,
-          minSharesInput,
-          minPriceInput,
-          maxPriceInput,
-          deadline,
+          migrationRequest,
+          { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },
         )
       : migrator.migrateWithDisposition(
-          tokenA,
-          tokenB,
-          decimalsA,
-          decimalsB,
-          feeBps,
-          input0,
-          input1,
-          minSharesInput,
-          minPriceInput,
-          maxPriceInput,
-          deadline,
+          migrationRequest,
           disposition,
           unlockTime,
+          { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },
         ),
   );
 
@@ -241,8 +467,20 @@ async function main(): Promise<void> {
     }
   }
 
-  const pool = new Contract(poolAddress, POOL_ABI, wallet);
+  const pool = new Contract(poolAddress, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
   if (!(await pool.initialized())) throw new Error("launchpad pool was not initialized");
+  if (Number(await pool.feeBps()) !== feeBps) {
+    throw new Error("launchpad pool total fee does not match the signed tier");
+  }
+  if ((await pool.feeVault()).toLowerCase() !== (await feeVault.getAddress()).toLowerCase()) {
+    throw new Error("launchpad pool did not inherit the factory fee vault");
+  }
+  if (
+    BigInt(await pool.PROTOCOL_FEE_SHARE_NUMERATOR()) !== 1n ||
+    BigInt(await pool.PROTOCOL_FEE_SHARE_DENOMINATOR()) !== 6n
+  ) {
+    throw new Error("launchpad pool did not inherit the v1 protocol fee split");
+  }
   const shares = await pool.myShares.staticCall();
   const decryptedShares = await wallet.decryptValue256(shares);
   if (disposition === undefined || disposition === 0) {
@@ -264,11 +502,41 @@ async function main(): Promise<void> {
       throw new Error("launchpad pool lock time mismatch");
     }
   }
+
+  const beforeReplay0 = await readPrivateBalance(token0, walletAddress, wallet);
+  const beforeReplay1 = await readPrivateBalance(token1, walletAddress, wallet);
+  let replayRejected = false;
+  try {
+    stage = "launchpad replay probe";
+    await submit(
+      stage,
+      disposition === undefined
+        ? migrator.migrate(migrationRequest, { gasLimit: COTI_TESTNET_TX_GAS_LIMIT })
+        : migrator.migrateWithDisposition(migrationRequest, disposition, unlockTime, {
+            gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+          }),
+    );
+  } catch {
+    replayRejected = true;
+  }
+  if (!replayRejected) throw new Error("launchpad migration replay was accepted");
+  if (
+    (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeReplay0 ||
+    (await readPrivateBalance(token1, walletAddress, wallet)) !== beforeReplay1
+  ) {
+    throw new Error("rejected launchpad replay changed private token balances");
+  }
+  if ((await factory.getPool(canonicalPoolKey)).toLowerCase() !== poolAddress.toLowerCase()) {
+    throw new Error("launchpad replay changed canonical pool discovery");
+  }
   console.log(`launchpad pool: ${poolAddress}`);
   console.log("COTI launchpad migration completed without printing private values.");
 }
 
-void main().catch(() => {
-  console.error("COTI launchpad migration failed; inspect the local testnet environment without sharing private payloads.");
+void main().catch((error: unknown) => {
+  console.error(
+    `COTI launchpad migration failed during ${stage}; ` +
+      `${safeErrorSummary(error)}; private payloads were suppressed.`,
+  );
   process.exitCode = 1;
 });

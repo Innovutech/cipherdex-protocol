@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@coti-io/coti-contracts/contracts/token/PrivateERC20/IPrivateERC20.sol";
 import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
 import "./interfaces/IPrivateLPToken.sol";
+import "./CipherDEXFeePolicy.sol";
 
 /**
  * @title ConfidentialCPMM
@@ -18,12 +19,12 @@ import "./interfaces/IPrivateLPToken.sol";
  * This contract is a testnet feasibility implementation. It is not a mainnet
  * deployment and has not received an external audit.
  */
-contract ConfidentialCPMM {
+contract ConfidentialCPMM is CipherDEXFeePolicy {
     uint256 public constant PROTOCOL_VERSION = 1;
     uint8 public constant PRIVACY_MODE = 1;
-    uint256 public constant FEE_DENOMINATOR = 10_000;
-    uint256 public constant MAX_FEE_BPS = 1_000;
     uint256 public constant PRICE_SCALE = 1e18;
+    uint32 public constant MIN_CONFIDENTIAL_COLLECTION_SWAPS = 8;
+    uint64 public constant MIN_CONFIDENTIAL_COLLECTION_DELAY = 1 hours;
     uint8 public constant LP_DISPOSITION_CREATOR_HELD = 0;
     uint8 public constant LP_DISPOSITION_TIMED_LOCK = 1;
     uint8 public constant LP_DISPOSITION_PERMANENT_LOCK = 2;
@@ -35,15 +36,27 @@ contract ConfidentialCPMM {
     uint256 public immutable scale0;
     uint256 public immutable scale1;
     uint256 public immutable feeBps;
+    address public immutable feeVault;
     address public immutable bootstrapper;
     address public lpToken;
 
     bool public initialized;
 
     // Ciphertext storage is intentionally not exposed through public getters.
+    // Reserves are protocol accounting, not raw token-contract balance reads:
+    // compatible PrivateERC20 transfers revert atomically on failure, while
+    // unsolicited transfers must not change pricing or LP claims.
+    ctUint256 private reserve0State;
+    ctUint256 private reserve1State;
+    ctUint256 private protocolFees0State;
+    ctUint256 private protocolFees1State;
     ctUint256 private totalShares;
     mapping(address => ctUint256) private shares;
     mapping(bytes32 => bool) private consumedInputs;
+    uint32 public protocolFeeSwapCount0;
+    uint32 public protocolFeeSwapCount1;
+    uint64 public protocolFeeWindowStart0;
+    uint64 public protocolFeeWindowStart1;
     uint256 public nextLockNonce;
 
     struct LockRecord {
@@ -61,10 +74,10 @@ contract ConfidentialCPMM {
     error InvalidTokenPair();
     error InvalidDecimals();
     error InvalidFee();
+    error InvalidFeeVault();
     error InvalidPrivateAmount();
     error PoolNotInitialized();
     error PoolAlreadyInitialized();
-    error UnbalancedInitialLiquidity();
     error ArithmeticOverflow();
     error ArithmeticUnderflow();
     error DivisionByZero();
@@ -72,7 +85,6 @@ contract ConfidentialCPMM {
     error InsufficientPrivateLiquidity();
     error InsufficientPrivateShares();
     error InvalidLiquidityRatio();
-    error UnmanagedBalance();
     error InvalidPriceBounds();
     error PriceOutsideBounds();
     error BootstrapBalanceMismatch();
@@ -84,6 +96,8 @@ contract ConfidentialCPMM {
     error InputAlreadyConsumed();
     error DeadlineExpired();
     error Reentrancy();
+    error InvalidCollectionSelection();
+    error ConfidentialCollectionNotReady();
 
     event SwapExecuted(address indexed trader, bool indexed zeroForOne);
     event LiquidityAdded(address indexed provider);
@@ -96,6 +110,17 @@ contract ConfidentialCPMM {
         bool permanent
     );
     event LiquidityUnlocked(bytes32 indexed lockId, address indexed owner);
+    event ConfidentialQuoteResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        bool indexed zeroForOne,
+        ctUint256 result
+    );
+    event ConfidentialProtocolFeesCollected(
+        address indexed token,
+        address indexed feeVault,
+        uint32 aggregatedSwapCount
+    );
 
     modifier nonReentrant() {
         if (reentrancyState != 1) revert Reentrancy();
@@ -109,13 +134,15 @@ contract ConfidentialCPMM {
         address token1_,
         uint8 token0Decimals_,
         uint8 token1Decimals_,
-        uint256 feeBps_
+        uint256 feeBps_,
+        address feeVault_
     ) {
         if (token0_ == address(0) || token1_ == address(0) || token0_ == token1_) {
             revert InvalidTokenPair();
         }
         if (token0Decimals_ > 18 || token1Decimals_ > 18) revert InvalidDecimals();
-        if (feeBps_ > MAX_FEE_BPS) revert InvalidFee();
+        if (!isApprovedFeeTier(feeBps_)) revert InvalidFee();
+        if (feeVault_.code.length == 0) revert InvalidFeeVault();
         if (_readTokenDecimals(token0_) != token0Decimals_) revert InvalidDecimals();
         if (_readTokenDecimals(token1_) != token1Decimals_) revert InvalidDecimals();
 
@@ -126,6 +153,7 @@ contract ConfidentialCPMM {
         scale0 = 10 ** (18 - token0Decimals_);
         scale1 = 10 ** (18 - token1Decimals_);
         feeBps = feeBps_;
+        feeVault = feeVault_;
         // When created by the canonical factory this is the factory. Directly
         // deployed pools deliberately retain the deployer as their bootstrapper.
         bootstrapper = msg.sender;
@@ -151,6 +179,9 @@ contract ConfidentialCPMM {
      *      not a normal EVM static read on COTI.
      */
     function myShares() external returns (ctUint256 memory) {
+        if (lpToken != address(0)) {
+            return IPrivateLPToken(lpToken).balanceOf(msg.sender);
+        }
         return MpcCore.offBoardToUser(_shareBalance(msg.sender), msg.sender);
     }
 
@@ -164,11 +195,37 @@ contract ConfidentialCPMM {
         itUint256 calldata amountIn,
         bool zeroForOne
     ) external returns (ctUint256 memory amountOut) {
+        return _quoteExactInput(amountIn, zeroForOne, msg.sender);
+    }
+
+    /**
+     * @notice Computes an exact private quote in a transaction and emits the
+     *         result encrypted for the caller.
+     * @dev COTI testnet MPC precompiles are not executable through eth_call.
+     *      A non-custodial quote identity can submit this request, read the
+     *      ciphertext from the receipt and decrypt only its own result. The
+     *      request is permissionless and never grants swap or fund authority.
+     */
+    function requestQuoteExactInput(
+        itUint256 calldata amountIn,
+        bool zeroForOne,
+        bytes32 requestId
+    ) external returns (ctUint256 memory result) {
+        result = _quoteExactInput(amountIn, zeroForOne, msg.sender);
+        emit ConfidentialQuoteResult(msg.sender, requestId, zeroForOne, result);
+    }
+
+    function _quoteExactInput(
+        itUint256 calldata amountIn,
+        bool zeroForOne,
+        address recipient
+    ) internal returns (ctUint256 memory result) {
+        if (!initialized) revert PoolNotInitialized();
         gtUint256 input = MpcCore.validateCiphertext(amountIn);
         gtUint256 reserveIn = zeroForOne ? _reserve0() : _reserve1();
         gtUint256 reserveOut = zeroForOne ? _reserve1() : _reserve0();
         gtUint256 output = _amountOut(input, reserveIn, reserveOut);
-        return MpcCore.offBoardToUser(output, msg.sender);
+        return MpcCore.offBoardToUser(output, recipient);
     }
 
     /**
@@ -185,16 +242,35 @@ contract ConfidentialCPMM {
         _requireBeforeDeadline(deadline);
         gtUint256 input = _validateAndConsume(amountIn);
         gtUint256 minimum = MpcCore.validateCiphertext(minAmountOut);
-        gtUint256 reserveIn = zeroForOne ? _reserve0() : _reserve1();
-        gtUint256 reserveOut = zeroForOne ? _reserve1() : _reserve0();
-        gtUint256 output = _amountOut(input, reserveIn, reserveOut);
+        gtUint256 reserve0 = _reserve0();
+        gtUint256 reserve1 = _reserve1();
+        gtUint256 reserveIn = zeroForOne ? reserve0 : reserve1;
+        gtUint256 reserveOut = zeroForOne ? reserve1 : reserve0;
+        (
+            gtUint256 output,
+            ,
+            gtUint256 protocolFee
+        ) = _swapAmounts(input, reserveIn, reserveOut);
+        gtUint256 reserveCredit = _subChecked(input, protocolFee);
 
         if (!MpcCore.decrypt(MpcCore.ge(output, minimum))) revert SlippageExceeded();
 
         if (zeroForOne) {
+            reserve0State = MpcCore.offBoard(_addChecked(reserve0, reserveCredit));
+            reserve1State = MpcCore.offBoard(_subChecked(reserve1, output));
+            protocolFees0State = MpcCore.offBoard(
+                _addChecked(_protocolFees0(), protocolFee)
+            );
+            _recordProtocolFeeAccrual(true);
             IPrivateERC20(token0).transferFromGT(msg.sender, address(this), input);
             IPrivateERC20(token1).transferGT(msg.sender, output);
         } else {
+            reserve1State = MpcCore.offBoard(_addChecked(reserve1, reserveCredit));
+            reserve0State = MpcCore.offBoard(_subChecked(reserve0, output));
+            protocolFees1State = MpcCore.offBoard(
+                _addChecked(_protocolFees1(), protocolFee)
+            );
+            _recordProtocolFeeAccrual(false);
             IPrivateERC20(token1).transferFromGT(msg.sender, address(this), input);
             IPrivateERC20(token0).transferGT(msg.sender, output);
         }
@@ -204,10 +280,48 @@ contract ConfidentialCPMM {
     }
 
     /**
+     * @notice Batches encrypted protocol fees into the immutable fee vault.
+     * @dev The collected amount is never decrypted or emitted. Each token side
+     *      requires both a minimum number of swaps and a minimum time window,
+     *      preventing a normal one-swap collection from disclosing that swap's
+     *      fee to the beneficiary. Low-volume fees remain encrypted in the pool
+     *      until both immutable conditions are met.
+     */
+    function collectProtocolFees(bool collectToken0, bool collectToken1)
+        external
+        nonReentrant
+    {
+        if (!collectToken0 && !collectToken1) revert InvalidCollectionSelection();
+
+        if (collectToken0) {
+            uint32 count0 = protocolFeeSwapCount0;
+            _requireConfidentialCollectionReady(count0, protocolFeeWindowStart0);
+            gtUint256 amount0 = _protocolFees0();
+            protocolFees0State = MpcCore.offBoard(MpcCore.setPublic256(uint256(0)));
+            protocolFeeSwapCount0 = 0;
+            protocolFeeWindowStart0 = 0;
+            IPrivateERC20(token0).transferGT(feeVault, amount0);
+            emit ConfidentialProtocolFeesCollected(token0, feeVault, count0);
+        }
+
+        if (collectToken1) {
+            uint32 count1 = protocolFeeSwapCount1;
+            _requireConfidentialCollectionReady(count1, protocolFeeWindowStart1);
+            gtUint256 amount1 = _protocolFees1();
+            protocolFees1State = MpcCore.offBoard(MpcCore.setPublic256(uint256(0)));
+            protocolFeeSwapCount1 = 0;
+            protocolFeeWindowStart1 = 0;
+            IPrivateERC20(token1).transferGT(feeVault, amount1);
+            emit ConfidentialProtocolFeesCollected(token1, feeVault, count1);
+        }
+    }
+
+    /**
      * @notice Adds proportional private liquidity and mints private shares.
-     * @dev Initial liquidity must be balanced after normalizing both assets to
-     *      18 decimals. Later deposits transfer only the exact proportional amount;
-     *      excess input remains with the caller instead of becoming a donation.
+     * @dev Initial liquidity establishes the pool price from its arbitrary
+     *      normalized deposit ratio. Later deposits transfer only the exact
+     *      proportional amount; excess input remains with the caller instead
+     *      of becoming a donation.
      */
     function addLiquidity(
         itUint256 calldata amount0,
@@ -225,42 +339,55 @@ contract ConfidentialCPMM {
         gtUint256 deposit0 = input0;
         gtUint256 deposit1 = input1;
         gtUint256 minted;
+        gtUint256 reserve0 = _reserve0();
+        gtUint256 reserve1 = _reserve1();
 
         if (!initialized) {
             if (
-                MpcCore.decrypt(MpcCore.ne(_reserve0(), MpcCore.setPublic256(uint256(0)))) ||
-                MpcCore.decrypt(MpcCore.ne(_reserve1(), MpcCore.setPublic256(uint256(0))))
-            ) revert UnmanagedBalance();
+                MpcCore.decrypt(MpcCore.ne(reserve0, MpcCore.setPublic256(uint256(0)))) ||
+                MpcCore.decrypt(MpcCore.ne(reserve1, MpcCore.setPublic256(uint256(0))))
+            ) revert BootstrapBalanceMismatch();
             gtUint256 normalized0 = _scale(input0, scale0);
             gtUint256 normalized1 = _scale(input1, scale1);
-            if (!MpcCore.decrypt(MpcCore.eq(normalized0, normalized1))) {
-                revert UnbalancedInitialLiquidity();
-            }
-            minted = normalized0;
+            // The minimum normalized side is a deterministic private share
+            // unit that supports any non-zero initial ratio without multiplying
+            // the two deposits. Avoiding a geometric mean removes a uint256
+            // product overflow and an expensive encrypted square-root loop.
+            // The first LP still owns 100% of totalShares, so the denomination
+            // does not affect ownership or full-exit amounts.
+            minted = MpcCore.min(normalized0, normalized1);
+            _requirePositive(minted);
             if (!MpcCore.decrypt(MpcCore.ge(minted, minimum))) revert SlippageExceeded();
             initialized = true;
         } else {
-            gtUint256 reserve0 = _reserve0();
-            gtUint256 reserve1 = _reserve1();
             gtUint256 currentTotal = _readPrivate(totalShares);
             _requirePositive(reserve0);
             _requirePositive(reserve1);
             _requirePositive(currentTotal);
 
-            gtUint256 share0 = _divChecked(_mulChecked(input0, currentTotal), reserve0);
-            gtUint256 share1 = _divChecked(_mulChecked(input1, currentTotal), reserve1);
+            // All three denominators are proven positive above. Avoid repeating
+            // encrypted zero checks for each division: besides being redundant,
+            // every decrypted predicate consumes another COTI MPC callback.
+            gtUint256 share0 = MpcCore.div(_mulChecked(input0, currentTotal), reserve0);
+            gtUint256 share1 = MpcCore.div(_mulChecked(input1, currentTotal), reserve1);
             minted = MpcCore.min(share0, share1);
             _requirePositive(minted);
             if (!MpcCore.decrypt(MpcCore.ge(minted, minimum))) revert SlippageExceeded();
 
-            deposit0 = _divChecked(_mulChecked(minted, reserve0), currentTotal);
-            deposit1 = _divChecked(_mulChecked(minted, reserve1), currentTotal);
-            _requirePositive(deposit0);
-            _requirePositive(deposit1);
-            if (!MpcCore.decrypt(MpcCore.ge(input0, deposit0))) revert InvalidLiquidityRatio();
-            if (!MpcCore.decrypt(MpcCore.ge(input1, deposit1))) revert InvalidLiquidityRatio();
+            // Shares are rounded down from each offered side. Accepted token
+            // amounts are then rounded up so a new LP can never receive shares
+            // while underpaying the corresponding reserve fraction.
+            deposit0 = _ceilDiv(_mulChecked(minted, reserve0), currentTotal);
+            deposit1 = _ceilDiv(_mulChecked(minted, reserve1), currentTotal);
+            // minted > 0 and both reserves > 0 imply positive deposits. Also,
+            // minted <= floor(input * total / reserve) proves
+            // ceil(minted * reserve / total) <= input for each side. The
+            // reference fuzz suite enforces both properties without disclosing
+            // these otherwise redundant encrypted comparisons on-chain.
         }
 
+        reserve0State = MpcCore.offBoard(_addChecked(reserve0, deposit0));
+        reserve1State = MpcCore.offBoard(_addChecked(reserve1, deposit1));
         totalShares = MpcCore.offBoard(_addChecked(_readPrivate(totalShares), minted));
         if (lpToken == address(0)) {
             shares[msg.sender] = MpcCore.offBoard(
@@ -282,10 +409,10 @@ contract ConfidentialCPMM {
      *         values. This is the only bridge needed by the launchpad migrator.
      * @dev The caller must be the immutable bootstrapper (the canonical factory
      *      for factory-created pools). The values are already validated by the
-     *      migrator; this function checks the actual private token balances,
-     *      price bounds, and share floor before committing pool state. No token
-     *      transfer happens here, so a failed bootstrap rolls back the entire
-     *      launchpad transaction.
+     *      migrator; this function checks price bounds and the share floor before
+     *      committing encrypted reserve state. The factory-bound migrator has
+     *      already transferred both assets in the same transaction, so any
+     *      bootstrap failure rolls back custody and accounting together.
      *
      *      `priceX18` is normalized token1 per normalized token0. Both bounds
      *      are encrypted MPC values and therefore never appear in an event.
@@ -386,10 +513,10 @@ contract ConfidentialCPMM {
             revert PriceOutsideBounds();
         }
 
-        if (!MpcCore.decrypt(MpcCore.eq(_reserve0(), amount0))) {
-            revert BootstrapBalanceMismatch();
-        }
-        if (!MpcCore.decrypt(MpcCore.eq(_reserve1(), amount1))) {
+        if (
+            MpcCore.decrypt(MpcCore.ne(_reserve0(), MpcCore.setPublic256(uint256(0)))) ||
+            MpcCore.decrypt(MpcCore.ne(_reserve1(), MpcCore.setPublic256(uint256(0))))
+        ) {
             revert BootstrapBalanceMismatch();
         }
 
@@ -403,6 +530,8 @@ contract ConfidentialCPMM {
         }
 
         initialized = true;
+        reserve0State = MpcCore.offBoard(amount0);
+        reserve1State = MpcCore.offBoard(amount1);
         totalShares = MpcCore.offBoard(minted);
         if (disposition == LP_DISPOSITION_CREATOR_HELD) {
             if (lpToken == address(0)) {
@@ -453,17 +582,29 @@ contract ConfidentialCPMM {
 
         gtUint256 reserve0 = _reserve0();
         gtUint256 reserve1 = _reserve1();
-        gtUint256 amount0Calculated = _divChecked(_mulChecked(requestedShares, reserve0), currentTotal);
-        gtUint256 amount1Calculated = _divChecked(_mulChecked(requestedShares, reserve1), currentTotal);
+        gtUint256 amount0Calculated = MpcCore.div(
+            _mulChecked(requestedShares, reserve0),
+            currentTotal
+        );
+        gtUint256 amount1Calculated = MpcCore.div(
+            _mulChecked(requestedShares, reserve1),
+            currentTotal
+        );
         gtBool fullExit = MpcCore.eq(requestedShares, currentTotal);
-        amount0Calculated = MpcCore.mux(fullExit, reserve0, amount0Calculated);
-        amount1Calculated = MpcCore.mux(fullExit, reserve1, amount1Calculated);
+        // COTI mux selects its second value when the bit is true and its first
+        // value when false. A full exit must select the complete reserve.
+        amount0Calculated = MpcCore.mux(fullExit, amount0Calculated, reserve0);
+        amount1Calculated = MpcCore.mux(fullExit, amount1Calculated, reserve1);
 
         if (!MpcCore.decrypt(MpcCore.ge(amount0Calculated, minimum0))) revert SlippageExceeded();
         if (!MpcCore.decrypt(MpcCore.ge(amount1Calculated, minimum1))) revert SlippageExceeded();
 
         totalShares = MpcCore.offBoard(
-            MpcCore.mux(fullExit, MpcCore.setPublic256(uint256(0)), _subChecked(currentTotal, requestedShares))
+            MpcCore.mux(
+                fullExit,
+                _subChecked(currentTotal, requestedShares),
+                MpcCore.setPublic256(uint256(0))
+            )
         );
         if (lpToken == address(0)) {
             shares[msg.sender] = MpcCore.offBoard(
@@ -472,6 +613,8 @@ contract ConfidentialCPMM {
         } else {
             IPrivateLPToken(lpToken).burnFromPool(msg.sender, requestedShares);
         }
+        reserve0State = MpcCore.offBoard(_subChecked(reserve0, amount0Calculated));
+        reserve1State = MpcCore.offBoard(_subChecked(reserve1, amount1Calculated));
         if (MpcCore.decrypt(fullExit)) initialized = false;
 
         IPrivateERC20(token0).transferGT(msg.sender, amount0Calculated);
@@ -559,11 +702,19 @@ contract ConfidentialCPMM {
     }
 
     function _reserve0() internal returns (gtUint256) {
-        return IPrivateERC20(token0).balanceOf();
+        return _readPrivate(reserve0State);
     }
 
     function _reserve1() internal returns (gtUint256) {
-        return IPrivateERC20(token1).balanceOf();
+        return _readPrivate(reserve1State);
+    }
+
+    function _protocolFees0() internal returns (gtUint256) {
+        return _readPrivate(protocolFees0State);
+    }
+
+    function _protocolFees1() internal returns (gtUint256) {
+        return _readPrivate(protocolFees1State);
     }
 
     function _shareBalance(address account) internal returns (gtUint256) {
@@ -576,6 +727,19 @@ contract ConfidentialCPMM {
         gtUint256 reserveIn,
         gtUint256 reserveOut
     ) internal returns (gtUint256) {
+        (gtUint256 amountOut, , ) = _swapAmounts(amountIn, reserveIn, reserveOut);
+        return amountOut;
+    }
+
+    function _swapAmounts(
+        gtUint256 amountIn,
+        gtUint256 reserveIn,
+        gtUint256 reserveOut
+    ) internal returns (
+        gtUint256 amountOut,
+        gtUint256 netAmountIn,
+        gtUint256 protocolFee
+    ) {
         _requirePositive(amountIn);
         _requirePositive(reserveIn);
         _requirePositive(reserveOut);
@@ -583,16 +747,48 @@ contract ConfidentialCPMM {
         gtUint256 feeFactor = MpcCore.setPublic256(FEE_DENOMINATOR - feeBps);
         gtUint256 feeDenominator = MpcCore.setPublic256(FEE_DENOMINATOR);
         gtUint256 netProduct = _mulChecked(amountIn, feeFactor);
-        gtUint256 netAmount = MpcCore.div(netProduct, feeDenominator);
-        _requirePositive(netAmount);
-        gtUint256 newReserveIn = _addChecked(reserveIn, netAmount);
+        netAmountIn = MpcCore.div(netProduct, feeDenominator);
+        _requirePositive(netAmountIn);
+        gtUint256 totalFee = _subChecked(amountIn, netAmountIn);
+        protocolFee = MpcCore.div(
+            _mulChecked(
+                totalFee,
+                MpcCore.setPublic256(PROTOCOL_FEE_SHARE_NUMERATOR)
+            ),
+            MpcCore.setPublic256(PROTOCOL_FEE_SHARE_DENOMINATOR)
+        );
+        gtUint256 newReserveIn = _addChecked(reserveIn, netAmountIn);
         gtUint256 invariant = _mulChecked(reserveIn, reserveOut);
         // Round the retained reserve up. Subtracting a floored retained reserve
         // would round output upward and can violate x*y >= k after the swap.
         gtUint256 newReserveOut = _ceilDiv(invariant, newReserveIn);
-        gtUint256 output = _subChecked(reserveOut, newReserveOut);
-        _requirePositive(output);
-        return output;
+        amountOut = _subChecked(reserveOut, newReserveOut);
+        _requirePositive(amountOut);
+    }
+
+    function _recordProtocolFeeAccrual(bool token0Side) internal {
+        if (token0Side) {
+            if (protocolFeeSwapCount0 == 0) {
+                protocolFeeWindowStart0 = uint64(block.timestamp);
+            }
+            protocolFeeSwapCount0 += 1;
+        } else {
+            if (protocolFeeSwapCount1 == 0) {
+                protocolFeeWindowStart1 = uint64(block.timestamp);
+            }
+            protocolFeeSwapCount1 += 1;
+        }
+    }
+
+    function _requireConfidentialCollectionReady(uint32 count, uint64 windowStart)
+        internal
+        view
+    {
+        if (
+            count < MIN_CONFIDENTIAL_COLLECTION_SWAPS
+                || windowStart == 0
+                || block.timestamp < uint256(windowStart) + MIN_CONFIDENTIAL_COLLECTION_DELAY
+        ) revert ConfidentialCollectionNotReady();
     }
 
     function _scale(gtUint256 value, uint256 factor) internal returns (gtUint256) {
@@ -617,19 +813,18 @@ contract ConfidentialCPMM {
         return result;
     }
 
-    function _divChecked(gtUint256 a, gtUint256 b) internal returns (gtUint256) {
-        if (MpcCore.decrypt(MpcCore.eq(b, MpcCore.setPublic256(uint256(0))))) revert DivisionByZero();
-        return MpcCore.div(a, b);
-    }
-
     function _ceilDiv(gtUint256 numerator, gtUint256 denominator) internal returns (gtUint256) {
-        gtUint256 quotient = _divChecked(numerator, denominator);
-        gtUint256 product = _mulChecked(quotient, denominator);
-        gtBool exact = MpcCore.eq(product, numerator);
+        // Every call site proves denominator > 0 before reaching this helper.
+        // Use the encrypted remainder instead of multiplying the quotient back
+        // and decrypting exactness. A non-zero remainder implies quotient <
+        // type(uint256).max, so quotient + 1 cannot overflow.
+        gtUint256 quotient = MpcCore.div(numerator, denominator);
+        gtUint256 remainder = MpcCore.rem(numerator, denominator);
+        gtBool exact = MpcCore.eq(remainder, MpcCore.setPublic256(uint256(0)));
         return MpcCore.mux(
             exact,
-            quotient,
-            _addChecked(quotient, MpcCore.setPublic256(uint256(1)))
+            MpcCore.add(quotient, MpcCore.setPublic256(uint256(1))),
+            quotient
         );
     }
 

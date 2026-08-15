@@ -1,100 +1,91 @@
 # Feasibility Gate
 
+Date: 2026-08-15
+
 ## Evidence reviewed
 
-The official `@coti-io/coti-contracts` source and package were reviewed at the
-current local reference checkout and against the registry package metadata. The
-official MPC contract exposes `gtUint256` operations for validation, add, subtract,
-multiply, divide, comparison, min/max, checked arithmetic and user-specific
-`offBoardToUser` ciphertext output. The official PrivateERC20 implementation reads
-the caller's balance as a garbled value and supports `transferFromGT` and
-`transferGT`.
+The implementation uses the pinned official `@coti-io/coti-contracts@1.3.5`
+MPC and `PrivateERC20` interfaces. `gtUint256` supports the checked arithmetic,
+comparison, division, authenticated-input validation and user-specific
+offboarding required by the pool. The contracts never decrypt an amount. They
+decrypt only policy booleans needed to accept or reject an operation.
 
-The proof-of-concept uses those primitives directly. It does not decrypt amounts.
-It decrypts only boolean policy results such as zero checks, arithmetic overflow,
-proportionality/slippage checks and full-exit state. Those branches are deliberate
-disclosures of transaction outcome or pool lifecycle, not amount disclosure.
+The real COTI testnet gate was executed with two funded LP identities, a separate
+quote identity and two deployed `PrivateERC20` assets. Keys, AES material,
+ciphertexts, decrypted values and private balances were neither printed nor
+persisted.
 
-## What is feasible
+## Demonstrated on COTI testnet
 
-For ordinary ERC-20 assets, a conventional public/public CPMM is feasible and is
-implemented separately as `PublicCPMM`. Its public events, balances and LP
-accounting are intentionally not treated as privacy-preserving.
+- arbitrary-ratio confidential initialization;
+- a second proportional LP join without surplus donation;
+- two canonical fee-tier candidates for the same pair;
+- walletless encrypted transactional quotes and local best-pool selection;
+- direct encrypted swaps in both directions;
+- expired, slippage-failing and replayed-input rejection;
+- per-input-token confidential fee-batch counters and premature collection
+  rejection;
+- mature encrypted fee collection after the immutable one-hour window, following
+  a true full LP exit and with both public batch counters cleared;
+- second-LP exit, timed lock/unlock, permanent lock and true full exit;
+- atomic launchpad rollback for an impossible encrypted price interval;
+- successful launchpad migration through the same canonical factory fee policy;
+- launchpad replay rejection without additional token movement.
 
-For synchronous COTI PrivateERC20 assets, an amount-confidential CPMM is technically
-feasible:
+Current COTI testnet does not execute this MPC path under `eth_call`. The
+transactional quote-result event remains encrypted for the requesting identity.
+The direct `quoteExactInput` function stays available for a future compatible RPC.
 
-- reserves are read as garbled values from the pool's token balances;
-- the fee-adjusted invariant is calculated in MPC values;
-- checked multiplication/addition/subtraction protect the invariant calculation;
-- minimum output is an encrypted input and is compared privately;
-- the pool transfers encrypted amounts through `transferFromGT` and `transferGT`;
-- LP shares are stored as ciphertext and returned only re-encrypted to the caller.
+## Accounting model
 
-This is implemented as a testnet proof of concept, not as a production/audit claim.
+Confidential reserves, protocol fees and LP shares are encrypted accounting
+state. Private token transfers back that state, but reserve calculations do not
+derive price or liquidity from publicly readable token balances. A swap credits
+the effective reserve with the encrypted input less the encrypted protocol fee;
+the protocol share enters a separate encrypted per-token accumulator. Full LP
+exits cannot withdraw that accumulator.
 
-## Hard privacy limit
+Public pools use ordinary ERC-20 balances with explicit per-token protocol-fee
+counters subtracted from effective reserves. Public and confidential pools share
+the immutable fee tiers and split documented in `FEE_ECONOMICS.md`.
 
-The requested property that the recipient remain hidden is not provided by the
-standard PrivateERC20 interface. `transferGT(address to, ...)` and
-`transferFromGT(address from, address to, ...)` contain public EVM addresses, and
-the official token's `Transfer` event indexes `from` and `to`. A pool wrapper can
-remove amount fields from its own events but cannot erase those token-level
-participant disclosures.
+## Hard privacy limits
 
-Achieving hidden recipients would require a different settlement design, such as a
-private claim/stealth-recipient mechanism or a custom token implementation. That is
-outside this first CPMM and must not be implied by its name or UI.
+The standard `PrivateERC20` interface does not hide participant addresses.
+`transferGT` and `transferFromGT` contain public EVM addresses, and token events
+may expose sender and recipient. CipherDEX protects amounts, slippage, reserves
+and LP positions; it does not claim anonymous participants.
+
+Repeated permissionless quotes allow an active caller to estimate the CPMM curve.
+Encryption protects a specific request/result from passive public disclosure; it
+does not make a publicly probeable deterministic curve information-theoretically
+unknowable.
+
+Confidential fee batches similarly reduce routine per-swap disclosure but cannot
+manufacture an anonymity set in a quiet pool. A beneficiary that knows most
+constituent trades may infer information from an eventual aggregate. The v1
+design therefore uses pool-side count/time batching plus a delayed common vault,
+and documents this residual active-differencing limit explicitly.
 
 ## PoD exclusion
 
-PoD `PodERC20` is asynchronous. Its transfer/approval operations submit a request,
-pay a callback fee, and complete through inbox callbacks against a COTI-side
-authoritative ledger. A synchronous constant-product swap cannot atomically compose
-two arbitrary PoD operations without a pending state machine, callback ordering,
-timeout/refund handling and a separate failure/recovery model.
+PoD `PodERC20` settlement is asynchronous and callback-driven. It cannot be used
+as a synchronous CPMM leg without a separate pending-state, timeout, refund and
+recovery protocol. PoD support remains outside this v1 rather than being treated
+as an implicit `PrivateERC20` fallback.
 
-PoD should therefore be integrated later through an explicitly asynchronous vault
-or adapter. It must not be silently accepted by this synchronous pool.
+## Remaining gates
 
-## Required testnet gate before wider expansion
+The testnet behavior is demonstrated, not audited. Before any mainnet decision:
 
-The following must be demonstrated on COTI testnet with real onboarded test keys and
-official PrivateERC20 test tokens before treating the factory, router/quoter and
-launchpad boundaries as testnet-proven or adding cross-domain adapters:
+1. Obtain independent contract and COTI MPC integration review.
+2. Run sustained stateful/fuzz campaigns beyond the deterministic local suite.
+3. Operationally validate the separate 24-hour confidential vault sweep without
+   shortening or bypassing its delay.
+4. Exercise launchpad creator-held, timed-lock and permanent-lock dispositions
+   in separate fresh testnet deployments; the core pool lock paths themselves
+   have been exercised.
+5. Use a reviewed multisig/governance beneficiary instead of a testnet EOA.
+6. Revalidate compiler, RPC and MPC behavior against the target mainnet release.
 
-1. Encrypt and sign two input values with the official COTI SDK.
-2. Add balanced liquidity and decrypt only the caller-specific share result.
-3. Quote through a COTI-compatible `eth_call` path and record whether MPC reads are
-   supported under static simulation.
-4. Execute swaps in both directions with encrypted minimum output.
-5. Prove a failed slippage check leaks no amount and leaves balances unchanged.
-6. Remove liquidity, including a full exit without residual reserve dust.
-7. Record gas and wall-clock latency without logging private values.
-
-The factory, pool-bound LP token and launchpad contracts are implemented as narrow,
-permissionless boundaries, but they are not testnet-proven by this repository yet.
-Until the gate
-passes, the safe product claim is “confidential amounts and private LP accounting
-for COTI PrivateERC20 pools with an unverified atomic bootstrap adapter,” not fully
-private trading or a production launchpad.
-
-## Factory and launchpad boundary
-
-The permissionless factory creates immutable pair/fee instances and records public
-pool addresses. The launchpad migrator avoids the generic-router problem by being
-the authenticated target for creator inputs, using explicit encrypted allowances,
-and passing only already-validated MPC values to a factory-owned bootstrap hook.
-The pool rechecks actual private balances and encrypted normalized price bounds.
-This design still requires the real COTI testnet gate, especially proof that
-`transferFromGT`, MPC validation and the bootstrap callback compose atomically on
-the deployed network.
-
-## Public/private boundary still gated
-
-A public/private pool cannot simply reuse either existing pool. The private leg
-can be settled with `transferGT` while keeping its amount encrypted, but a
-public-leg withdrawal needs an explicit user-visible amount. Any implementation
-must bind that public amount to the MPC-calculated result and handle pending
-withdrawal recovery without decrypting private state in the contract. This is a
-separate design and testnet gate, not an implicit fallback to public amounts.
+No external audit or mainnet readiness is claimed.

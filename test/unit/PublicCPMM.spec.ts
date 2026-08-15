@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployFeeVault } from "../helpers/deployFeeVault";
 
 describe("PublicCPMM", function () {
   async function deployPool() {
@@ -10,8 +11,9 @@ describe("PublicCPMM", function () {
     await tokenA.waitForDeployment();
     await tokenB.waitForDeployment();
 
+    const vault = await deployFeeVault();
     const factoryFactory = await ethers.getContractFactory("PublicCPMMFactory");
-    const factory = await factoryFactory.deploy();
+    const factory = await factoryFactory.deploy(await vault.getAddress());
     await factory.waitForDeployment();
     await factory.createPool(
       await tokenA.getAddress(),
@@ -35,6 +37,8 @@ describe("PublicCPMM", function () {
       30,
     );
     expect(reverseKey).to.equal(key);
+    expect(await factory.poolKey(await tokenA.getAddress(), await tokenB.getAddress(), 0, 0, 30)).to.equal(key);
+    expect(await factory.PRIVACY_MODE()).to.equal(0n);
     const poolAddress = await factory.getPool(key);
     const pool = await ethers.getContractAt("PublicCPMM", poolAddress);
 
@@ -118,12 +122,14 @@ describe("PublicCPMM", function () {
     await token1.waitForDeployment();
 
     const poolFactory = await ethers.getContractFactory("PublicCPMM");
+    const vault = await deployFeeVault();
     const pool = await poolFactory.deploy(
       await token0.getAddress(),
       await token1.getAddress(),
       18,
       18,
       30,
+      await vault.getAddress(),
     );
     await pool.waitForDeployment();
 

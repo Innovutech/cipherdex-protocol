@@ -12,6 +12,8 @@ interface IPublicCPMMFactory {
     );
 
     function PROTOCOL_VERSION() external view returns (uint256);
+    function feeVault() external view returns (address);
+    function isApprovedFeeTier(uint256) external pure returns (bool);
     function getPool(bytes32) external view returns (address);
     function isPool(address) external view returns (bool);
     function createPool(address,address,uint8,uint8,uint256) external returns (address);

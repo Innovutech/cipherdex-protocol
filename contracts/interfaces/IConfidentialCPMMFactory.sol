@@ -16,6 +16,7 @@ interface IConfidentialCPMMFactory {
     event BootstrapAdapterConfigured(address indexed adapter);
 
     function PROTOCOL_VERSION() external view returns (uint256);
+    function feeVault() external view returns (address);
     function lpTokenFactory() external view returns (address);
     function bootstrapConfigurator() external view returns (address);
     function bootstrapAdapter() external view returns (address);

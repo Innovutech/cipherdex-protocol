@@ -12,6 +12,7 @@ import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
  */
 interface IPrivateLPToken {
     function pool() external view returns (address);
+    function balanceOf(address account) external view returns (ctUint256 memory);
     function balanceOfGT(address account) external returns (gtUint256);
     function mintGt(address account, gtUint256 amount) external;
     function burnFromPool(address account, gtUint256 amount) external;

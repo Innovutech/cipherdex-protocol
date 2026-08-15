@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "./ConfidentialCPMM.sol";
 import "./PrivateLPTokenFactory.sol";
+import "./CipherDEXFeePolicy.sol";
 import "./interfaces/IConfidentialCPMM.sol";
 import "./interfaces/IConfidentialCPMMFactory.sol";
 import "./interfaces/IPrivateLPTokenFactory.sol";
@@ -14,25 +15,31 @@ import "./interfaces/IPrivateLPTokenFactory.sol";
  * There is no owner, fee manager or withdrawal authority. The pool's fee and pair
  * are fixed in its constructor and the factory only records public pool identity.
  */
-contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
+contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy {
     uint256 public constant PROTOCOL_VERSION = 1;
+    uint8 public constant PRIVACY_MODE = 1;
     mapping(bytes32 => address) public getPool;
     mapping(address => bool) public isPool;
     address[] private pools;
     address public immutable lpTokenFactory;
+    address public immutable feeVault;
     address public immutable bootstrapConfigurator;
     address public bootstrapAdapter;
 
     error InvalidTokenPair();
+    error InvalidFee();
+    error InvalidFeeVault();
     error PoolAlreadyExists();
     error UnknownPool();
     error BootstrapAdapterUnauthorized();
     error BootstrapAdapterAlreadyConfigured();
     error InvalidBootstrapAdapter();
 
-    constructor() {
+    constructor(address feeVault_) {
+        if (feeVault_.code.length == 0) revert InvalidFeeVault();
         bootstrapConfigurator = msg.sender;
         lpTokenFactory = address(new PrivateLPTokenFactory());
+        feeVault = feeVault_;
     }
 
     /**
@@ -55,9 +62,20 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
         uint8 decimalsB,
         uint256 feeBps
     ) external returns (address pool) {
+        return _createPool(tokenA, tokenB, decimalsA, decimalsB, feeBps);
+    }
+
+    function _createPool(
+        address tokenA,
+        address tokenB,
+        uint8 decimalsA,
+        uint8 decimalsB,
+        uint256 feeBps
+    ) internal returns (address pool) {
         if (tokenA == address(0) || tokenB == address(0) || tokenA == tokenB) {
             revert InvalidTokenPair();
         }
+        if (!isApprovedFeeTier(feeBps)) revert InvalidFee();
 
         (address token0, address token1, uint8 decimals0, uint8 decimals1) = tokenA < tokenB
             ? (tokenA, tokenB, decimalsA, decimalsB)
@@ -71,7 +89,8 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
             token1,
             decimals0,
             decimals1,
-            feeBps
+            feeBps,
+            feeVault
         ));
         address lpTokenAddress = IPrivateLPTokenFactory(lpTokenFactory).create(pool);
         IConfidentialCPMM(pool).initializeLPToken(lpTokenAddress);
@@ -86,13 +105,13 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
     function poolKey(
         address token0,
         address token1,
-        uint8 decimals0,
-        uint8 decimals1,
+        uint8,
+        uint8,
         uint256 feeBps
     ) public pure returns (bytes32) {
         return token0 < token1
-            ? keccak256(abi.encode(token0, token1, decimals0, decimals1, feeBps))
-            : keccak256(abi.encode(token1, token0, decimals1, decimals0, feeBps));
+            ? keccak256(abi.encode(token0, token1, feeBps, PRIVACY_MODE, PROTOCOL_VERSION))
+            : keccak256(abi.encode(token1, token0, feeBps, PRIVACY_MODE, PROTOCOL_VERSION));
     }
 
     /**

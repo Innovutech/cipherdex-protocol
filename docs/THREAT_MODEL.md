@@ -11,6 +11,9 @@
 - replay of the same encrypted input digest at this pool;
 - accidental donation of excess proportional liquidity;
 - caller-controlled mutable fee or admin withdrawal paths.
+- protocol-fee collection withdrawing LP-owned effective reserves or changing
+  pool price;
+- passing confidential tokens through the public fee-vault sweep ABI;
 - administrator-controlled liquidity unlocks or withdrawals.
 - stale signed inputs executing after their intended deadline.
 - launchpad bootstrap changing an initialized pool or bypassing the factory
@@ -18,6 +21,8 @@
 - launchpad price-bound checks bypassing the private normalized-price interval.
 - unmanaged private-token donations changing initial share or launchpad price
   state.
+- the confidential core has no public spot, TWAP, reserve, TVL, or aggregate
+  LP-supply publication path;
 
 ## Not solved by this phase
 
@@ -29,7 +34,13 @@
 - hidden recipient identity under the standard token event/interface;
 - asynchronous PoD callback failures or cross-chain settlement;
 - wallet/UI leakage before a transaction is encrypted;
-- economic review of fee tiers, share fairness, oracle/TWAP or launchpad curves.
+- reserve-ratio and depth inference by callers using repeated encrypted quotes.
+- active differencing of low-volume confidential fee batches by a beneficiary or
+  adversary that already knows most constituent trades; count/time batching and
+  the vault sweep cadence reduce routine per-swap disclosure but cannot create
+  unknown traffic;
+- confidentiality or retention behavior of an independently operated quote
+  service after it decrypts its own requested results;
 - whether a launchpad's encrypted allowances are economically scoped to its
   migration transaction; a malicious launchpad can still spend whatever allowance
   a creator explicitly grants it.
