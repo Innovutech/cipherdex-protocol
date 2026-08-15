@@ -16,6 +16,8 @@
 - launchpad bootstrap changing an initialized pool or bypassing the factory
   bootstrapper boundary;
 - launchpad price-bound checks bypassing the private normalized-price interval.
+- unmanaged private-token donations changing initial share or launchpad price
+  state.
 
 ## Not solved by this phase
 

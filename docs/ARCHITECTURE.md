@@ -38,6 +38,10 @@ public under the official PrivateERC20 interface.
 The pool is a non-custodial pair of official COTI PrivateERC20-compatible assets.
 It reads actual pool balances as MPC values rather than maintaining a second public
 reserve ledger. This avoids a public duplicate of confidential reserves.
+The first ordinary liquidity add requires both pre-existing reserves to be zero,
+and launchpad bootstrap requires the post-transfer balances to equal the signed
+seed values exactly; unsolicited private-token donations cannot alter the initial
+share or price relationship.
 
 The swap formula is:
 
