@@ -41,6 +41,17 @@ interface IConfidentialCPMMFactory {
         uint256 minPriceX18,
         uint256 maxPriceX18
     ) external returns (ctUint256 memory mintedShares);
+    function bootstrapPoolWithDisposition(
+        address pool,
+        address provider,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18,
+        uint8 disposition,
+        uint64 unlockTime
+    ) external returns (ctUint256 memory mintedShares, bytes32 lockId);
     function allPoolsLength() external view returns (uint256);
     function allPools(uint256 index) external view returns (address);
 }

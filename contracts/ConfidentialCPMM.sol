@@ -23,6 +23,9 @@ contract ConfidentialCPMM {
     uint256 public constant FEE_DENOMINATOR = 10_000;
     uint256 public constant MAX_FEE_BPS = 1_000;
     uint256 public constant PRICE_SCALE = 1e18;
+    uint8 public constant LP_DISPOSITION_CREATOR_HELD = 0;
+    uint8 public constant LP_DISPOSITION_TIMED_LOCK = 1;
+    uint8 public constant LP_DISPOSITION_PERMANENT_LOCK = 2;
 
     address public immutable token0;
     address public immutable token1;
@@ -74,6 +77,7 @@ contract ConfidentialCPMM {
     error BootstrapUnauthorized();
     error InvalidLPToken();
     error LPTokenAlreadyInitialized();
+    error InvalidLPDisposition();
     error InvalidLiquidityProvider();
     error InputAlreadyConsumed();
     error DeadlineExpired();
@@ -288,9 +292,68 @@ contract ConfidentialCPMM {
         uint256 minPriceX18_,
         uint256 maxPriceX18_
     ) external nonReentrant returns (ctUint256 memory mintedShares) {
+        (gtUint256 minted, ) = _bootstrapLiquidity(
+            provider,
+            amount0_,
+            amount1_,
+            minShares_,
+            minPriceX18_,
+            maxPriceX18_,
+            LP_DISPOSITION_CREATOR_HELD,
+            0
+        );
+        return MpcCore.offBoardToUser(minted, provider);
+    }
+
+    /**
+     * @notice Atomically bootstraps liquidity and chooses the LP disposition.
+     * @dev Timed and permanent dispositions never mint the initial LP token to
+     *      the provider. The private share amount is held by the pool's lock
+     *      record; timed unlock mints it after the deadline, while permanent
+     *      disposition burns it irreversibly from the provider's perspective.
+     */
+    function bootstrapLiquidityWithDisposition(
+        address provider,
+        uint256 amount0_,
+        uint256 amount1_,
+        uint256 minShares_,
+        uint256 minPriceX18_,
+        uint256 maxPriceX18_,
+        uint8 disposition,
+        uint64 unlockTime
+    ) external nonReentrant returns (ctUint256 memory mintedShares, bytes32 lockId) {
+        (gtUint256 minted, bytes32 createdLockId) = _bootstrapLiquidity(
+            provider,
+            amount0_,
+            amount1_,
+            minShares_,
+            minPriceX18_,
+            maxPriceX18_,
+            disposition,
+            unlockTime
+        );
+        return (MpcCore.offBoardToUser(minted, provider), createdLockId);
+    }
+
+    function _bootstrapLiquidity(
+        address provider,
+        uint256 amount0_,
+        uint256 amount1_,
+        uint256 minShares_,
+        uint256 minPriceX18_,
+        uint256 maxPriceX18_,
+        uint8 disposition,
+        uint64 unlockTime
+    ) internal returns (gtUint256 minted, bytes32 lockId) {
         if (msg.sender != bootstrapper) revert BootstrapUnauthorized();
         if (initialized) revert PoolAlreadyInitialized();
         if (provider == address(0)) revert InvalidLiquidityProvider();
+        if (disposition > LP_DISPOSITION_PERMANENT_LOCK) revert InvalidLPDisposition();
+        if (
+            disposition == LP_DISPOSITION_TIMED_LOCK
+                ? unlockTime <= block.timestamp
+                : unlockTime != 0
+        ) revert InvalidLPDisposition();
 
         gtUint256 amount0 = gtUint256.wrap(amount0_);
         gtUint256 amount1 = gtUint256.wrap(amount1_);
@@ -327,7 +390,7 @@ contract ConfidentialCPMM {
         // The minimum normalized side defines the initial private share unit.
         // Unlike ordinary addLiquidity, bootstrap may intentionally establish a
         // non-1:1 bonding-curve price; full exit still returns both reserves.
-        gtUint256 minted = MpcCore.min(normalized0, normalized1);
+        minted = MpcCore.min(normalized0, normalized1);
         _requirePositive(minted);
         if (!MpcCore.decrypt(MpcCore.ge(minted, minimumShares))) {
             revert SlippageExceeded();
@@ -335,13 +398,29 @@ contract ConfidentialCPMM {
 
         initialized = true;
         totalShares = MpcCore.offBoard(minted);
-        if (lpToken == address(0)) {
-            shares[provider] = MpcCore.offBoard(minted);
+        if (disposition == LP_DISPOSITION_CREATOR_HELD) {
+            if (lpToken == address(0)) {
+                shares[provider] = MpcCore.offBoard(minted);
+            } else {
+                IPrivateLPToken(lpToken).mintGt(provider, minted);
+            }
         } else {
-            IPrivateLPToken(lpToken).mintGt(provider, minted);
+            lockId = keccak256(abi.encode(address(this), provider, nextLockNonce++));
+            locks[lockId] = LockRecord({
+                owner: provider,
+                unlockTime: unlockTime,
+                permanent: disposition == LP_DISPOSITION_PERMANENT_LOCK,
+                released: false,
+                amount: MpcCore.offBoard(minted)
+            });
+            emit LiquidityLocked(
+                lockId,
+                provider,
+                unlockTime,
+                disposition == LP_DISPOSITION_PERMANENT_LOCK
+            );
         }
         emit PoolBootstrapped(provider);
-        return MpcCore.offBoardToUser(minted, provider);
     }
 
     /**

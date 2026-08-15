@@ -25,8 +25,6 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
     error PoolAlreadyExists();
     error UnknownPool();
 
-    event PrivateLPTokenCreated(address indexed pool, address indexed token);
-
     constructor() {
         lpTokenFactory = address(new PrivateLPTokenFactory());
     }
@@ -102,6 +100,34 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory {
             minShares,
             minPriceX18,
             maxPriceX18
+        );
+    }
+
+    /**
+     * @notice Atomically bootstraps a pool with a creator-held or locked LP
+     *         disposition selected by the launchpad.
+     */
+    function bootstrapPoolWithDisposition(
+        address pool,
+        address provider,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18,
+        uint8 disposition,
+        uint64 unlockTime
+    ) external returns (ctUint256 memory mintedShares, bytes32 lockId) {
+        if (!isPool[pool]) revert UnknownPool();
+        return IConfidentialCPMM(pool).bootstrapLiquidityWithDisposition(
+            provider,
+            amount0,
+            amount1,
+            minShares,
+            minPriceX18,
+            maxPriceX18,
+            disposition,
+            unlockTime
         );
     }
 

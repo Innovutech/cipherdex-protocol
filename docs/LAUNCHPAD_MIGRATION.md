@@ -21,8 +21,10 @@ withdrawal, fee-manager or token-rescue authority.
    factory pool, pulls the exact MPC amounts with `transferFromGT`, and calls the
    factory bootstrap hook.
 6. The pool confirms that its private balances contain at least the transferred
-   values, checks the encrypted price interval, mints private shares and returns
-   only a creator-encrypted share result.
+   values, checks the encrypted price interval, and applies the requested LP
+   disposition. Creator-held shares are minted to the creator; timed-lock shares
+   remain in the pool lock record until unlock; permanent-lock shares are never
+   minted to a holder. The result remains creator-encrypted.
 
 Any revert rolls back pool creation, token pulls and share state in the same EVM
 transaction.
@@ -48,6 +50,11 @@ the same slot is rejected by the migrator's local digest guard.
 The stable SDK exports `CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI` and the pool/factory
 bootstrap fragments. It intentionally does not expose plaintext reserve, amount,
 price or LP-share fields as public discovery metadata.
+
+`migrate` preserves the original creator-held behavior. `migrateWithDisposition`
+adds the explicit `CREATOR_HELD`, `TIMED_LOCK`, or `PERMANENT_LOCK` mode and a
+public unlock timestamp for timed locks. The lock event exposes only the public
+lock identifier, owner, mode and time; the locked amount remains encrypted.
 
 ## Current limits
 

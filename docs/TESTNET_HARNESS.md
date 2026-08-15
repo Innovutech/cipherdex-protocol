@@ -51,10 +51,13 @@ npm run testnet:launchpad
 
 It deploys a fresh factory and migrator, creates exact encrypted allowances for
 the migrator, derives or accepts encrypted normalized price bounds, and executes
-one atomic create/select, pull and bootstrap transaction. It verifies the pool is
-initialized and decrypts the caller-specific share result locally without printing
-it. It uses the same `COTI_TOKEN0`, `COTI_TOKEN1`, decimals, liquidity amounts,
-`COTI_TESTNET_PRIVATE_KEY` and `COTI_AES_KEY` variables as the full scenario.
+one atomic create/select, pull and bootstrap transaction. By default it preserves
+creator-held shares. Set `COTI_LAUNCHPAD_DISPOSITION=1` with a future absolute
+`COTI_LAUNCHPAD_UNLOCK_TIME` for a timed lock, or `=2` for a permanent lock.
+It verifies the pool is initialized and decrypts the caller-specific share result
+locally without printing it. It uses the same `COTI_TOKEN0`, `COTI_TOKEN1`,
+decimals, liquidity amounts, `COTI_TESTNET_PRIVATE_KEY` and `COTI_AES_KEY`
+variables as the full scenario.
 
 The two runners are intentionally separate: use `testnet:launchpad` for the
 launchpad boundary, then `testnet:scenario` with a new disposable pool for swaps,

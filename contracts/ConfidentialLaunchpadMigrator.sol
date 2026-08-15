@@ -73,6 +73,80 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
         itUint256 calldata maxPriceX18,
         uint64 deadline
     ) external nonReentrant returns (address pool, ctUint256 memory mintedShares) {
+        (pool, mintedShares, ) = _migrate(
+            tokenA,
+            tokenB,
+            decimalsA,
+            decimalsB,
+            feeBps,
+            amount0,
+            amount1,
+            minShares,
+            minPriceX18,
+            maxPriceX18,
+            deadline,
+            false,
+            0,
+            0
+        );
+    }
+
+    /**
+     * @notice Atomically migrates liquidity with an explicit LP disposition.
+     * @dev `disposition` uses the pool constants: 0 creator-held, 1 timed lock,
+     *      and 2 permanent lock. The five encrypted values are still signed
+     *      for this exact selector; public disposition fields are independently
+     *      validated by the pool.
+     */
+    function migrateWithDisposition(
+        address tokenA,
+        address tokenB,
+        uint8 decimalsA,
+        uint8 decimalsB,
+        uint256 feeBps,
+        itUint256 calldata amount0,
+        itUint256 calldata amount1,
+        itUint256 calldata minShares,
+        itUint256 calldata minPriceX18,
+        itUint256 calldata maxPriceX18,
+        uint64 deadline,
+        uint8 disposition,
+        uint64 unlockTime
+    ) external nonReentrant returns (address pool, ctUint256 memory mintedShares, bytes32 lockId) {
+        return _migrate(
+            tokenA,
+            tokenB,
+            decimalsA,
+            decimalsB,
+            feeBps,
+            amount0,
+            amount1,
+            minShares,
+            minPriceX18,
+            maxPriceX18,
+            deadline,
+            true,
+            disposition,
+            unlockTime
+        );
+    }
+
+    function _migrate(
+        address tokenA,
+        address tokenB,
+        uint8 decimalsA,
+        uint8 decimalsB,
+        uint256 feeBps,
+        itUint256 calldata amount0,
+        itUint256 calldata amount1,
+        itUint256 calldata minShares,
+        itUint256 calldata minPriceX18,
+        itUint256 calldata maxPriceX18,
+        uint64 deadline,
+        bool withDisposition,
+        uint8 disposition,
+        uint64 unlockTime
+    ) internal returns (address pool, ctUint256 memory mintedShares, bytes32 lockId) {
         if (deadline < block.timestamp) revert DeadlineExpired();
         if (tokenA == address(0) || tokenB == address(0) || tokenA == tokenB) {
             revert InvalidTokenPair();
@@ -102,16 +176,33 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
         IPrivateERC20(token0).transferFromGT(msg.sender, pool, gtAmount0);
         IPrivateERC20(token1).transferFromGT(msg.sender, pool, gtAmount1);
 
-        mintedShares = factoryContract.bootstrapPool(
-            pool,
-            msg.sender,
-            gtUint256.unwrap(gtAmount0),
-            gtUint256.unwrap(gtAmount1),
-            gtUint256.unwrap(gtMinShares),
-            gtUint256.unwrap(gtMinPrice),
-            gtUint256.unwrap(gtMaxPrice)
-        );
+        if (withDisposition) {
+            (mintedShares, lockId) = factoryContract.bootstrapPoolWithDisposition(
+                pool,
+                msg.sender,
+                gtUint256.unwrap(gtAmount0),
+                gtUint256.unwrap(gtAmount1),
+                gtUint256.unwrap(gtMinShares),
+                gtUint256.unwrap(gtMinPrice),
+                gtUint256.unwrap(gtMaxPrice),
+                disposition,
+                unlockTime
+            );
+        } else {
+            mintedShares = factoryContract.bootstrapPool(
+                pool,
+                msg.sender,
+                gtUint256.unwrap(gtAmount0),
+                gtUint256.unwrap(gtAmount1),
+                gtUint256.unwrap(gtMinShares),
+                gtUint256.unwrap(gtMinPrice),
+                gtUint256.unwrap(gtMaxPrice)
+            );
+        }
         emit LaunchpadMigration(msg.sender, pool);
+        if (withDisposition) {
+            emit LaunchpadLockDisposition(msg.sender, pool, disposition, lockId, unlockTime);
+        }
     }
 
     function _validateAndConsume(itUint256 calldata input, uint8 slot)

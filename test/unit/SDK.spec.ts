@@ -5,6 +5,7 @@ import {
   CONFIDENTIAL_CPMM_FACTORY_ABI,
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
   DISCLOSURE_SCHEMA_VERSION,
+  LP_DISPOSITION,
   PRIVATE_LP_TOKEN_ABI,
   PUBLIC_CPMM_ABI,
   PUBLIC_CPMM_FACTORY_ABI,
@@ -25,16 +26,22 @@ describe("stable SDK surface", function () {
     const publicQuoter = new Interface(PUBLIC_CPMM_QUOTER_ABI);
     const publicRouter = new Interface(PUBLIC_CPMM_ROUTER_ABI);
     expect(pool.getFunction("swapExactInput")).to.not.equal(null);
+    expect(pool.getFunction("LP_DISPOSITION_PERMANENT_LOCK")).to.not.equal(null);
     expect(pool.getFunction("removeLiquidity")).to.not.equal(null);
     expect(pool.getFunction("bootstrapLiquidity")).to.not.equal(null);
+    expect(pool.getFunction("bootstrapLiquidityWithDisposition")).to.not.equal(null);
     expect(factory.getFunction("createPool")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPool")).to.not.equal(null);
+    expect(factory.getFunction("bootstrapPoolWithDisposition")).to.not.equal(null);
     expect(factory.getEvent("PoolCreated")).to.not.equal(null);
     expect(factory.getEvent("PrivateLPTokenCreated")).to.not.equal(null);
     expect(privateLpToken.getFunction("pool")).to.not.equal(null);
     expect(privateLpToken.getFunction("balanceOf")).to.not.equal(null);
     expect(launchpad.getFunction("migrate")).to.not.equal(null);
+    expect(launchpad.getFunction("migrateWithDisposition")).to.not.equal(null);
     expect(launchpad.getEvent("LaunchpadMigration")).to.not.equal(null);
+    expect(launchpad.getEvent("LaunchpadLockDisposition")).to.not.equal(null);
+    expect(LP_DISPOSITION.PERMANENT_LOCK).to.equal(2);
     expect(publicPool.getFunction("swapExactInput")).to.not.equal(null);
     expect(publicFactory.getFunction("createPool")).to.not.equal(null);
     expect(publicQuoter.getFunction("quoteExactInput")).to.not.equal(null);

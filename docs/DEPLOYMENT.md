@@ -10,12 +10,13 @@ is no mainnet deployment script or mainnet network entry.
    not require token addresses because pool creation is permissionless.
 4. Run `npm ci --ignore-scripts` after reviewing the lockfile.
 5. Run `npm run verify`.
-6. Run `npm run deploy:testnet`. This deploys the permissionless factory and the
-   atomic encrypted launchpad migrator. It does not create a pool or move tokens.
-7. Record both public contract addresses, compiler settings, deployment transaction
-   hashes, gas and
-   testnet RPC used in a local release record. Do not commit private keys or private
-   ciphertexts.
+6. Run `npm run deploy:testnet`. This deploys the confidential permissionless
+   factory, its pool-bound LP-token deployer, the atomic encrypted launchpad
+   migrator, and the public factory/quoter/router. It does not create a pool or
+   move tokens.
+7. Record every printed public address, deployment transaction hash, gas value,
+   compiler settings, and testnet RPC in a local release record. Do not commit
+   private keys or private ciphertexts.
 
 The deploy script prints only public contract configuration. It does not onboard
 accounts, handle AES keys, create a pool, or manufacture encrypted inputs. Use the

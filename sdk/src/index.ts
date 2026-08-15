@@ -8,8 +8,17 @@
 
 export const DISCLOSURE_SCHEMA_VERSION = 1 as const;
 
+export const LP_DISPOSITION = {
+  CREATOR_HELD: 0,
+  TIMED_LOCK: 1,
+  PERMANENT_LOCK: 2,
+} as const;
+
 export const CONFIDENTIAL_CPMM_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
+  "function LP_DISPOSITION_CREATOR_HELD() view returns (uint8)",
+  "function LP_DISPOSITION_TIMED_LOCK() view returns (uint8)",
+  "function LP_DISPOSITION_PERMANENT_LOCK() view returns (uint8)",
   "function token0() view returns (address)",
   "function token1() view returns (address)",
   "function token0Decimals() view returns (uint8)",
@@ -24,6 +33,7 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
   "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256))",
   "function bootstrapLiquidity(address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))",
+  "function bootstrapLiquidityWithDisposition(address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)",
   "function removeLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256),(uint256,uint256))",
   "function myShares() returns ((uint256,uint256))",
   "function lockInfo(bytes32) view returns (address,uint64,bool,bool)",
@@ -47,6 +57,7 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function allPoolsLength() view returns (uint256)",
   "function allPools(uint256) view returns (address)",
   "function bootstrapPool(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))",
+  "function bootstrapPoolWithDisposition(address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)",
   "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
   "event PrivateLPTokenCreated(address indexed pool,address indexed token)",
 ] as const;
@@ -69,7 +80,9 @@ export const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function factory() view returns (address)",
   "function migrate(address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns (address,(uint256,uint256))",
+  "function migrateWithDisposition(address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,uint8,uint64) returns (address,(uint256,uint256),bytes32)",
   "event LaunchpadMigration(address indexed creator,address indexed pool)",
+  "event LaunchpadLockDisposition(address indexed creator,address indexed pool,uint8 disposition,bytes32 lockId,uint64 unlockTime)",
 ] as const;
 
 export const PUBLIC_CPMM_ABI = [

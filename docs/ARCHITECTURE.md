@@ -115,6 +115,10 @@ whole transaction, including the token pulls.
 The bootstrap path is restricted to factory-created empty pools and cannot be used
 to withdraw or mutate an initialized pool. The initial share unit is the minimum
 of the normalized private deposits, while full exit remains reserve-complete.
+The launchpad can select creator-held, timed-lock, or permanent-lock disposition
+as part of the same bootstrap transaction. A locked bootstrap records the private
+share amount directly in the pool lock and does not mint it to the creator; timed
+unlock later mints the amount, while permanent disposition never does.
 
 ## Public/public boundary
 

@@ -53,6 +53,8 @@ but has not been executed against COTI testnet in this repository:
    caller-specific share recovery.
 8. Launchpad migration with canonical token ordering, explicit encrypted
    allowances, encrypted price bounds and atomic rollback on a failed bound.
+9. Launchpad creator-held, timed-lock and permanent-lock dispositions on COTI
+   testnet, including lock recovery and public lock metadata.
 
 No mainnet deployment, confidential generic router, PoD adapter, or cross-chain
 adapter is included in this foundation. Public pools do have a factory-gated

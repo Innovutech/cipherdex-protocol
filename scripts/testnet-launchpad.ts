@@ -9,7 +9,9 @@ const TOKEN_ABI = [
 
 const MIGRATOR_ABI = [
   "function migrate(address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns (address,(uint256,uint256))",
+  "function migrateWithDisposition(address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,uint8,uint64) returns (address,(uint256,uint256),bytes32)",
   "event LaunchpadMigration(address indexed creator,address indexed pool)",
+  "event LaunchpadLockDisposition(address indexed creator,address indexed pool,uint8 disposition,bytes32 lockId,uint64 unlockTime)",
 ];
 
 const POOL_ABI = [
@@ -42,6 +44,17 @@ const optionalBigInt = (name: string, fallback: bigint): bigint => {
   if (!value) return fallback;
   if (!/^\d+$/.test(value)) throw new Error(`invalid ${name}`);
   return BigInt(value);
+};
+
+const optionalDisposition = (): number | undefined => {
+  const value = process.env.COTI_LAUNCHPAD_DISPOSITION?.trim();
+  if (!value) return undefined;
+  if (!/^\d+$/.test(value)) throw new Error("invalid COTI_LAUNCHPAD_DISPOSITION");
+  const disposition = Number(value);
+  if (!Number.isInteger(disposition) || disposition < 0 || disposition > 2) {
+    throw new Error("COTI_LAUNCHPAD_DISPOSITION must be 0, 1 or 2");
+  }
+  return disposition;
 };
 
 const requiredUInt = (name: string, fallback?: number): number => {
@@ -98,6 +111,16 @@ async function main(): Promise<void> {
   const minShares = optionalBigInt("COTI_LAUNCHPAD_MIN_SHARES", 0n);
   const minPrice = optionalBigInt("COTI_LAUNCHPAD_MIN_PRICE_X18", minDerivedPrice);
   const maxPrice = optionalBigInt("COTI_LAUNCHPAD_MAX_PRICE_X18", maxDerivedPrice);
+  const disposition = optionalDisposition();
+  const unlockTime = disposition === 1
+    ? requiredBigInt("COTI_LAUNCHPAD_UNLOCK_TIME")
+    : 0n;
+  if (disposition === 1 && unlockTime <= BigInt(Math.floor(Date.now() / 1000))) {
+    throw new Error("COTI_LAUNCHPAD_UNLOCK_TIME must be in the future");
+  }
+  if (disposition !== undefined && disposition !== 1 && process.env.COTI_LAUNCHPAD_UNLOCK_TIME) {
+    throw new Error("COTI_LAUNCHPAD_UNLOCK_TIME is only valid for a timed lock");
+  }
 
   const [deployer] = await hardhatEthers.getSigners();
   const wallet = new CotiWallet(privateKey, hardhatEthers.provider, { aesKey });
@@ -122,8 +145,9 @@ async function main(): Promise<void> {
   const token1 = new Contract(canonicalToken1, TOKEN_ABI, wallet);
   const approveSelector0 = token0.interface.getFunction("approve")?.selector;
   const approveSelector1 = token1.interface.getFunction("approve")?.selector;
-  const migrateSelector = new Contract(migratorAddress, MIGRATOR_ABI, wallet)
-    .interface.getFunction("migrate")?.selector;
+  const migrator = new Contract(migratorAddress, MIGRATOR_ABI, wallet);
+  const migrateSelector = migrator.interface
+    .getFunction(disposition === undefined ? "migrate" : "migrateWithDisposition")?.selector;
   if (!approveSelector0 || !approveSelector1 || !migrateSelector) {
     throw new Error("required selector unavailable");
   }
@@ -142,34 +166,74 @@ async function main(): Promise<void> {
   const minSharesInput = await wallet.encryptValue256(minShares, migratorAddress, migrateSelector);
   const minPriceInput = await wallet.encryptValue256(minPrice, migratorAddress, migrateSelector);
   const maxPriceInput = await wallet.encryptValue256(maxPrice, migratorAddress, migrateSelector);
-  const migrator = new Contract(migratorAddress, MIGRATOR_ABI, wallet);
   const receipt = await submit(
     "atomic launchpad migration",
-    migrator.migrate(
-      tokenA,
-      tokenB,
-      decimalsA,
-      decimalsB,
-      feeBps,
-      input0,
-      input1,
-      minSharesInput,
-      minPriceInput,
-      maxPriceInput,
-      deadline,
-    ),
+    disposition === undefined
+      ? migrator.migrate(
+          tokenA,
+          tokenB,
+          decimalsA,
+          decimalsB,
+          feeBps,
+          input0,
+          input1,
+          minSharesInput,
+          minPriceInput,
+          maxPriceInput,
+          deadline,
+        )
+      : migrator.migrateWithDisposition(
+          tokenA,
+          tokenB,
+          decimalsA,
+          decimalsB,
+          feeBps,
+          input0,
+          input1,
+          minSharesInput,
+          minPriceInput,
+          maxPriceInput,
+          deadline,
+          disposition,
+          unlockTime,
+        ),
   );
 
   let poolAddress: string | null = null;
+  let lockDisposition: {
+    disposition: number;
+    lockId: string;
+    unlockTime: bigint;
+  } | null = null;
   for (const log of receipt?.logs ?? []) {
     try {
       const parsed = migrator.interface.parseLog({ topics: log.topics, data: log.data });
       if (parsed?.name === "LaunchpadMigration") poolAddress = parsed.args.pool as string;
+      if (parsed?.name === "LaunchpadLockDisposition") {
+        lockDisposition = {
+          disposition: Number(parsed.args.disposition),
+          lockId: parsed.args.lockId as string,
+          unlockTime: BigInt(parsed.args.unlockTime),
+        };
+      }
     } catch {
       // Ignore logs emitted by the factory and token contracts.
     }
   }
   if (!poolAddress || !ethers.isAddress(poolAddress)) throw new Error("launchpad pool event missing");
+  if (disposition === undefined) {
+    if (lockDisposition) throw new Error("unexpected launchpad lock disposition event");
+  } else {
+    if (!lockDisposition) throw new Error("launchpad lock disposition event missing");
+    if (lockDisposition.disposition !== disposition) throw new Error("launchpad lock disposition mismatch");
+    if (lockDisposition.lockId === ethers.ZeroHash) throw new Error("launchpad lock id missing");
+    if (disposition === 1 && lockDisposition.unlockTime !== unlockTime) {
+      throw new Error("launchpad unlock time mismatch");
+    }
+    if (disposition !== 1 && lockDisposition.unlockTime !== 0n) {
+      throw new Error("unexpected launchpad unlock time");
+    }
+  }
 
   const pool = new Contract(poolAddress, POOL_ABI, wallet);
   if (!(await pool.initialized())) throw new Error("launchpad pool was not initialized");

@@ -30,6 +30,8 @@ Factory-created confidential pools bind a dedicated `PrivateLPToken` to the pool
 Its balances and transfers use the official encrypted `PrivateERC20` paths; only
 the pool can mint or burn shares when liquidity is added, removed, or locked.
 Directly deployed pools keep the original internal share ledger for compatibility.
+The launchpad migrator preserves creator-held shares by default and also exposes
+an atomic timed-lock or permanent-lock disposition.
 
 Public pools additionally expose a factory-gated exact-input router and quoter.
 Confidential pools are called directly because their encrypted input signatures

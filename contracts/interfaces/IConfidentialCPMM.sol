@@ -46,6 +46,17 @@ interface IConfidentialCPMM {
         uint256 maxPriceX18
     ) external returns (ctUint256 memory mintedShares);
 
+    function bootstrapLiquidityWithDisposition(
+        address provider,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18,
+        uint8 disposition,
+        uint64 unlockTime
+    ) external returns (ctUint256 memory mintedShares, bytes32 lockId);
+
     function removeLiquidity(
         itUint256 calldata shares,
         itUint256 calldata minAmount0,
