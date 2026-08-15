@@ -72,6 +72,7 @@ contract ConfidentialCPMM {
     error InsufficientPrivateLiquidity();
     error InsufficientPrivateShares();
     error InvalidLiquidityRatio();
+    error UnmanagedBalance();
     error InvalidPriceBounds();
     error PriceOutsideBounds();
     error BootstrapBalanceMismatch();
@@ -226,6 +227,10 @@ contract ConfidentialCPMM {
         gtUint256 minted;
 
         if (!initialized) {
+            if (
+                MpcCore.decrypt(MpcCore.ne(_reserve0(), MpcCore.setPublic256(uint256(0)))) ||
+                MpcCore.decrypt(MpcCore.ne(_reserve1(), MpcCore.setPublic256(uint256(0))))
+            ) revert UnmanagedBalance();
             gtUint256 normalized0 = _scale(input0, scale0);
             gtUint256 normalized1 = _scale(input1, scale1);
             if (!MpcCore.decrypt(MpcCore.eq(normalized0, normalized1))) {
@@ -381,10 +386,10 @@ contract ConfidentialCPMM {
             revert PriceOutsideBounds();
         }
 
-        if (!MpcCore.decrypt(MpcCore.ge(_reserve0(), amount0))) {
+        if (!MpcCore.decrypt(MpcCore.eq(_reserve0(), amount0))) {
             revert BootstrapBalanceMismatch();
         }
-        if (!MpcCore.decrypt(MpcCore.ge(_reserve1(), amount1))) {
+        if (!MpcCore.decrypt(MpcCore.eq(_reserve1(), amount1))) {
             revert BootstrapBalanceMismatch();
         }
 

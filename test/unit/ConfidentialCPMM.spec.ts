@@ -78,4 +78,32 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
       pool.swapExactInput(emptyInput, emptyInput, true, 0),
     ).to.be.revertedWithCustomError(pool, "DeadlineExpired");
   });
+
+  it("rejects invalid launchpad disposition metadata before MPC inputs", async function () {
+    const { pool } = await deploy();
+    await expect(
+      pool.bootstrapLiquidityWithDisposition(
+        await (await ethers.getSigners())[0].getAddress(),
+        1n,
+        1n,
+        1n,
+        0n,
+        2n,
+        3,
+        0,
+      ),
+    ).to.be.revertedWithCustomError(pool, "InvalidLPDisposition");
+    await expect(
+      pool.bootstrapLiquidityWithDisposition(
+        await (await ethers.getSigners())[0].getAddress(),
+        1n,
+        1n,
+        1n,
+        0n,
+        2n,
+        2,
+        1,
+      ),
+    ).to.be.revertedWithCustomError(pool, "InvalidLPDisposition");
+  });
 });
