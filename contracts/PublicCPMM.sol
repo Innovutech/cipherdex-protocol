@@ -18,6 +18,7 @@ contract PublicCPMM {
     using SafeERC20 for IERC20;
 
     uint256 public constant PROTOCOL_VERSION = 1;
+    uint8 public constant PRIVACY_MODE = 0;
     uint256 public constant FEE_DENOMINATOR = 10_000;
     uint256 public constant MAX_FEE_BPS = 1_000;
 

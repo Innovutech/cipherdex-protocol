@@ -24,6 +24,7 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     const { pool, token0, token1 } = await deploy();
     expect(await pool.token0()).to.equal(await token0.getAddress());
     expect(await pool.token1()).to.equal(await token1.getAddress());
+    expect(await pool.PRIVACY_MODE()).to.equal(1n);
     expect(await pool.feeBps()).to.equal(30n);
     expect(await pool.scale0()).to.equal(1n);
     expect(await pool.scale1()).to.equal(1_000_000_000_000n);

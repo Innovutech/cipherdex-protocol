@@ -6,6 +6,7 @@ import {
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
   DISCLOSURE_SCHEMA_VERSION,
   LP_DISPOSITION,
+  PRIVACY_MODE,
   PRIVATE_LP_TOKEN_ABI,
   PUBLIC_CPMM_ABI,
   PUBLIC_CPMM_FACTORY_ABI,
@@ -17,6 +18,7 @@ import {
 
 describe("stable SDK surface", function () {
   it("parses the published pool and factory ABI fragments", function () {
+    expect(DISCLOSURE_SCHEMA_VERSION).to.equal(2);
     const pool = new Interface(CONFIDENTIAL_CPMM_ABI);
     const factory = new Interface(CONFIDENTIAL_CPMM_FACTORY_ABI);
     const launchpad = new Interface(CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI);
@@ -26,6 +28,7 @@ describe("stable SDK surface", function () {
     const publicQuoter = new Interface(PUBLIC_CPMM_QUOTER_ABI);
     const publicRouter = new Interface(PUBLIC_CPMM_ROUTER_ABI);
     expect(pool.getFunction("swapExactInput")).to.not.equal(null);
+    expect(pool.getFunction("PRIVACY_MODE")).to.not.equal(null);
     expect(pool.getFunction("LP_DISPOSITION_PERMANENT_LOCK")).to.not.equal(null);
     expect(pool.getFunction("removeLiquidity")).to.not.equal(null);
     expect(pool.getFunction("bootstrapLiquidity")).to.not.equal(null);
@@ -43,9 +46,12 @@ describe("stable SDK surface", function () {
     expect(launchpad.getEvent("LaunchpadLockDisposition")).to.not.equal(null);
     expect(LP_DISPOSITION.PERMANENT_LOCK).to.equal(2);
     expect(publicPool.getFunction("swapExactInput")).to.not.equal(null);
+    expect(publicPool.getFunction("PRIVACY_MODE")).to.not.equal(null);
     expect(publicFactory.getFunction("createPool")).to.not.equal(null);
     expect(publicQuoter.getFunction("quoteExactInput")).to.not.equal(null);
     expect(publicRouter.getFunction("swapExactInput")).to.not.equal(null);
+    expect(PRIVACY_MODE.TRANSPARENT).to.equal(0);
+    expect(PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP).to.equal(1);
   });
 
   it("accepts only the public privacy-minimal discovery shape", function () {
@@ -59,6 +65,7 @@ describe("stable SDK surface", function () {
         token0Decimals: 18,
         token1Decimals: 6,
         feeBps: 30,
+        privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
         poolKind: "private-erc20-cpmm-v1",
       }),
     ).to.equal(true);
@@ -78,6 +85,7 @@ describe("stable SDK surface", function () {
         token0Decimals: 18,
         token1Decimals: 6,
         feeBps: 30,
+        privacyMode: PRIVACY_MODE.TRANSPARENT,
         poolKind: "public-erc20-cpmm-v1",
       }),
     ).to.equal(true);

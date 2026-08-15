@@ -66,6 +66,7 @@ describe("PublicCPMM", function () {
       (await tokenB.balanceOf(await pool.getAddress()));
 
     expect(await pool.initialized()).to.equal(true);
+    expect(await pool.PRIVACY_MODE()).to.equal(0n);
     expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("100"));
     expect(afterProduct).to.be.gte(beforeProduct);
   });

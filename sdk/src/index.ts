@@ -6,7 +6,12 @@
  * COTI SDK and the caller's AES key.
  */
 
-export const DISCLOSURE_SCHEMA_VERSION = 1 as const;
+export const DISCLOSURE_SCHEMA_VERSION = 2 as const;
+
+export const PRIVACY_MODE = {
+  TRANSPARENT: 0,
+  AMOUNT_CONFIDENTIAL_PRIVATE_LP: 1,
+} as const;
 
 export const LP_DISPOSITION = {
   CREATOR_HELD: 0,
@@ -16,6 +21,7 @@ export const LP_DISPOSITION = {
 
 export const CONFIDENTIAL_CPMM_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
+  "function PRIVACY_MODE() view returns (uint8)",
   "function LP_DISPOSITION_CREATOR_HELD() view returns (uint8)",
   "function LP_DISPOSITION_TIMED_LOCK() view returns (uint8)",
   "function LP_DISPOSITION_PERMANENT_LOCK() view returns (uint8)",
@@ -87,6 +93,7 @@ export const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI = [
 
 export const PUBLIC_CPMM_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
+  "function PRIVACY_MODE() view returns (uint8)",
   "function token0() view returns (address)",
   "function token1() view returns (address)",
   "function token0Decimals() view returns (uint8)",
@@ -154,6 +161,7 @@ export type ConfidentialPoolDiscovery = {
   token0Decimals: number;
   token1Decimals: number;
   feeBps: number;
+  privacyMode: typeof PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP;
   poolKind: "private-erc20-cpmm-v1";
 };
 
@@ -166,6 +174,7 @@ export type PublicPoolDiscovery = {
   token0Decimals: number;
   token1Decimals: number;
   feeBps: number;
+  privacyMode: typeof PRIVACY_MODE.TRANSPARENT;
   poolKind: "public-erc20-cpmm-v1";
 };
 
@@ -191,7 +200,8 @@ export function isConfidentialPoolDiscovery(
     typeof candidate.protocolVersion === "number" &&
     typeof candidate.token0Decimals === "number" &&
     typeof candidate.token1Decimals === "number" &&
-    typeof candidate.feeBps === "number"
+    typeof candidate.feeBps === "number" &&
+    candidate.privacyMode === PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP
   );
 }
 
@@ -207,6 +217,7 @@ export function isPublicPoolDiscovery(value: unknown): value is PublicPoolDiscov
     typeof candidate.protocolVersion === "number" &&
     typeof candidate.token0Decimals === "number" &&
     typeof candidate.token1Decimals === "number" &&
-    typeof candidate.feeBps === "number"
+    typeof candidate.feeBps === "number" &&
+    candidate.privacyMode === PRIVACY_MODE.TRANSPARENT
   );
 }

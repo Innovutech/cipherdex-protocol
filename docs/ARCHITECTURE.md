@@ -29,6 +29,12 @@
 
 ## Pool model
 
+The on-chain `PRIVACY_MODE` constant and SDK discovery field make disclosure
+explicit: `0` is the transparent public/public mode and `1` is the
+amount-confidential/private-LP mode. A future fully confidential mode is not
+represented as an enabled value; recipient and participant addresses remain
+public under the official PrivateERC20 interface.
+
 The pool is a non-custodial pair of official COTI PrivateERC20-compatible assets.
 It reads actual pool balances as MPC values rather than maintaining a second public
 reserve ledger. This avoids a public duplicate of confidential reserves.
