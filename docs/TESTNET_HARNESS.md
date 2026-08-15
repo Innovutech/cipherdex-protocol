@@ -88,8 +88,10 @@ offered deposits. Use disposable COTI testnet accounts only.
 For the complete reproducible gate, leave `COTI_POOL` and `COTI_QUOTE_POOL`
 unset so both candidates are fresh and arbitrary-ratio initialization can be
 verified exactly. To exercise already-deployed candidates, set both addresses;
-the runner validates their pair and fee tiers but cannot reconstruct historical
-reserves or prove their original initialization.
+also set `COTI_FACTORY` and `COTI_FEE_VAULT` to independently trusted v2
+deployment addresses. The runner pins both candidates to that exact factory,
+canonical mapping, immutable vault and protocol version. It cannot reconstruct
+historical reserves or prove their original initialization.
 
 ## Launchpad migration runner
 

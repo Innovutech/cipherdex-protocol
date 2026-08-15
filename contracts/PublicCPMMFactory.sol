@@ -9,7 +9,7 @@ import "./CipherDEXFeePolicy.sol";
  * @notice Permissionless deterministic-key registry for public/public pools.
  */
 contract PublicCPMMFactory is CipherDEXFeePolicy {
-    uint256 public constant PROTOCOL_VERSION = 1;
+    uint256 public constant PROTOCOL_VERSION = 2;
     uint8 public constant PRIVACY_MODE = 0;
 
     mapping(bytes32 => address) public getPool;

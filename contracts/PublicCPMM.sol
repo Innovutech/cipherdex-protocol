@@ -18,7 +18,7 @@ import "./CipherDEXFeePolicy.sol";
 contract PublicCPMM is CipherDEXFeePolicy {
     using SafeERC20 for IERC20;
 
-    uint256 public constant PROTOCOL_VERSION = 1;
+    uint256 public constant PROTOCOL_VERSION = 2;
     uint8 public constant PRIVACY_MODE = 0;
     address public immutable token0;
     address public immutable token1;
@@ -44,6 +44,18 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint256 amount;
     }
 
+    struct AddLiquidityCache {
+        bool wasInitialized;
+        uint256 rawBefore0;
+        uint256 rawBefore1;
+        uint256 before0;
+        uint256 before1;
+        uint256 rawAfter0;
+        uint256 rawAfter1;
+        uint256 received0;
+        uint256 received1;
+    }
+
     mapping(bytes32 => LockRecord) private locks;
     uint256 private reentrancyState = 1;
 
@@ -64,6 +76,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
     error Reentrancy();
     error UnmanagedBalance();
     error TransferAmountMismatch();
+    error InvalidPriceBounds();
     error ProtocolFeeAccountingMismatch();
     error NoProtocolFees();
 
@@ -94,10 +107,17 @@ contract PublicCPMM is CipherDEXFeePolicy {
     );
     event LiquidityUnlocked(bytes32 indexed lockId, address indexed owner, uint256 shares);
     event ProtocolFeeAccrued(address indexed token, uint256 amount);
-    event ProtocolFeesCollected(
+    event ProtocolFeeCollected(
+        address indexed token,
         address indexed feeVault,
-        uint256 token0Amount,
-        uint256 token1Amount
+        uint256 debitedAmount,
+        uint256 receivedAmount
+    );
+    event UnmanagedBalanceSwept(
+        address indexed token,
+        address indexed feeVault,
+        uint256 debitedAmount,
+        uint256 receivedAmount
     );
 
     modifier nonReentrant() {
@@ -160,8 +180,8 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint256 received = inputToken.balanceOf(address(this)) - rawInputBefore;
         if (received == 0) revert TransferAmountMismatch();
 
-        amountOut = _amountOut(received, reserveIn, reserveOut);
-        if (amountOut < minAmountOut) revert SlippageExceeded();
+        uint256 quotedAmountOut = _amountOut(received, reserveIn, reserveOut);
+        if (quotedAmountOut < minAmountOut) revert SlippageExceeded();
         uint256 netAmountIn = _netAmount(received);
         uint256 protocolFee = _protocolFeeFromTotal(received - netAmountIn);
         if (zeroForOne) {
@@ -169,7 +189,8 @@ contract PublicCPMM is CipherDEXFeePolicy {
         } else {
             protocolFees1 += protocolFee;
         }
-        outputToken.safeTransfer(msg.sender, amountOut);
+        amountOut = _transferOut(outputToken, msg.sender, quotedAmountOut);
+        if (amountOut < minAmountOut) revert SlippageExceeded();
         if (protocolFee != 0) emit ProtocolFeeAccrued(address(inputToken), protocolFee);
         emit SwapExecuted(msg.sender, zeroForOne, received, amountOut);
     }
@@ -178,47 +199,91 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint256 amount0,
         uint256 amount1,
         uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18,
         uint64 deadline
     ) external nonReentrant returns (uint256 mintedShares) {
         _requireBeforeDeadline(deadline);
         if (amount0 == 0 || amount1 == 0) revert InvalidAmount();
+        if (minPriceX18 > maxPriceX18) revert InvalidPriceBounds();
 
         IERC20 first = IERC20(token0);
         IERC20 second = IERC20(token1);
-        uint256 rawBefore0 = first.balanceOf(address(this));
-        uint256 rawBefore1 = second.balanceOf(address(this));
-        uint256 before0 = _effectiveBalance(rawBefore0, protocolFees0);
-        uint256 before1 = _effectiveBalance(rawBefore1, protocolFees1);
+        AddLiquidityCache memory cache;
+        cache.wasInitialized = initialized;
+        cache.rawBefore0 = first.balanceOf(address(this));
+        cache.rawBefore1 = second.balanceOf(address(this));
+        cache.before0 = _effectiveBalance(cache.rawBefore0, protocolFees0);
+        cache.before1 = _effectiveBalance(cache.rawBefore1, protocolFees1);
+
+        if (!cache.wasInitialized) {
+            _sweepUnmanagedBalance(first, cache.before0);
+            _sweepUnmanagedBalance(second, cache.before1);
+            cache.rawBefore0 = first.balanceOf(address(this));
+            cache.rawBefore1 = second.balanceOf(address(this));
+            cache.before0 = _effectiveBalance(cache.rawBefore0, protocolFees0);
+            cache.before1 = _effectiveBalance(cache.rawBefore1, protocolFees1);
+            if (cache.before0 != 0 || cache.before1 != 0) revert UnmanagedBalance();
+        } else {
+            if (cache.before0 == 0 || cache.before1 == 0 || totalShares == 0) {
+                revert PoolNotInitialized();
+            }
+            uint256 share0Max = Math.mulDiv(amount0, totalShares, cache.before0);
+            uint256 share1Max = Math.mulDiv(amount1, totalShares, cache.before1);
+            mintedShares = Math.min(share0Max, share1Max);
+            if (mintedShares == 0) revert InvalidLiquidityRatio();
+            if (mintedShares < minShares) revert SlippageExceeded();
+            amount0 = Math.mulDiv(
+                mintedShares,
+                cache.before0,
+                totalShares,
+                Math.Rounding.Ceil
+            );
+            amount1 = Math.mulDiv(
+                mintedShares,
+                cache.before1,
+                totalShares,
+                Math.Rounding.Ceil
+            );
+        }
+
         first.safeTransferFrom(msg.sender, address(this), amount0);
         second.safeTransferFrom(msg.sender, address(this), amount1);
-        uint256 received0 = first.balanceOf(address(this)) - rawBefore0;
-        uint256 received1 = second.balanceOf(address(this)) - rawBefore1;
-        if (received0 == 0 || received1 == 0) revert TransferAmountMismatch();
+        cache.rawAfter0 = first.balanceOf(address(this));
+        cache.rawAfter1 = second.balanceOf(address(this));
+        if (
+            cache.rawAfter0 <= cache.rawBefore0 ||
+            cache.rawAfter1 <= cache.rawBefore1
+        ) revert TransferAmountMismatch();
+        cache.received0 = cache.rawAfter0 - cache.rawBefore0;
+        cache.received1 = cache.rawAfter1 - cache.rawBefore1;
+        if (cache.received0 == 0 || cache.received1 == 0) revert TransferAmountMismatch();
 
-        if (!initialized) {
-            if (before0 != 0 || before1 != 0) revert UnmanagedBalance();
-            if (Math.mulDiv(received0, scale0, 1) != Math.mulDiv(received1, scale1, 1)) {
-                revert UnbalancedInitialLiquidity();
-            }
-            mintedShares = Math.mulDiv(received0, scale0, 1);
+        if (!cache.wasInitialized) {
+            mintedShares = Math.min(
+                Math.mulDiv(cache.received0, scale0, 1),
+                Math.mulDiv(cache.received1, scale1, 1)
+            );
+            if (mintedShares == 0) revert InvalidAmount();
             initialized = true;
         } else {
-            if (before0 == 0 || before1 == 0 || totalShares == 0) revert PoolNotInitialized();
-            uint256 proportionalReceived1 = Math.mulDiv(received0, before1, before0);
-            if (
-                proportionalReceived1 != received1 ||
-                mulmod(received0, before1, before0) != 0
-            ) revert InvalidLiquidityRatio();
-            uint256 share0 = Math.mulDiv(received0, totalShares, before0);
-            uint256 share1 = Math.mulDiv(received1, totalShares, before1);
-            if (share0 == 0 || share0 != share1) revert InvalidLiquidityRatio();
-            mintedShares = share0;
+            if (cache.received0 != amount0 || cache.received1 != amount1) {
+                revert TransferAmountMismatch();
+            }
+        }
+
+        uint256 resultingPriceX18 = _normalizedPriceX18(
+            _effectiveBalance(cache.rawAfter0, protocolFees0),
+            _effectiveBalance(cache.rawAfter1, protocolFees1)
+        );
+        if (resultingPriceX18 < minPriceX18 || resultingPriceX18 > maxPriceX18) {
+            revert SlippageExceeded();
         }
 
         if (mintedShares < minShares) revert SlippageExceeded();
         totalShares += mintedShares;
         shares[msg.sender] += mintedShares;
-        emit LiquidityAdded(msg.sender, received0, received1, mintedShares);
+        emit LiquidityAdded(msg.sender, cache.received0, cache.received1, mintedShares);
     }
 
     function removeLiquidity(
@@ -234,38 +299,51 @@ contract PublicCPMM is CipherDEXFeePolicy {
         (uint256 reserve0, uint256 reserve1) = _effectiveReserves();
         if (reserve0 == 0 || reserve1 == 0) revert InsufficientLiquidity();
         bool fullExit = shareInput == totalShares;
-        amount0 = fullExit ? reserve0 : Math.mulDiv(shareInput, reserve0, totalShares);
-        amount1 = fullExit ? reserve1 : Math.mulDiv(shareInput, reserve1, totalShares);
-        if (amount0 < minAmount0 || amount1 < minAmount1) revert SlippageExceeded();
+        uint256 nominalAmount0 = fullExit
+            ? reserve0
+            : Math.mulDiv(shareInput, reserve0, totalShares);
+        uint256 nominalAmount1 = fullExit
+            ? reserve1
+            : Math.mulDiv(shareInput, reserve1, totalShares);
+        if (nominalAmount0 < minAmount0 || nominalAmount1 < minAmount1) {
+            revert SlippageExceeded();
+        }
 
         shares[msg.sender] -= shareInput;
         totalShares -= shareInput;
         if (fullExit) initialized = false;
-        IERC20(token0).safeTransfer(msg.sender, amount0);
-        IERC20(token1).safeTransfer(msg.sender, amount1);
+        amount0 = _transferOut(IERC20(token0), msg.sender, nominalAmount0);
+        amount1 = _transferOut(IERC20(token1), msg.sender, nominalAmount1);
+        if (amount0 < minAmount0 || amount1 < minAmount1) revert SlippageExceeded();
         emit LiquidityRemoved(msg.sender, amount0, amount1, shareInput);
     }
 
     /**
-     * @notice Moves only accrued protocol-owned balances to the immutable vault.
-     * @dev Permissionless execution is safe because the destination cannot be
-     *      changed. State is cleared before external transfers and restored by
-     *      transaction rollback if either transfer fails.
+     * @notice Moves selected protocol-owned balances to the immutable vault.
+     * @dev Collection is permissionless because the destination is immutable.
+     *      Each token can be collected independently so a reverting token cannot
+     *      block the paired asset. Accounting uses the pool's exact debit while
+     *      reporting the vault's measured receipt for outbound-tax tokens.
      */
-    function collectProtocolFees()
+    function collectProtocolFees(bool collectToken0, bool collectToken1)
         external
         nonReentrant
-        returns (uint256 amount0, uint256 amount1)
+        returns (uint256 received0, uint256 received1)
     {
-        amount0 = protocolFees0;
-        amount1 = protocolFees1;
+        uint256 amount0 = collectToken0 ? protocolFees0 : 0;
+        uint256 amount1 = collectToken1 ? protocolFees1 : 0;
         if (amount0 == 0 && amount1 == 0) revert NoProtocolFees();
 
-        protocolFees0 = 0;
-        protocolFees1 = 0;
-        if (amount0 != 0) IERC20(token0).safeTransfer(feeVault, amount0);
-        if (amount1 != 0) IERC20(token1).safeTransfer(feeVault, amount1);
-        emit ProtocolFeesCollected(feeVault, amount0, amount1);
+        if (amount0 != 0) {
+            protocolFees0 = 0;
+            received0 = _transferOut(IERC20(token0), feeVault, amount0);
+            emit ProtocolFeeCollected(token0, feeVault, amount0, received0);
+        }
+        if (amount1 != 0) {
+            protocolFees1 = 0;
+            received1 = _transferOut(IERC20(token1), feeVault, amount1);
+            emit ProtocolFeeCollected(token1, feeVault, amount1, received1);
+        }
     }
 
     function effectiveReserves() external view returns (uint256 reserve0, uint256 reserve1) {
@@ -349,6 +427,30 @@ contract PublicCPMM is CipherDEXFeePolicy {
         return rawBalance - accruedProtocolFee;
     }
 
+    function _sweepUnmanagedBalance(IERC20 token, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 received = _transferOut(token, feeVault, amount);
+        emit UnmanagedBalanceSwept(address(token), feeVault, amount, received);
+    }
+
+    function _transferOut(IERC20 token, address recipient, uint256 amount)
+        internal
+        returns (uint256 received)
+    {
+        uint256 senderBefore = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(recipient);
+        if (senderBefore < amount) revert TransferAmountMismatch();
+        token.safeTransfer(recipient, amount);
+        uint256 senderAfter = token.balanceOf(address(this));
+        uint256 recipientAfter = token.balanceOf(recipient);
+        if (
+            senderAfter > senderBefore ||
+            senderBefore - senderAfter != amount ||
+            recipientAfter < recipientBefore
+        ) revert TransferAmountMismatch();
+        received = recipientAfter - recipientBefore;
+    }
+
     function _amountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut)
         internal
         view
@@ -372,6 +474,17 @@ contract PublicCPMM is CipherDEXFeePolicy {
 
     function _netAmount(uint256 amountIn) internal view returns (uint256) {
         return Math.mulDiv(amountIn, FEE_DENOMINATOR - feeBps, FEE_DENOMINATOR);
+    }
+
+    function _normalizedPriceX18(uint256 reserve0, uint256 reserve1)
+        internal
+        view
+        returns (uint256)
+    {
+        if (reserve0 == 0 || reserve1 == 0) revert InsufficientLiquidity();
+        uint256 normalized0 = Math.mulDiv(reserve0, scale0, 1);
+        uint256 normalized1 = Math.mulDiv(reserve1, scale1, 1);
+        return Math.mulDiv(normalized1, 1e18, normalized0);
     }
 
     function _requireBeforeDeadline(uint64 deadline) internal view {

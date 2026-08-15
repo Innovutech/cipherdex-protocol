@@ -3,10 +3,12 @@ import { Contract } from "ethers";
 import { ethers } from "hardhat";
 import {
   CONFIDENTIAL_QUOTE_TRANSPORT,
+  CIPHERDEX_PROTOCOL_VERSION,
   DISCLOSURE_SCHEMA_VERSION,
   PRIVACY_MODE,
   getCipherDEXV1FeePolicy,
   selectBestConfidentialPoolQuote,
+  verifyConfidentialPoolDiscovery,
   type ConfidentialPoolDiscovery,
   type ConfidentialQuoteEvaluation,
 } from "../sdk/src";
@@ -342,6 +344,8 @@ async function main(): Promise<void> {
 
   let poolAddress = process.env.COTI_POOL?.trim();
   let quotePoolAddress = process.env.COTI_QUOTE_POOL?.trim();
+  let trustedFactoryAddress = process.env.COTI_FACTORY?.trim();
+  let trustedFeeVaultAddress = process.env.COTI_FEE_VAULT?.trim();
   let createdPrimaryPool = false;
   let createdQuotePool = false;
   if (!poolAddress) {
@@ -352,6 +356,7 @@ async function main(): Promise<void> {
     });
     await feeVault.waitForDeployment();
     const feeVaultAddress = await feeVault.getAddress();
+    trustedFeeVaultAddress = feeVaultAddress;
     console.log(`fee vault deployed: ${feeVaultAddress}`);
     stage = "confidential factory deployment";
     const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory", wallet);
@@ -360,6 +365,7 @@ async function main(): Promise<void> {
     });
     await factory.waitForDeployment();
     const factoryAddress = await factory.getAddress();
+    trustedFactoryAddress = factoryAddress;
     console.log(`factory deployed: ${factoryAddress}`);
     await submit(
       "pool creation",
@@ -413,6 +419,12 @@ async function main(): Promise<void> {
     createdQuotePool = true;
   }
   if (!ethers.isAddress(poolAddress)) throw new Error("invalid COTI_POOL");
+  if (!trustedFactoryAddress || !ethers.isAddress(trustedFactoryAddress)) {
+    throw new Error("missing or invalid COTI_FACTORY");
+  }
+  if (!trustedFeeVaultAddress || !ethers.isAddress(trustedFeeVaultAddress)) {
+    throw new Error("missing or invalid COTI_FEE_VAULT");
+  }
   if (!quotePoolAddress || !ethers.isAddress(quotePoolAddress)) {
     throw new Error("missing or invalid COTI_QUOTE_POOL");
   }
@@ -431,12 +443,55 @@ async function main(): Promise<void> {
     tokenAddressA.toLowerCase() < tokenAddressB.toLowerCase()
       ? [tokenAddressA, tokenAddressB, tokenDecimalsA, tokenDecimalsB] as const
       : [tokenAddressB, tokenAddressA, tokenDecimalsB, tokenDecimalsA] as const;
+  const discoveryFactoryAddress = trustedFactoryAddress;
+  const discoveryFactory = await ethers.getContractAt(
+    "ConfidentialCPMMFactory",
+    discoveryFactoryAddress,
+    quoteWallet,
+  );
+  const [factoryCode, feeVaultCode, factoryVersionValue] = await Promise.all([
+    ethers.provider.getCode(discoveryFactoryAddress),
+    ethers.provider.getCode(trustedFeeVaultAddress),
+    discoveryFactory.PROTOCOL_VERSION(),
+  ]);
+  const discoveryProtocolVersion = Number(factoryVersionValue);
+  if (
+    factoryCode === "0x" ||
+    feeVaultCode === "0x" ||
+    discoveryProtocolVersion !== CIPHERDEX_PROTOCOL_VERSION
+  ) {
+    throw new Error("trusted factory or fee vault is not a deployed CipherDEX v2 contract");
+  }
   for (const context of [poolContext, quotePoolContext]) {
     if (
       context.token0Address.toLowerCase() !== expectedToken0.toLowerCase() ||
       context.token1Address.toLowerCase() !== expectedToken1.toLowerCase()
     ) {
       throw new Error("quote candidate token pair does not match the configured canonical pair");
+    }
+  }
+  for (const context of [poolContext, quotePoolContext]) {
+    const key = await discoveryFactory.poolKey(
+      context.token0Address,
+      context.token1Address,
+      expectedDecimals0,
+      expectedDecimals1,
+      context.feeBps,
+    );
+    const [recognized, canonicalPool] = await Promise.all([
+      discoveryFactory.isPool(context.address),
+      discoveryFactory.getPool(key),
+    ]);
+    if (
+      (await context.pool.bootstrapper()).toLowerCase() !== trustedFactoryAddress.toLowerCase() ||
+      context.feeVault.toLowerCase() !== trustedFeeVaultAddress.toLowerCase() ||
+      Number(await context.pool.PROTOCOL_VERSION()) !== CIPHERDEX_PROTOCOL_VERSION ||
+      !recognized ||
+      String(canonicalPool).toLowerCase() !== context.address.toLowerCase()
+    ) {
+      throw new Error(
+        "configured pool candidate is not canonical in the trusted v2 factory and vault",
+      );
     }
   }
   if (poolContext.feeBps !== feeBps || quotePoolContext.feeBps !== quoteFeeBps) {
@@ -619,7 +674,7 @@ async function main(): Promise<void> {
     if (decryptedOutput <= 0n) throw new Error("quote candidate returned zero");
     const discovery: ConfidentialPoolDiscovery = {
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
-      protocolVersion: 1,
+      protocolVersion: discoveryProtocolVersion,
       pool: candidateAddress,
       token0: candidate.token0Address,
       token1: candidate.token1Address,
@@ -629,11 +684,71 @@ async function main(): Promise<void> {
       feeVault: candidate.feeVault,
       feePolicy: getCipherDEXV1FeePolicy(candidate.feeBps),
       privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-      poolKind: "private-erc20-cpmm-v1",
+      poolKind: "private-erc20-cpmm-v2",
       quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
     };
-    quoteEvaluations.push({
+    const verifiedDiscovery = await verifyConfidentialPoolDiscovery(
       discovery,
+      {
+        expectedFactory: discoveryFactoryAddress,
+        expectedFeeVault: trustedFeeVaultAddress,
+        expectedProtocolVersion: discoveryProtocolVersion,
+      },
+      {
+        getCode: (address) => ethers.provider.getCode(address),
+        readFactoryProtocolVersion: async () => discoveryFactory.PROTOCOL_VERSION(),
+        isFactoryPool: async (_factoryAddress, candidatePool) =>
+          discoveryFactory.isPool(candidatePool),
+        getCanonicalPool: async (_factoryAddress, candidateDiscovery) => {
+          const key = await discoveryFactory.poolKey(
+            candidateDiscovery.token0,
+            candidateDiscovery.token1,
+            candidateDiscovery.token0Decimals,
+            candidateDiscovery.token1Decimals,
+            candidateDiscovery.feeBps,
+          );
+          return discoveryFactory.getPool(key);
+        },
+        readPoolState: async (candidatePool) => {
+          const onchainPool = await ethers.getContractAt(
+            "ConfidentialCPMM",
+            candidatePool,
+            quoteWallet,
+          );
+          const [
+            protocolVersion,
+            privacyMode,
+            token0,
+            token1,
+            token0Decimals,
+            token1Decimals,
+            onchainFeeBps,
+            feeVault,
+          ] = await Promise.all([
+            onchainPool.PROTOCOL_VERSION(),
+            onchainPool.PRIVACY_MODE(),
+            onchainPool.token0(),
+            onchainPool.token1(),
+            onchainPool.token0Decimals(),
+            onchainPool.token1Decimals(),
+            onchainPool.feeBps(),
+            onchainPool.feeVault(),
+          ]);
+          return {
+            protocolVersion,
+            privacyMode,
+            token0,
+            token1,
+            token0Decimals,
+            token1Decimals,
+            feeBps: onchainFeeBps,
+            feeVault,
+          };
+        },
+      },
+    );
+    quoteEvaluations.push({
+      discovery: verifiedDiscovery,
       requestId: quoteRequestId,
       zeroForOne: true,
       decryptedAmountOut: decryptedOutput,

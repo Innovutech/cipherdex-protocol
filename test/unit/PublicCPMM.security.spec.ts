@@ -58,7 +58,7 @@ async function deployPublicPool() {
   await token1.mint(trader.address, amount1);
   await token0.approve(await pool.getAddress(), amount0);
   await token1.approve(await pool.getAddress(), amount1);
-  await pool.addLiquidity(amount0, amount1, 1n, MAX_DEADLINE);
+  await pool.addLiquidity(amount0, amount1, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
   return { owner, trader, token0, token1, pool, amount0, amount1 };
 }
 
@@ -137,7 +137,14 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await token1.mint(owner.address, ethers.MaxUint256);
     await token0.approve(await pool.getAddress(), ethers.MaxUint256);
     await token1.approve(await pool.getAddress(), ethers.MaxUint256);
-    await pool.addLiquidity(ethers.MaxUint256, ethers.MaxUint256, 1n, MAX_DEADLINE);
+    await pool.addLiquidity(
+      ethers.MaxUint256,
+      ethers.MaxUint256,
+      1n,
+      0n,
+      ethers.MaxUint256,
+      MAX_DEADLINE,
+    );
     await expect(pool.quoteExactInput(10_000n, true)).to.be.reverted;
   });
 
@@ -187,7 +194,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await normal.mint(owner.address, 2_000n);
     await reentrant.approve(await pool.getAddress(), 1_000n);
     await normal.approve(await pool.getAddress(), 1_000n);
-    await pool.addLiquidity(1_000n, 1_000n, 1n, MAX_DEADLINE);
+    await pool.addLiquidity(1_000n, 1_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
 
     const reentrantIsToken0 = (await pool.token0()).toLowerCase() ===
       (await reentrant.getAddress()).toLowerCase();
@@ -205,5 +212,150 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     ).to.be.revertedWithCustomError(pool, "Reentrancy");
     expect(await reentrant.balanceOf(await pool.getAddress())).to.equal(1_000n);
     expect(await normal.balanceOf(await pool.getAddress())).to.equal(1_000n);
+  });
+
+  it("enforces swap minimums against the recipient's actual token increase", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const normal = await (await ethers.getContractFactory("MockERC20")).deploy(
+      "Normal Token",
+      "NORM",
+      18,
+    );
+    const taxed = await (await ethers.getContractFactory("FeeOnTransferERC20")).deploy(
+      "Taxed Token",
+      "TAX",
+      100,
+    );
+    await normal.waitForDeployment();
+    await taxed.waitForDeployment();
+    const vault = await deployFeeVault();
+    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+      await normal.getAddress(),
+      await taxed.getAddress(),
+      18,
+      18,
+      30,
+      await vault.getAddress(),
+    );
+    await pool.waitForDeployment();
+
+    const token0IsNormal = (await pool.token0()).toLowerCase() ===
+      (await normal.getAddress()).toLowerCase();
+    const token0 = token0IsNormal ? normal : taxed;
+    const token1 = token0IsNormal ? taxed : normal;
+    const amount0 = token0IsNormal ? 1_000n : 1_010n;
+    const amount1 = token0IsNormal ? 1_010n : 1_000n;
+    await normal.mint(owner.address, 2_000n);
+    await taxed.mint(owner.address, 2_020n);
+    await normal.mint(trader.address, 500n);
+    await token0.approve(await pool.getAddress(), amount0);
+    await token1.approve(await pool.getAddress(), amount1);
+    await pool.addLiquidity(amount0, amount1, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+
+    const zeroForOne = token0IsNormal;
+    const quoted = await pool.quoteExactInput(500n, zeroForOne);
+    const expectedReceived = quoted - ((quoted * 100n) / 10_000n);
+    await normal.connect(trader).approve(await pool.getAddress(), 500n);
+    await expect(
+      pool.connect(trader).swapExactInput(500n, quoted, zeroForOne, MAX_DEADLINE),
+    ).to.be.revertedWithCustomError(pool, "SlippageExceeded");
+
+    const outputBefore = await taxed.balanceOf(trader.address);
+    await pool.connect(trader).swapExactInput(500n, expectedReceived, zeroForOne, MAX_DEADLINE);
+    expect(await taxed.balanceOf(trader.address)).to.equal(outputBefore + expectedReceived);
+  });
+
+  it("enforces liquidity withdrawal minimums against actual receipts", async function () {
+    const [owner] = await ethers.getSigners();
+    const normal = await (await ethers.getContractFactory("MockERC20")).deploy(
+      "Normal Token",
+      "NORM",
+      18,
+    );
+    const taxed = await (await ethers.getContractFactory("FeeOnTransferERC20")).deploy(
+      "Taxed Token",
+      "TAX",
+      100,
+    );
+    await normal.waitForDeployment();
+    await taxed.waitForDeployment();
+    const vault = await deployFeeVault();
+    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+      await normal.getAddress(),
+      await taxed.getAddress(),
+      18,
+      18,
+      30,
+      await vault.getAddress(),
+    );
+    await pool.waitForDeployment();
+
+    const token0IsNormal = (await pool.token0()).toLowerCase() ===
+      (await normal.getAddress()).toLowerCase();
+    const token0 = token0IsNormal ? normal : taxed;
+    const token1 = token0IsNormal ? taxed : normal;
+    const amount0 = token0IsNormal ? 1_000n : 1_010n;
+    const amount1 = token0IsNormal ? 1_010n : 1_000n;
+    await normal.mint(owner.address, 1_000n);
+    await taxed.mint(owner.address, 1_010n);
+    await token0.approve(await pool.getAddress(), amount0);
+    await token1.approve(await pool.getAddress(), amount1);
+    await pool.addLiquidity(amount0, amount1, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+
+    const shares = await pool.totalShares();
+    const nominal0 = await token0.balanceOf(await pool.getAddress());
+    const nominal1 = await token1.balanceOf(await pool.getAddress());
+    await expect(
+      pool.removeLiquidity(shares, nominal0, nominal1, MAX_DEADLINE),
+    ).to.be.revertedWithCustomError(pool, "SlippageExceeded");
+
+    const min0 = token0IsNormal ? nominal0 : nominal0 - ((nominal0 * 100n) / 10_000n);
+    const min1 = token0IsNormal ? nominal1 - ((nominal1 * 100n) / 10_000n) : nominal1;
+    await pool.removeLiquidity(shares, min0, min1, MAX_DEADLINE);
+    expect(await pool.totalShares()).to.equal(0n);
+    expect(await pool.initialized()).to.equal(false);
+  });
+
+  it("sweeps only unmanaged donations when reinitializing after a full exit", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const token0 = await tokenFactory.deploy("Token 0", "TK0", 18);
+    const token1 = await tokenFactory.deploy("Token 1", "TK1", 18);
+    await Promise.all([token0.waitForDeployment(), token1.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+      await token0.getAddress(),
+      await token1.getAddress(),
+      18,
+      18,
+      30,
+      await vault.getAddress(),
+    );
+    await pool.waitForDeployment();
+
+    await token0.mint(owner.address, 30_000n);
+    await token1.mint(owner.address, 20_000n);
+    await token0.mint(trader.address, 10_000n);
+    await token0.approve(await pool.getAddress(), ethers.MaxUint256);
+    await token1.approve(await pool.getAddress(), ethers.MaxUint256);
+    await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+
+    await token0.connect(trader).approve(await pool.getAddress(), 10_000n);
+    await pool.connect(trader).swapExactInput(10_000n, 0n, true, MAX_DEADLINE);
+    const accruedProtocolFee = await pool.protocolFees0();
+    expect(accruedProtocolFee).to.be.greaterThan(0n);
+
+    await pool.removeLiquidity(await pool.totalShares(), 0n, 0n, MAX_DEADLINE);
+    expect(await pool.initialized()).to.equal(false);
+    expect(await token0.balanceOf(await pool.getAddress())).to.equal(accruedProtocolFee);
+
+    await token0.transfer(await pool.getAddress(), 1n);
+    await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+
+    expect(await token0.balanceOf(await vault.getAddress())).to.equal(1n);
+    expect(await pool.protocolFees0()).to.equal(accruedProtocolFee);
+    const [reserve0, reserve1] = await pool.effectiveReserves();
+    expect(reserve0).to.equal(10_000n);
+    expect(reserve1).to.equal(10_000n);
   });
 });

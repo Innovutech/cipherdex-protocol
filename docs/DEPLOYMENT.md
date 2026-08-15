@@ -8,7 +8,7 @@ is no mainnet deployment script or mainnet network entry.
 3. Set `CIPHERDEX_FEE_BENEFICIARY` to the dedicated testnet fee recipient. The
    deployment creates one immutable `CipherDEXFeeVault` and binds both factories
    to it. A production beneficiary should be a reviewed multisig; it cannot be
-   changed for deployed v1 pools.
+   changed for deployed pools.
 4. Keep the two official COTI PrivateERC20-compatible token addresses and public
    decimals available for the separate scenario runner. The core deployment does
    not require token addresses because pool creation is permissionless.
@@ -36,3 +36,8 @@ is no mainnet deployment script or mainnet network entry.
 The deploy script prints only public contract configuration. It does not onboard
 accounts, handle AES keys, create a pool, or manufacture encrypted inputs. Use the
 official COTI SDK and the documented scenario/launchpad harness for those operations.
+
+The patched public and confidential pools/factories/periphery report protocol
+version 2; the patched launchpad migrator reports version 3. They are immutable
+redeployments, not upgrades to existing bytecode. Follow
+`docs/SECURITY_UPGRADE_V2.md` before changing an integration allowlist.

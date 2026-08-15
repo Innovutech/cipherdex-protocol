@@ -4,7 +4,7 @@
 
 `ConfidentialLaunchpadMigrator` is a permissionless integration boundary for a
 launchpad that must migrate a creator's final bonding-curve liquidity into a new
-or empty `ConfidentialCPMM` pool. It is separate from CipherTools and has no admin,
+`ConfidentialCPMM` pool. It is separate from CipherTools and has no admin,
 withdrawal, fee-manager or token-rescue authority.
 
 The confidential factory accepts bootstrap calls only from the migrator address
@@ -14,7 +14,10 @@ initializing it before the intended migration. The binding cannot be changed
 after configuration and does not grant withdrawal or fee-management authority.
 
 Migrated pools use the same immutable factory fee policy and fee vault as pools
-initialized manually. The launchpad cannot add a creator fee, change the
+initialized manually, but not the same deterministic slot. A domain-separated
+launch key includes the creator and is writable only through the bound adapter.
+Permissionless manual liquidity and another creator therefore cannot preempt a
+migration. The launchpad cannot add a creator fee, change the
 one-sixth protocol split, or redirect accrued fees. Migration does not charge a
 separate native-COTI pool fee in v1.
 
@@ -30,8 +33,8 @@ separate native-COTI pool fee in v1.
    disposition. The official COTI SDK still signs each encrypted input for the
    exact migrator selector.
 4. The creator calls `migrate` before its deadline.
-5. The migrator validates every input, creates or selects the canonical empty
-   factory pool for the signed pair/fee/privacy/version identity, pulls the exact
+5. The migrator validates every input and creates the one-shot creator-scoped
+   factory pool for the signed creator/pair/fee/privacy/version identity, then pulls the exact
    MPC amounts with `transferFromGT`, and calls the factory bootstrap hook.
 6. The pool confirms that its private balances exactly equal the transferred
    values, checks the encrypted price interval, and applies the requested LP
@@ -42,9 +45,15 @@ separate native-COTI pool fee in v1.
 Any revert rolls back pool creation, token pulls and share state in the same EVM
 transaction.
 
+Each creator/pair/fee/version launch key is consumable only once. A pool that is
+later fully exited is not eligible for another launch migration; a future launch
+must use a distinct protocol version or explicit launch identifier. This prevents
+permissionless post-exit liquidity from preempting a later migration through the
+same deterministic slot.
+
 The testnet runner first submits an otherwise valid migration with a deliberately
 impossible encrypted price interval. It verifies that both private balances and
-the canonical factory slot remain unchanged, then submits the valid migration.
+the creator-scoped factory slot remain unchanged, then submits the valid migration.
 It finally replays the exact successful request and verifies rejection without
 additional token movement. This proves rollback and replay behavior with the
 real COTI MPC/token path rather than a plaintext local substitute.
@@ -97,4 +106,4 @@ lock identifier, owner, mode and time; the locked amount remains encrypted.
 
 Run the testnet script separately for creator-held (`0`), timed-lock (`1`) and
 permanent-lock (`2`) dispositions. Each invocation deploys an isolated factory
-and migrator so the canonical empty-pool condition is independently exercised.
+and migrator so the creator-scoped empty-pool condition is independently exercised.

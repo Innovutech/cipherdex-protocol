@@ -369,15 +369,16 @@ async function readPrivateBalance(
     deadline,
     rejectedAuthorization,
   ];
-  const canonicalPoolKey = await factory.poolKey(
+  const launchPoolKey = await factory.launchPoolKey(
+    wallet.address,
     canonicalToken0,
     canonicalToken1,
     canonicalDecimals0,
     canonicalDecimals1,
     feeBps,
   );
-  if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
-    throw new Error("launchpad rollback probe requires an empty canonical pool slot");
+  if (await factory.getLaunchPool(launchPoolKey) !== ethers.ZeroAddress) {
+    throw new Error("launchpad rollback probe requires an empty creator-scoped pool slot");
   }
   stage = "rollback probe balance snapshot";
   const beforeRejected0 = await readPrivateBalance(token0, walletAddress, wallet);
@@ -400,8 +401,8 @@ async function readPrivateBalance(
     rejectedBoundRolledBack = true;
   }
   if (!rejectedBoundRolledBack) throw new Error("launchpad accepted an impossible price bound");
-  if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
-    throw new Error("failed launchpad migration left a canonical pool behind");
+  if (await factory.getLaunchPool(launchPoolKey) !== ethers.ZeroAddress) {
+    throw new Error("failed launchpad migration left a creator-scoped pool behind");
   }
   if (
     (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeRejected0 ||
@@ -526,8 +527,8 @@ async function readPrivateBalance(
   ) {
     throw new Error("rejected launchpad replay changed private token balances");
   }
-  if ((await factory.getPool(canonicalPoolKey)).toLowerCase() !== poolAddress.toLowerCase()) {
-    throw new Error("launchpad replay changed canonical pool discovery");
+  if ((await factory.getLaunchPool(launchPoolKey)).toLowerCase() !== poolAddress.toLowerCase()) {
+    throw new Error("launchpad replay changed creator-scoped pool discovery");
   }
   console.log(`launchpad pool: ${poolAddress}`);
   console.log("COTI launchpad migration completed without printing private values.");

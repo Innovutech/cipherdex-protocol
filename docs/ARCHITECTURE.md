@@ -4,8 +4,8 @@
 
 - `contracts/ConfidentialCPMM.sol`: immutable pair, fee policy, private reserve
   math, swap execution and private LP share accounting.
-- `contracts/ConfidentialCPMMFactory.sol`: permissionless deterministic pool
-  creation and public pool discovery.
+- `contracts/ConfidentialCPMMFactory.sol`: permissionless deterministic manual
+  pool creation plus an adapter-only, creator-scoped launchpad pool namespace.
 - `contracts/PrivateLPToken.sol`: pool-bound encrypted LP-share token using the
   official COTI `PrivateERC20` implementation.
 - `contracts/PrivateLPTokenFactory.sol`: factory-owned deployer that keeps the
@@ -163,7 +163,11 @@ price bounds before setting its initial reserves/shares. Any failure reverts the
 whole transaction, including the token pulls.
 
 The bootstrap path is restricted to factory-created empty pools and cannot be used
-to withdraw or mutate an initialized pool. The initial share unit is the minimum
+to withdraw or mutate an initialized pool. Launchpad pools use a domain-separated
+key that includes the creator. Manual pool creation and another creator's launch
+therefore cannot occupy the intended migration slot, while every pool remains in
+the factory's common `isPool` and `allPools` discovery registries. Each launch key
+is one-shot and cannot be reused after a full exit. The initial share unit is the minimum
 of the normalized private deposits, while full exit remains reserve-complete.
 The launchpad can select creator-held, timed-lock, or permanent-lock disposition
 as part of the same bootstrap transaction. A locked bootstrap records the private
@@ -173,7 +177,15 @@ unlock later mints the amount, while permanent disposition never does.
 ## Public/public boundary
 
 `PublicCPMM` uses standard ERC-20 transfers and exposes public settlement amounts.
-It requires exact proportional deposits after measuring the actual received token
-amounts, which rejects fee-on-transfer mismatch instead of silently donating
-assets. It uses OpenZeppelin full-precision multiplication/division and rounds
+The first LP establishes any non-zero normalized price. Unmanaged balances sent
+before initialization are swept to the immutable fee vault before the first
+deposit, so a one-unit donation cannot brick or benefit the initializer.
+Subsequent liquidity amounts are maxima: shares round down, accepted proportional
+amounts round up, and only the accepted amounts are pulled. Incremental joins
+require exact receipt so fee-on-transfer behavior cannot silently donate assets.
+Swap and withdrawal minimums are checked against the recipient's measured balance
+increase, including routed swaps. Every liquidity add also binds the resulting
+normalized token1-per-token0 price to caller-supplied inclusive bounds, preventing
+a front-run initialization from silently changing deposit economics. It uses
+OpenZeppelin full-precision multiplication/division and rounds
 the retained reserve upward, matching the confidential invariant convention.

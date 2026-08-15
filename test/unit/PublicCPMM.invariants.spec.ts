@@ -54,7 +54,7 @@ describe("PublicCPMM stateful invariants", function () {
     await token1.approve(await pool.getAddress(), amount1);
     await token0.connect(trader).approve(await pool.getAddress(), MAX_UINT256);
     await token1.connect(trader).approve(await pool.getAddress(), MAX_UINT256);
-    await pool.addLiquidity(amount0, amount1, 1n, MAX_DEADLINE);
+    await pool.addLiquidity(amount0, amount1, 1n, 0n, MAX_UINT256, MAX_DEADLINE);
 
     let seed = 0xdecafbadn;
     for (let index = 0; index < 64; index += 1) {

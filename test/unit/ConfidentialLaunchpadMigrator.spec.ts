@@ -13,7 +13,7 @@ describe("ConfidentialLaunchpadMigrator", function () {
     const migrator = await migratorFactory.deploy(await factory.getAddress());
     await migrator.waitForDeployment();
 
-    expect(await migrator.PROTOCOL_VERSION()).to.equal(2n);
+    expect(await migrator.PROTOCOL_VERSION()).to.equal(3n);
     expect(await migrator.factory()).to.equal(await factory.getAddress());
     expect(await factory.feeVault()).to.equal(await vault.getAddress());
     expect(await factory.isApprovedFeeTier(30)).to.equal(true);

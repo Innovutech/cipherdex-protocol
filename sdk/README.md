@@ -34,6 +34,16 @@ its LP/protocol split without exposing accrued confidential amounts. The SDK's
 `calculateCipherDEXV1FeeBreakdown` mirrors pool integer rounding; it does not add
 any native-COTI swap fee. See `docs/FEE_ECONOMICS.md`.
 
+`isConfidentialPoolDiscovery` validates only the untrusted JSON shape and remains
+available for legacy read-only data. Before quoting or routing, callers must run
+`verifyConfidentialPoolDiscovery` with the expected factory, fee vault and
+protocol version plus an RPC-backed adapter. The verifier proves deployed code,
+factory membership, canonical lookup and immutable pool metadata, then returns a
+process-local verified value. `selectBestConfidentialPoolQuote` rejects raw or
+serialized discoveries that have not passed that verification in the current
+process. Patched execution uses protocol version 2 and `private-erc20-cpmm-v2`;
+legacy version-1 records may be displayed but must not be silently promoted.
+
 `selectBestConfidentialPoolQuote` compares decrypted outputs only as ephemeral
 service-local values tied to one opaque request ID and direction. It is not a
 public response schema and must not be used to publish exact quotes, reserves or

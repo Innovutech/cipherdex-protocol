@@ -19,8 +19,15 @@
 - launchpad bootstrap changing an initialized pool or bypassing the factory
   bootstrapper boundary;
 - launchpad price-bound checks bypassing the private normalized-price interval.
+- manual or competing-creator pools preempting a creator's launchpad migration
+  slot;
 - unmanaged private-token donations changing initial share or launchpad price
   state.
+- unmanaged public-token donations permanently blocking initialization;
+- public swap/router/withdrawal minimums being satisfied by a nominal transfer
+  while a taxed recipient receives less;
+- untrusted confidential discovery metadata selecting a non-factory pool;
+- stack exhaustion or getter execution while validating untrusted SDK metadata;
 - the confidential core has no public spot, TWAP, reserve, TVL, or aggregate
   LP-supply publication path;
 
@@ -51,3 +58,8 @@ Independent review must cover MPC input authenticity/replay semantics, all token
 callbacks, gas griefing, pool initialization, LP rounding, event linkability,
 precompile behavior under `eth_call`, and testnet-to-mainnet compiler/deployment
 differences. No external audit is claimed.
+
+Patched execution contracts report protocol version 2; the launchpad migrator
+reports version 3. Legacy version-1 contracts are immutable and are not made safe
+by updating this repository. Integrations must bind execution to the new factory
+addresses and versions. See `SECURITY_UPGRADE_V2.md`.

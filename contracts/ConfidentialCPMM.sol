@@ -20,7 +20,7 @@ import "./CipherDEXFeePolicy.sol";
  * deployment and has not received an external audit.
  */
 contract ConfidentialCPMM is CipherDEXFeePolicy {
-    uint256 public constant PROTOCOL_VERSION = 1;
+    uint256 public constant PROTOCOL_VERSION = 2;
     uint8 public constant PRIVACY_MODE = 1;
     uint256 public constant PRICE_SCALE = 1e18;
     uint32 public constant MIN_CONFIDENTIAL_COLLECTION_SWAPS = 8;

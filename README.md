@@ -17,7 +17,8 @@ addresses, so this phase does not claim anonymous or hidden-recipient execution.
 
 `ConfidentialLaunchpadMigrator` is the first atomic integration boundary. A creator
 signs inputs for the migrator, grants it explicit encrypted allowances, and can
-create/select and seed an empty factory pool in one transaction. Encrypted price
+create/select and seed a creator-scoped empty factory pool in one transaction.
+Manual pools and other creators cannot occupy that launch slot. Encrypted price
 bounds let a launchpad preserve a bonding-curve final price without exposing the
 ratio. The migrator is permissionless and has no withdrawal authority.
 
@@ -44,6 +45,11 @@ an atomic timed-lock or permanent-lock disposition.
 Public pools additionally expose a factory-gated exact-input router and quoter.
 Confidential pools are called directly because their encrypted input signatures
 bind the caller and target pool.
+
+The security-remediated execution contracts use protocol version 2 and the
+launchpad migrator uses version 3. Existing version-1 deployments are immutable;
+see [docs/SECURITY_UPGRADE_V2.md](docs/SECURITY_UPGRADE_V2.md) for discovery,
+redeployment and user-mediated liquidity migration requirements.
 
 PoD assets are not accepted by this synchronous pool. PoD transfer and approval
 operations are asynchronous cross-chain callback workflows and require a separate

@@ -16,7 +16,7 @@ import "./interfaces/IConfidentialLaunchpadMigrator.sol";
  * The creator signs every encrypted input for this contract and its `migrate`
  * selector. The migrator validates those inputs locally, pulls the exact
  * encrypted amounts through the official `transferFromGT` allowance path, and
- * asks the factory to initialize a new or empty pool in the same transaction.
+ * asks the factory to create and initialize a new pool in the same transaction.
  * A failed pool initialization reverts the transfers as well.
  *
  * This contract does not claim hidden recipients or hidden token identities.
@@ -24,7 +24,7 @@ import "./interfaces/IConfidentialLaunchpadMigrator.sol";
  * inside COTI MPC values.
  */
 contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
-    uint256 public constant PROTOCOL_VERSION = 2;
+    uint256 public constant PROTOCOL_VERSION = 3;
     bytes32 public constant EIP712_DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
@@ -63,7 +63,7 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
     }
 
     /**
-     * @notice Create or select an empty factory pool and seed it atomically.
+     * @notice Create a one-shot creator-scoped factory pool and seed it atomically.
      *
      * Inputs use the pool's canonical order after address sorting: `amount0`
      * belongs to the lower token address and `amount1` to the higher address.
@@ -128,19 +128,23 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             ? (request.tokenA, request.tokenB, request.decimalsA, request.decimalsB)
             : (request.tokenB, request.tokenA, request.decimalsB, request.decimalsA);
         IConfidentialCPMMFactory factoryContract = IConfidentialCPMMFactory(factory);
-        bytes32 key = factoryContract.poolKey(token0, token1, decimals0, decimals1, request.feeBps);
-        pool = factoryContract.getPool(key);
-        if (pool == address(0)) {
-            pool = factoryContract.createPool(
-                token0,
-                token1,
-                decimals0,
-                decimals1,
-                request.feeBps
-            );
-        }
-
-        if (IConfidentialCPMM(pool).initialized()) revert PoolAlreadyInitialized();
+        bytes32 key = factoryContract.launchPoolKey(
+            msg.sender,
+            token0,
+            token1,
+            decimals0,
+            decimals1,
+            request.feeBps
+        );
+        if (factoryContract.getLaunchPool(key) != address(0)) revert PoolAlreadyInitialized();
+        pool = factoryContract.createLaunchpadPool(
+            msg.sender,
+            token0,
+            token1,
+            decimals0,
+            decimals1,
+            request.feeBps
+        );
 
         // The signed values were validated for this migrator and selector;
         // transferFromGT only consumes the resulting MPC values under the

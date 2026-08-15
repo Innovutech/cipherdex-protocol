@@ -116,7 +116,7 @@ describe("ConfidentialCPMMFactory", function () {
     );
     await factory.waitForDeployment();
     expect(await factory.PRIVACY_MODE()).to.equal(1n);
-    expect(await factory.PROTOCOL_VERSION()).to.equal(1n);
+    expect(await factory.PROTOCOL_VERSION()).to.equal(2n);
 
     const a = await tokenA.getAddress();
     const b = await tokenB.getAddress();
@@ -126,12 +126,88 @@ describe("ConfidentialCPMMFactory", function () {
     const expected = ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(
         ["address", "address", "uint256", "uint8", "uint256"],
-        [token0, token1, 30, 1, 1],
+        [token0, token1, 30, 1, 2],
       ),
     );
     expect(key).to.equal(reverseKey);
     expect(key).to.equal(expected);
     expect(await factory.poolKey(a, b, 0, 0, 30)).to.equal(key);
     expect(await factory.poolKey(a, b, 18, 6, 100)).to.not.equal(key);
+  });
+
+  it("isolates adapter-created launchpad pools by creator from manual pools", async function () {
+    const [deployer, creatorA, creatorB, outsider] = await ethers.getSigners();
+    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
+    const tokenA = await metadataFactory.deploy(18);
+    const tokenB = await metadataFactory.deploy(6);
+    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
+
+    const vault = await deployFeeVault();
+    const factory = await (await ethers.getContractFactory("ConfidentialCPMMFactory")).deploy(
+      await vault.getAddress(),
+    );
+    const adapter = await (await ethers.getContractFactory("MockBootstrapAdapter")).deploy();
+    await Promise.all([factory.waitForDeployment(), adapter.waitForDeployment()]);
+    await factory.connect(deployer).setBootstrapAdapter(await adapter.getAddress());
+
+    const a = await tokenA.getAddress();
+    const b = await tokenB.getAddress();
+    await factory.connect(outsider).createPool(a, b, 18, 6, 30);
+    const manualKey = await factory.poolKey(a, b, 18, 6, 30);
+    const manualPool = await factory.getPool(manualKey);
+
+    const creatorAKey = await factory.launchPoolKey(creatorA.address, a, b, 18, 6, 30);
+    const creatorAReverseKey = await factory.launchPoolKey(creatorA.address, b, a, 6, 18, 30);
+    const creatorBKey = await factory.launchPoolKey(creatorB.address, a, b, 18, 6, 30);
+    expect(creatorAKey).to.equal(creatorAReverseKey);
+    expect(creatorAKey).to.not.equal(manualKey);
+    expect(creatorAKey).to.not.equal(creatorBKey);
+    expect(await factory.getLaunchPool(creatorAKey)).to.equal(ethers.ZeroAddress);
+
+    await expect(
+      factory.connect(outsider).createLaunchpadPool(creatorA.address, a, b, 18, 6, 30),
+    ).to.be.revertedWithCustomError(factory, "BootstrapAdapterUnauthorized");
+
+    await adapter.createLaunchpadPool(
+      await factory.getAddress(),
+      creatorA.address,
+      a,
+      b,
+      18,
+      6,
+      30,
+    );
+    await adapter.createLaunchpadPool(
+      await factory.getAddress(),
+      creatorB.address,
+      a,
+      b,
+      18,
+      6,
+      30,
+    );
+
+    const creatorAPool = await factory.getLaunchPool(creatorAKey);
+    const creatorBPool = await factory.getLaunchPool(creatorBKey);
+    expect(creatorAPool).to.not.equal(ethers.ZeroAddress);
+    expect(creatorBPool).to.not.equal(ethers.ZeroAddress);
+    expect(creatorAPool).to.not.equal(creatorBPool);
+    expect(creatorAPool).to.not.equal(manualPool);
+    expect(await factory.getPool(manualKey)).to.equal(manualPool);
+    expect(await factory.isPool(creatorAPool)).to.equal(true);
+    expect(await factory.isPool(creatorBPool)).to.equal(true);
+    expect(await factory.allPoolsLength()).to.equal(3n);
+
+    await expect(
+      adapter.createLaunchpadPool(
+        await factory.getAddress(),
+        creatorA.address,
+        a,
+        b,
+        18,
+        6,
+        30,
+      ),
+    ).to.be.revertedWithCustomError(factory, "PoolAlreadyExists");
   });
 });

@@ -16,9 +16,11 @@ import "./interfaces/IPrivateLPTokenFactory.sol";
  * are fixed in its constructor and the factory only records public pool identity.
  */
 contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy {
-    uint256 public constant PROTOCOL_VERSION = 1;
+    uint256 public constant PROTOCOL_VERSION = 2;
     uint8 public constant PRIVACY_MODE = 1;
+    bytes32 private constant LAUNCHPAD_POOL_DOMAIN = keccak256("CipherDEX.launchpad.pool");
     mapping(bytes32 => address) public getPool;
+    mapping(bytes32 => address) public getLaunchPool;
     mapping(address => bool) public isPool;
     address[] private pools;
     address public immutable lpTokenFactory;
@@ -34,6 +36,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     error BootstrapAdapterUnauthorized();
     error BootstrapAdapterAlreadyConfigured();
     error InvalidBootstrapAdapter();
+    error InvalidCreator();
 
     constructor(address feeVault_) {
         if (feeVault_.code.length == 0) revert InvalidFeeVault();
@@ -62,28 +65,73 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         uint8 decimalsB,
         uint256 feeBps
     ) external returns (address pool) {
-        return _createPool(tokenA, tokenB, decimalsA, decimalsB, feeBps);
+        (address token0, address token1, uint8 decimals0, uint8 decimals1) = _validateAndSortPool(
+            tokenA,
+            tokenB,
+            decimalsA,
+            decimalsB,
+            feeBps
+        );
+        bytes32 key = poolKey(token0, token1, decimals0, decimals1, feeBps);
+        if (getPool[key] != address(0)) revert PoolAlreadyExists();
+        pool = _deployPool(key, token0, token1, decimals0, decimals1, feeBps);
+        getPool[key] = pool;
     }
 
-    function _createPool(
+    /**
+     * @notice Creates the creator-scoped pool used by one atomic launchpad migration.
+     * @dev Only the immutable one-time-bound adapter can enter this namespace. A
+     *      manual pool or another creator's launch cannot occupy the same key.
+     */
+    function createLaunchpadPool(
+        address creator,
         address tokenA,
         address tokenB,
         uint8 decimalsA,
         uint8 decimalsB,
         uint256 feeBps
-    ) internal returns (address pool) {
+    ) external returns (address pool) {
+        if (msg.sender != bootstrapAdapter) revert BootstrapAdapterUnauthorized();
+        if (creator == address(0)) revert InvalidCreator();
+        (address token0, address token1, uint8 decimals0, uint8 decimals1) = _validateAndSortPool(
+            tokenA,
+            tokenB,
+            decimalsA,
+            decimalsB,
+            feeBps
+        );
+        bytes32 key = launchPoolKey(creator, token0, token1, decimals0, decimals1, feeBps);
+        if (getLaunchPool[key] != address(0)) revert PoolAlreadyExists();
+        pool = _deployPool(key, token0, token1, decimals0, decimals1, feeBps);
+        getLaunchPool[key] = pool;
+        emit LaunchpadPoolCreated(creator, token0, token1, decimals0, decimals1, feeBps, pool);
+    }
+
+    function _validateAndSortPool(
+        address tokenA,
+        address tokenB,
+        uint8 decimalsA,
+        uint8 decimalsB,
+        uint256 feeBps
+    ) internal pure returns (address token0, address token1, uint8 decimals0, uint8 decimals1) {
         if (tokenA == address(0) || tokenB == address(0) || tokenA == tokenB) {
             revert InvalidTokenPair();
         }
         if (!isApprovedFeeTier(feeBps)) revert InvalidFee();
 
-        (address token0, address token1, uint8 decimals0, uint8 decimals1) = tokenA < tokenB
+        return tokenA < tokenB
             ? (tokenA, tokenB, decimalsA, decimalsB)
             : (tokenB, tokenA, decimalsB, decimalsA);
+    }
 
-        bytes32 key = poolKey(token0, token1, decimals0, decimals1, feeBps);
-        if (getPool[key] != address(0)) revert PoolAlreadyExists();
-
+    function _deployPool(
+        bytes32 key,
+        address token0,
+        address token1,
+        uint8 decimals0,
+        uint8 decimals1,
+        uint256 feeBps
+    ) internal returns (address pool) {
         pool = address(new ConfidentialCPMM{salt: key}(
             token0,
             token1,
@@ -94,7 +142,6 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         ));
         address lpTokenAddress = IPrivateLPTokenFactory(lpTokenFactory).create(pool);
         IConfidentialCPMM(pool).initializeLPToken(lpTokenAddress);
-        getPool[key] = pool;
         isPool[pool] = true;
         pools.push(pool);
 
@@ -112,6 +159,39 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         return token0 < token1
             ? keccak256(abi.encode(token0, token1, feeBps, PRIVACY_MODE, PROTOCOL_VERSION))
             : keccak256(abi.encode(token1, token0, feeBps, PRIVACY_MODE, PROTOCOL_VERSION));
+    }
+
+    function launchPoolKey(
+        address creator,
+        address token0,
+        address token1,
+        uint8,
+        uint8,
+        uint256 feeBps
+    ) public pure returns (bytes32) {
+        return token0 < token1
+            ? keccak256(
+                abi.encode(
+                    LAUNCHPAD_POOL_DOMAIN,
+                    creator,
+                    token0,
+                    token1,
+                    feeBps,
+                    PRIVACY_MODE,
+                    PROTOCOL_VERSION
+                )
+            )
+            : keccak256(
+                abi.encode(
+                    LAUNCHPAD_POOL_DOMAIN,
+                    creator,
+                    token1,
+                    token0,
+                    feeBps,
+                    PRIVACY_MODE,
+                    PROTOCOL_VERSION
+                )
+            );
     }
 
     /**

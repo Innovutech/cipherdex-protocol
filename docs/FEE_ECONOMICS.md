@@ -58,10 +58,14 @@ Effective reserves are raw token balances minus the corresponding protocol-fee
 counter. Swaps, quotes, liquidity joins, withdrawals, and invariant checks use
 only effective reserves.
 
-`collectProtocolFees()` is permissionless but can transfer only to the pool's
-immutable `CipherDEXFeeVault`. Collection clears the counters and moves the same
-raw balances, so effective reserves and price do not change. A full LP exit
-withdraws all effective reserves but leaves protocol-owned balances behind.
+`collectProtocolFees(collectToken0, collectToken1)` is permissionless but can
+transfer only to the pool's immutable `CipherDEXFeeVault`. Each side is selected
+independently, so a reverting token cannot block collection of its paired asset.
+Collection clears the selected nominal counter and measures the vault's actual
+receipt; an outbound-tax token therefore reduces protocol revenue without
+changing LP accounting. The same nominal amount leaves the pool's raw balance,
+so effective reserves and price do not change. A full LP exit withdraws all
+effective reserves but leaves protocol-owned balances behind.
 
 ## Confidential pools
 
@@ -119,8 +123,9 @@ constructor-bound. There is no administrator setter. Changing those economics
 requires a new approved protocol version and new pool identity; an existing pool
 cannot be silently repriced.
 
-Manual factory creation and launchpad migration both resolve the same canonical
-factory pool and therefore inherit exactly the same fee policy. A future
+Manual factory creation and launchpad migration use separate deterministic
+namespaces but inherit exactly the same immutable fee policy and fee vault.
+Launchpad identity includes the creator to prevent pool-slot preemption. A future
 pool-creation anti-spam fee may be considered separately, but v1 has none. Such a
 fee would be a one-time native-COTI creation charge, never part of swap quote
 math.

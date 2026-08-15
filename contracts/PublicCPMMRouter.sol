@@ -18,7 +18,7 @@ import "./interfaces/IPublicCPMMFactory.sol";
 contract PublicCPMMRouter {
     using SafeERC20 for IERC20;
 
-    uint256 public constant PROTOCOL_VERSION = 1;
+    uint256 public constant PROTOCOL_VERSION = 2;
 
     address public immutable factory;
     uint256 private reentrancyState = 1;
@@ -26,6 +26,8 @@ contract PublicCPMMRouter {
     error InvalidFactory();
     error InvalidPool();
     error InvalidAmount();
+    error SlippageExceeded();
+    error TransferAmountMismatch();
     error Reentrancy();
 
     event SwapRouted(
@@ -68,15 +70,42 @@ contract PublicCPMMRouter {
 
         IERC20(inputToken).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(inputToken).forceApprove(pool, amountIn);
-        amountOut = IPublicCPMM(pool).swapExactInput(
+        uint256 routerAmountOut = IPublicCPMM(pool).swapExactInput(
             amountIn,
-            minAmountOut,
+            0,
             zeroForOne,
             deadline
         );
         IERC20(inputToken).forceApprove(pool, 0);
-        IERC20(outputToken).safeTransfer(msg.sender, amountOut);
+
+        amountOut = _transferOut(
+            IERC20(outputToken),
+            msg.sender,
+            routerAmountOut,
+            minAmountOut
+        );
 
         emit SwapRouted(msg.sender, pool, inputToken, outputToken, amountIn, amountOut);
+    }
+
+    function _transferOut(
+        IERC20 token,
+        address recipient,
+        uint256 amount,
+        uint256 minimumReceived
+    ) internal returns (uint256 received) {
+        uint256 senderBefore = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(recipient);
+        if (senderBefore < amount) revert TransferAmountMismatch();
+        token.safeTransfer(recipient, amount);
+        uint256 senderAfter = token.balanceOf(address(this));
+        uint256 recipientAfter = token.balanceOf(recipient);
+        if (
+            senderAfter > senderBefore ||
+            senderBefore - senderAfter != amount ||
+            recipientAfter < recipientBefore
+        ) revert TransferAmountMismatch();
+        received = recipientAfter - recipientBefore;
+        if (received < minimumReceived) revert SlippageExceeded();
     }
 }

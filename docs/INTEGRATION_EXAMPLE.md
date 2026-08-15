@@ -12,7 +12,7 @@ requested ordered token pair, collect each supported fee tier and verify the
 pool's immutable metadata:
 
 ```ts
-const discovery = {
+const untrustedDiscovery = {
   disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
   protocolVersion: Number(await pool.PROTOCOL_VERSION()),
   pool: poolAddress,
@@ -24,19 +24,36 @@ const discovery = {
   feeVault: await pool.feeVault(),
   feePolicy: getCipherDEXV1FeePolicy(Number(await pool.feeBps())),
   privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-  poolKind: "private-erc20-cpmm-v1",
+  poolKind: "private-erc20-cpmm-v2",
   quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
 };
 
-if (!isConfidentialPoolDiscovery(discovery)) {
+if (!isConfidentialPoolDiscovery(untrustedDiscovery)) {
   throw new Error("unsupported confidential pool");
 }
+
+const discovery = await verifyConfidentialPoolDiscovery(
+  untrustedDiscovery,
+  {
+    expectedFactory: configuredFactory,
+    expectedFeeVault: configuredFeeVault,
+    expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+  },
+  rpcBackedVerificationAdapter,
+);
 ```
 
-The canonical factory key includes ordered pair, fee tier, privacy mode, and
-protocol version. Token decimals are validated against each token contract at
-pool creation but are not a second pool-identity dimension. There is one
-aggregate pool per key. Never treat individual LP positions as quote candidates.
+`isConfidentialPoolDiscovery` is only a bounded JSON-shape check. It does not
+prove provenance. The RPC adapter used by `verifyConfidentialPoolDiscovery`
+must check deployed code, factory `isPool`, the applicable manual or
+creator-scoped canonical lookup, and all immutable pool fields. Only its
+process-local verified return value can be passed to quote selection.
+
+The manual factory key includes ordered pair, fee tier, privacy mode, and
+protocol version. Launchpad pools use a separate domain and include the creator.
+Token decimals are validated against each token contract at pool creation but
+are not a second pool-identity dimension. Never treat individual LP positions as
+quote candidates.
 
 ## Service-local best-pool selection
 
@@ -101,16 +118,18 @@ separately reviewed delegation primitive.
 
 ## Public pools
 
-For `public-erc20-cpmm-v1`, use `PublicCPMMQuoter` and `PublicCPMMRouter` after
+For `public-erc20-cpmm-v2`, use `PublicCPMMQuoter` and `PublicCPMMRouter` after
 verifying that the pool is registered in the expected public factory. Public and
 confidential route responses must retain their explicit `privacyMode` and
 `poolKind`; do not silently fall back between them.
 
 ## Launchpad metadata
 
-Index `LaunchpadMigration` and `LaunchpadLockDisposition` only for public
-creator/pool/lock identity and timing. Liquidity amounts, price bounds, minted
-shares, reserves, and TVL stay outside public discovery.
+Index `LaunchpadPoolCreated`, `LaunchpadMigration`, and
+`LaunchpadLockDisposition` only for public creator/pool/lock identity and timing.
+Use the creator from `LaunchpadPoolCreated` to verify `launchPoolKey` and
+`getLaunchPool`. Liquidity amounts, price bounds, minted shares, reserves, and
+TVL stay outside public discovery.
 
 ## Prohibited integration shortcuts
 

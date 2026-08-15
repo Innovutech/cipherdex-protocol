@@ -32,7 +32,7 @@ async function deployPublicFeeFixture() {
   await token1.connect(lp).approve(await pool.getAddress(), ethers.MaxUint256);
   await token0.connect(trader).approve(await pool.getAddress(), ethers.MaxUint256);
   await token1.connect(trader).approve(await pool.getAddress(), ethers.MaxUint256);
-  await pool.connect(lp).addLiquidity(initial, initial, 1n, DEADLINE);
+  await pool.connect(lp).addLiquidity(initial, initial, 1n, 0n, ethers.MaxUint256, DEADLINE);
 
   return { beneficiary, lp, trader, outsider, vault, token0, token1, pool, initial };
 }
@@ -176,7 +176,7 @@ describe("CipherDEX v1 fee economics", function () {
 
     const reservesBefore = await pool.effectiveReserves();
     const quoteBefore = await pool.quoteExactInput(1_000n, true);
-    await pool.connect(outsider).collectProtocolFees();
+    await pool.connect(outsider).collectProtocolFees(true, true);
     expect(await pool.effectiveReserves()).to.deep.equal(reservesBefore);
     expect(await pool.quoteExactInput(1_000n, true)).to.equal(quoteBefore);
     expect(await token0.balanceOf(await vault.getAddress())).to.equal(5n);
@@ -216,13 +216,87 @@ describe("CipherDEX v1 fee economics", function () {
     expect(owed0).to.be.greaterThan(0n);
     expect(owed1).to.be.greaterThan(0n);
 
-    await pool.connect(lp).addLiquidity(initial, initial, 1n, DEADLINE);
+    await pool.connect(lp).addLiquidity(initial, initial, 1n, 0n, ethers.MaxUint256, DEADLINE);
     expect(await pool.effectiveReserves()).to.deep.equal([initial, initial]);
     expect(await token0.balanceOf(poolAddress)).to.equal(initial + 5n);
 
-    await pool.collectProtocolFees();
+    await pool.collectProtocolFees(true, true);
     expect(await pool.effectiveReserves()).to.deep.equal([initial, initial]);
     expect(await token0.balanceOf(await vault.getAddress())).to.equal(5n);
     expect(await token1.balanceOf(await vault.getAddress())).to.equal(10n);
+  });
+
+  it("collects outbound-tax fees independently without changing effective reserves", async function () {
+    const [lp, trader] = await ethers.getSigners();
+    const vault = await deployFeeVault();
+    const normal = await (await ethers.getContractFactory("MockERC20")).deploy(
+      "Normal Token",
+      "NORM",
+      18,
+    );
+    const taxed = await (await ethers.getContractFactory("FeeOnTransferERC20")).deploy(
+      "Taxed Token",
+      "TAX",
+      100,
+    );
+    await Promise.all([normal.waitForDeployment(), taxed.waitForDeployment()]);
+    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+      await normal.getAddress(),
+      await taxed.getAddress(),
+      18,
+      18,
+      30,
+      await vault.getAddress(),
+    );
+    await pool.waitForDeployment();
+
+    const poolAddress = await pool.getAddress();
+    await taxed.setTaxedSender(poolAddress);
+    const initial = 10_000_000n;
+    await normal.mint(lp.address, initial);
+    await taxed.mint(lp.address, initial);
+    await normal.mint(trader.address, 1_000_000n);
+    await taxed.mint(trader.address, 1_000_000n);
+    await normal.connect(lp).approve(poolAddress, initial);
+    await taxed.connect(lp).approve(poolAddress, initial);
+    await normal.connect(trader).approve(poolAddress, ethers.MaxUint256);
+    await taxed.connect(trader).approve(poolAddress, ethers.MaxUint256);
+    await pool.connect(lp).addLiquidity(
+      initial,
+      initial,
+      1n,
+      0n,
+      ethers.MaxUint256,
+      DEADLINE,
+    );
+
+    const taxedIsToken0 = (await pool.token0()).toLowerCase() ===
+      (await taxed.getAddress()).toLowerCase();
+    await pool.connect(trader).swapExactInput(1_000_000n, 0n, taxedIsToken0, DEADLINE);
+    await pool.connect(trader).swapExactInput(1_000_000n, 0n, !taxedIsToken0, DEADLINE);
+    const taxedAccrued = taxedIsToken0
+      ? await pool.protocolFees0()
+      : await pool.protocolFees1();
+    const normalAccrued = taxedIsToken0
+      ? await pool.protocolFees1()
+      : await pool.protocolFees0();
+    expect(taxedAccrued).to.equal(500n);
+    expect(normalAccrued).to.equal(500n);
+
+    const reservesBefore = await pool.effectiveReserves();
+    await pool.collectProtocolFees(!taxedIsToken0, taxedIsToken0);
+    expect(await normal.balanceOf(await vault.getAddress())).to.equal(normalAccrued);
+    expect(taxedIsToken0 ? await pool.protocolFees0() : await pool.protocolFees1())
+      .to.equal(taxedAccrued);
+
+    const [received0, received1] = taxedIsToken0
+      ? await pool.collectProtocolFees.staticCall(true, false)
+      : await pool.collectProtocolFees.staticCall(false, true);
+    expect(taxedIsToken0 ? received0 : received1).to.equal(495n);
+    await pool.collectProtocolFees(taxedIsToken0, !taxedIsToken0);
+    expect(await taxed.balanceOf(await vault.getAddress())).to.equal(495n);
+    expect(await pool.effectiveReserves()).to.deep.equal(reservesBefore);
+    expect(await pool.protocolFees0()).to.equal(0n);
+    expect(await pool.protocolFees1()).to.equal(0n);
   });
 });

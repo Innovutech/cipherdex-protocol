@@ -46,17 +46,17 @@ describe("PublicCPMM", function () {
     await tokenB.mint(owner.address, 10_000_000_000n);
     await tokenA.mint(trader.address, ethers.parseEther("100"));
     await tokenB.mint(trader.address, 100_000_000n);
-    return { owner, trader, tokenA, tokenB, pool };
+    return { owner, trader, tokenA, tokenB, pool, vault, factory };
   }
 
   it("creates canonical pools and preserves the public invariant through a swap", async function () {
-    const { owner, trader, tokenA, tokenB, pool } = await deployPool();
+    const { owner, trader, tokenA, tokenB, pool, factory } = await deployPool();
     const token0IsA = (await pool.token0()).toLowerCase() === (await tokenA.getAddress()).toLowerCase();
     const amount0 = token0IsA ? ethers.parseEther("100") : 100_000_000n;
     const amount1 = token0IsA ? 100_000_000n : ethers.parseEther("100");
     await (token0IsA ? tokenA : tokenB).approve(await pool.getAddress(), amount0);
     await (token0IsA ? tokenB : tokenA).approve(await pool.getAddress(), amount1);
-    await pool.addLiquidity(amount0, amount1, 1n, 0xffffffff);
+    await pool.addLiquidity(amount0, amount1, 1n, 0n, ethers.MaxUint256, 0xffffffff);
 
     const beforeProduct =
       (await tokenA.balanceOf(await pool.getAddress())) *
@@ -71,11 +71,84 @@ describe("PublicCPMM", function () {
 
     expect(await pool.initialized()).to.equal(true);
     expect(await pool.PRIVACY_MODE()).to.equal(0n);
+    expect(await pool.PROTOCOL_VERSION()).to.equal(2n);
+    expect(await factory.PROTOCOL_VERSION()).to.equal(2n);
     expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("100"));
     expect(afterProduct).to.be.gte(beforeProduct);
   });
 
-  it("requires exact proportional public deposits and enforces permanent locks", async function () {
+  it("lets the first LP establish an arbitrary normalized price", async function () {
+    const { tokenA, tokenB, pool } = await deployPool();
+    const token0IsA = (await pool.token0()).toLowerCase() === (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const amount0 = token0IsA ? ethers.parseEther("1") : 3_000_000_000n;
+    const amount1 = token0IsA ? 3_000_000_000n : ethers.parseEther("1");
+
+    await token0.approve(await pool.getAddress(), amount0);
+    await token1.approve(await pool.getAddress(), amount1);
+    const expectedPriceX18 = token0IsA
+      ? 3_000n * 10n ** 18n
+      : 10n ** 18n / 3_000n;
+    await pool.addLiquidity(
+      amount0,
+      amount1,
+      1n,
+      expectedPriceX18,
+      expectedPriceX18,
+      0xffffffff,
+    );
+
+    expect(await pool.initialized()).to.equal(true);
+    expect(await pool.totalShares()).to.equal(ethers.parseEther("1"));
+    expect(await token0.balanceOf(await pool.getAddress())).to.equal(amount0);
+    expect(await token1.balanceOf(await pool.getAddress())).to.equal(amount1);
+  });
+
+  it("rejects liquidity when the resulting normalized price leaves caller bounds", async function () {
+    const { tokenA, tokenB, pool } = await deployPool();
+    const token0IsA = (await pool.token0()).toLowerCase() === (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const amount0 = token0IsA ? ethers.parseEther("10") : 10_000_000n;
+    const amount1 = token0IsA ? 10_000_000n : ethers.parseEther("10");
+    await token0.approve(await pool.getAddress(), amount0);
+    await token1.approve(await pool.getAddress(), amount1);
+
+    await expect(
+      pool.addLiquidity(
+        amount0,
+        amount1,
+        1n,
+        2n * 10n ** 18n,
+        3n * 10n ** 18n,
+        0xffffffff,
+      ),
+    ).to.be.revertedWithCustomError(pool, "SlippageExceeded");
+    expect(await pool.initialized()).to.equal(false);
+    expect(await token0.balanceOf(await pool.getAddress())).to.equal(0n);
+    expect(await token1.balanceOf(await pool.getAddress())).to.equal(0n);
+  });
+
+  it("sweeps pre-initialization donations to the immutable fee vault", async function () {
+    const { tokenA, tokenB, pool, vault } = await deployPool();
+    const token0IsA = (await pool.token0()).toLowerCase() === (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const amount0 = token0IsA ? ethers.parseEther("10") : 10_000_000n;
+    const amount1 = token0IsA ? 10_000_000n : ethers.parseEther("10");
+
+    await token0.transfer(await pool.getAddress(), 1n);
+    await token0.approve(await pool.getAddress(), amount0);
+    await token1.approve(await pool.getAddress(), amount1);
+    await pool.addLiquidity(amount0, amount1, 1n, 0n, ethers.MaxUint256, 0xffffffff);
+
+    expect(await token0.balanceOf(await vault.getAddress())).to.equal(1n);
+    expect(await token0.balanceOf(await pool.getAddress())).to.equal(amount0);
+    expect(await token1.balanceOf(await pool.getAddress())).to.equal(amount1);
+  });
+
+  it("uses liquidity amounts as maxima and enforces permanent locks", async function () {
     const { owner, tokenA, tokenB, pool } = await deployPool();
     const token0IsA = (await pool.token0()).toLowerCase() === (await tokenA.getAddress()).toLowerCase();
     const token0 = token0IsA ? tokenA : tokenB;
@@ -84,13 +157,26 @@ describe("PublicCPMM", function () {
     const amount1 = token0IsA ? 100_000_000n : ethers.parseEther("100");
     await token0.approve(await pool.getAddress(), amount0);
     await token1.approve(await pool.getAddress(), amount1);
-    await pool.addLiquidity(amount0, amount1, 1n, 0xffffffff);
+    await pool.addLiquidity(amount0, amount1, 1n, 0n, ethers.MaxUint256, 0xffffffff);
 
     await token0.approve(await pool.getAddress(), token0IsA ? ethers.parseEther("1") : 1_000_001n);
     await token1.approve(await pool.getAddress(), token0IsA ? 1_000_001n : ethers.parseEther("1"));
-    await expect(
-      pool.addLiquidity(token0IsA ? ethers.parseEther("1") : 1_000_001n, token0IsA ? 1_000_001n : ethers.parseEther("1"), 1n, 0xffffffff),
-    ).to.be.revertedWithCustomError(pool, "InvalidLiquidityRatio");
+    const balance0Before = await token0.balanceOf(owner.address);
+    const balance1Before = await token1.balanceOf(owner.address);
+    await pool.addLiquidity(
+      token0IsA ? ethers.parseEther("1") : 1_000_001n,
+      token0IsA ? 1_000_001n : ethers.parseEther("1"),
+      1n,
+      0n,
+      ethers.MaxUint256,
+      0xffffffff,
+    );
+    expect(await token0.balanceOf(owner.address)).to.equal(
+      balance0Before - (token0IsA ? ethers.parseEther("1") : 1_000_000n),
+    );
+    expect(await token1.balanceOf(owner.address)).to.equal(
+      balance1Before - (token0IsA ? 1_000_000n : ethers.parseEther("1")),
+    );
 
     await expect(
       pool.lockShares(ethers.parseEther("1"), 1, true, 0xffffffff),
@@ -110,10 +196,10 @@ describe("PublicCPMM", function () {
     const lockId = parsed?.args.lockId as string;
     expect(lockId).to.be.a("string");
     await expect(pool.unlockShares(lockId)).to.be.revertedWithCustomError(pool, "InvalidLock");
-    expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("90"));
+    expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("91"));
   });
 
-  it("rejects floored-share deposits that would donate public tokens", async function () {
+  it("accepts bounded rounded deposits without requiring an exact reserve multiple", async function () {
     const [owner] = await ethers.getSigners();
     const tokenFactory = await ethers.getContractFactory("MockERC20");
     const token0 = await tokenFactory.deploy("Token 0", "TK0", 18);
@@ -137,13 +223,25 @@ describe("PublicCPMM", function () {
     await token1.mint(owner.address, ethers.parseEther("20"));
     await token0.approve(await pool.getAddress(), ethers.MaxUint256);
     await token1.approve(await pool.getAddress(), ethers.MaxUint256);
-    await pool.addLiquidity(ethers.parseEther("10"), ethers.parseEther("10"), 1n, 0xffffffff);
+    await pool.addLiquidity(
+      ethers.parseEther("10"),
+      ethers.parseEther("10"),
+      1n,
+      0n,
+      ethers.MaxUint256,
+      0xffffffff,
+    );
 
     // The extra wei makes the raw reserve ratio 11:10. The 2:1 deposit would
     // produce the same floored share value under the old implementation, but
     // is not actually proportional and must not donate the excess token.
     await token0.transfer(await pool.getAddress(), 1n);
-    await expect(pool.addLiquidity(2n, 1n, 1n, 0xffffffff))
-      .to.be.revertedWithCustomError(pool, "InvalidLiquidityRatio");
+    const owner0Before = await token0.balanceOf(owner.address);
+    const owner1Before = await token1.balanceOf(owner.address);
+    await pool.addLiquidity(2n, 1n, 1n, 0n, ethers.MaxUint256, 0xffffffff);
+
+    expect(await token0.balanceOf(owner.address)).to.equal(owner0Before - 2n);
+    expect(await token1.balanceOf(owner.address)).to.equal(owner1Before - 1n);
+    expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("10") + 1n);
   });
 });
