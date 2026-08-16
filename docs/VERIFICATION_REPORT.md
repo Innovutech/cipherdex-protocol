@@ -184,6 +184,32 @@ exercised separately from factory deployment. All runtime bytecode is below the
 24,576-byte EIP-170 limit and all initcode is below the 49,152-byte EIP-3860
 limit.
 
+## Authoritative COTI testnet deployment
+
+The reviewed clean source commit
+`206840f986162f02fadd29211fb0b5e39ce7a5b1` was deployed to COTI testnet
+(`7082400`). The deployment script re-read that commit before network access,
+recorded each observed runtime codehash and verified all immutable bindings after
+confirmation. The sanitized machine-readable record is
+`deployments/coti-testnet-latest.json`.
+
+| Component | Address | Deployment transaction |
+| --- | --- | --- |
+| Fee vault | `0x28968cc36779Dfb5Fc49BFa7944279C193f39981` | `0x9c87db4eb337f88d9cfc6571a3fc6355b75664b0e98f1b1ca5c06f6a642f2086` |
+| Private LP-token factory | `0x26e3c623ff29F09C2E1D7eec930292Cc31EC28E3` | `0x83a4fd8632007e9c9a07eeb72f9412790ee61eadcefe652728d38f7a29a0e1b5` |
+| Confidential factory | `0x999dC50F453D00866e038A9465D59FebF46FaBbc` | `0x6efd9913dbb8bfea2d7415136a6be73546c0c061dc9d285b10364811e6479710` |
+| Launchpad migrator | `0x00A48a4a334E994112f26f5037caE9541834583b` | `0x05bbd7c06ead1840be3339a8bab09321c42500dca91da10c28e98c9c0609fb75` |
+| Public factory | `0x519AE4dCebFFC674306C818Dae7dD2aFE7453578` | `0x831570a1c17eb2bde236fdc63bfd357347ef76dd3dbc7d076a25fdb260b88f80` |
+| Public quoter | `0x81107C379aFA15bCAf03017b08BD91E159029160` | `0x16eb188921e75d4d1633200ac934b9105d34fb07bfcfc84b67804a76277b774b` |
+| Public router | `0x9021e12D41aB83eeAf6950eE8A62DC835A69802D` | `0xca9ca9711f776712f0054ad3a814a1299c3ad8421d83d3216f8ede3c68d24e12` |
+
+The confidential factory bootstrap adapter was bound to the launchpad migrator
+in transaction
+`0xc3616675cc665369ee5ea83a0351162eef837cf76c008f594366f138db2f77d7`.
+The fee vault's immutable beneficiary is
+`0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff`. This deployment created no pools,
+onboarded no wallet, and moved no user or private-token assets.
+
 ## Residual assumptions and remaining gates
 
 - COTI MPC precompile semantics remain an external trust boundary and must be

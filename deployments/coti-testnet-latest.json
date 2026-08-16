@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "network": "cotiTestnet",
+  "chainId": "7082400",
+  "sourceCommit": "206840f986162f02fadd29211fb0b5e39ce7a5b1",
+  "compiler": {
+    "solc": "0.8.28",
+    "evmVersion": "paris",
+    "confidentialViaIR": true,
+    "publicViaIR": false,
+    "metadataBytecodeHash": "none"
+  },
+  "contracts": {
+    "feeVault": {
+      "address": "0x28968cc36779Dfb5Fc49BFa7944279C193f39981",
+      "beneficiary": "0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff",
+      "runtimeCodehash": "0xe179df27200c5a64b0d7e8f6b69744f081453644506dc644f75706306aa58fba",
+      "deploymentTx": "0x9c87db4eb337f88d9cfc6571a3fc6355b75664b0e98f1b1ca5c06f6a642f2086",
+      "gasUsed": "447428"
+    },
+    "confidentialFactory": {
+      "address": "0x999dC50F453D00866e038A9465D59FebF46FaBbc",
+      "reviewedPrivateTokens": [
+        "0x6cE8907414986E73De9e7D28d62Ea2080F8E88E1",
+        "0x37f78dcCd15876F74391EF1F01b76557D9FF1dea"
+      ],
+      "approvedPrivateTokenCodehashes": [
+        "0xcd4b4b3329cd64190c49fdfbe7feb3b2a81cfcb50c36f50d4d603c76906589b2",
+        "0xf5ce6496ad15db187e8fe1516468c34ed3740a2aab043fcec60be7b05a4a161c"
+      ],
+      "runtimeCodehash": "0x5459507e20576e3478b0ccfe4baa6797fa35895c328b8de1394bdee9a280042f",
+      "deploymentTx": "0x6efd9913dbb8bfea2d7415136a6be73546c0c061dc9d285b10364811e6479710",
+      "gasUsed": "4468308"
+    },
+    "confidentialLpTokenFactory": {
+      "address": "0x26e3c623ff29F09C2E1D7eec930292Cc31EC28E3",
+      "runtimeCodehash": "0xdf1aa0ea626d3424b6e7957ccb9fb437d7808779ae257637a3d70426d9fa8a27",
+      "deploymentTx": "0x83a4fd8632007e9c9a07eeb72f9412790ee61eadcefe652728d38f7a29a0e1b5",
+      "gasUsed": "2896003"
+    },
+    "launchpadMigrator": {
+      "address": "0x00A48a4a334E994112f26f5037caE9541834583b",
+      "runtimeCodehash": "0xb7110ba6ad72b380fc55ce32aed8a5d6c3ac020677b6caf11cb9670cdd21299a",
+      "deploymentTx": "0x05bbd7c06ead1840be3339a8bab09321c42500dca91da10c28e98c9c0609fb75",
+      "gasUsed": "1837498"
+    },
+    "bootstrapAdapterBinding": {
+      "address": "0x00A48a4a334E994112f26f5037caE9541834583b",
+      "transaction": "0xc3616675cc665369ee5ea83a0351162eef837cf76c008f594366f138db2f77d7",
+      "gasUsed": "47759"
+    },
+    "publicFactory": {
+      "address": "0x519AE4dCebFFC674306C818Dae7dD2aFE7453578",
+      "runtimeCodehash": "0x9b360c3e739f6b2b64e0c7799401490c8ecdde35b689472bff698fec46d62e51",
+      "deploymentTx": "0x831570a1c17eb2bde236fdc63bfd357347ef76dd3dbc7d076a25fdb260b88f80",
+      "gasUsed": "2950881"
+    },
+    "publicQuoter": {
+      "address": "0x81107C379aFA15bCAf03017b08BD91E159029160",
+      "runtimeCodehash": "0xe57d4a8201483e288082d85a1f986664e20a3d9b9aa811dde30d13bb5efdbef0",
+      "deploymentTx": "0x16eb188921e75d4d1633200ac934b9105d34fb07bfcfc84b67804a76277b774b",
+      "gasUsed": "193643"
+    },
+    "publicRouter": {
+      "address": "0x9021e12D41aB83eeAf6950eE8A62DC835A69802D",
+      "runtimeCodehash": "0x455c6d63ee514ea02b1809d29e5aa1a7522ea83f83364395c952a71d27230c8d",
+      "deploymentTx": "0xca9ca9711f776712f0054ad3a814a1299c3ad8421d83d3216f8ede3c68d24e12",
+      "gasUsed": "630349"
+    }
+  },
+  "feePolicy": {
+    "approvedTotalFeeBps": [
+      5,
+      30,
+      100
+    ],
+    "protocolFeeShare": {
+      "numerator": 1,
+      "denominator": 6
+    },
+    "confidentialCollection": {
+      "minimumPoolSwaps": 8,
+      "minimumPoolDelaySeconds": 3600,
+      "minimumVaultSweepDelaySeconds": 86400
+    }
+  },
+  "limitations": [
+    "testnet-only",
+    "not externally audited",
+    "no mainnet deployment",
+    "public and confidential modes are separate canonical registries",
+    "no PoD synchronous pool adapter"
+  ]
+}

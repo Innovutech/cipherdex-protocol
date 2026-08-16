@@ -22,6 +22,13 @@ identity and immutable configuration only.
 See `docs/INTEGRATION_EXAMPLE.md` for discovery, current routing gates, public
 execution and launchpad indexing boundaries.
 
+The current authoritative COTI testnet addresses, deployment transactions,
+runtime codehashes, compiler settings and exact source commit are published once
+in `deployments/coti-testnet-latest.json`. Integrations should pin and validate
+that manifest's factory, fee vault and protocol version rather than copying
+address constants into multiple SDK modules. The manifest is testnet-only and is
+not a mainnet registry.
+
 Private amounts, reserves, balances and LP positions are not represented in the
 discovery schema. Use the official COTI SDK and the caller's AES key for
 caller-specific ciphertext preparation and decryption. Factory-created

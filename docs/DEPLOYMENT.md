@@ -36,13 +36,15 @@ is no mainnet deployment script or mainnet network entry.
    adapter binding succeeds. The script fails before connecting or sending a
    transaction unless the Git worktree is clean and `HEAD` is a full commit.
 9. Set `COTI_DEPLOYMENT_RECORD=deployments/coti-testnet-latest.json` to have the
-   script write an ignored JSON record containing public addresses, deployment
+   script write a locally ignored JSON record containing public addresses, deployment
    transaction hashes, gas values, compiler settings, source commit and explicit
    limitations. Every deployed contract also records its observed runtime
    codehash. The path is restricted to `deployments/*.json`. Do not commit
    private keys or private ciphertexts. The public record includes the reviewed
    token addresses and approved runtime codehashes so integrations can audit the
-   factory boundary.
+   factory boundary. A reviewed, sanitized authoritative testnet record may be
+   force-added to source control so SDK consumers share one provenance record;
+   never add an unreviewed generated record.
 
 The deploy script prints only public contract configuration. It does not onboard
 accounts, handle AES keys, create a pool, or manufacture encrypted inputs. Use the
