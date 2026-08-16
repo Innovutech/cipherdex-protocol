@@ -19,10 +19,13 @@
 - launchpad bootstrap changing an initialized pool or bypassing the factory
   bootstrapper boundary;
 - launchpad price-bound checks bypassing the private normalized-price interval.
-- manual or competing-creator pools preempting a creator's launchpad migration
-  slot;
+- launchpad bootstrap redirecting assets into a creator-specific parallel pool;
 - unmanaged private-token donations changing initial share or launchpad price
   state.
+- pre-funding a deterministic confidential pool address blocking launchpad
+  initialization; bootstrap uses transaction-scoped adapter escrow and exact
+  pool balance deltas rather than requiring the raw pool balance to equal the
+  accounting deposit;
 - unmanaged public-token donations permanently blocking initialization;
 - public swap/router/withdrawal minimums being satisfied by a nominal transfer
   while a taxed recipient receives less;
@@ -35,22 +38,32 @@
 
 - MEV based on public participant, direction, timing or encrypted transaction
   ciphertext metadata;
-- endpoint/RPC observers correlating private `eth_call` requests;
-- malicious or non-conforming PrivateERC20 tokens;
+- endpoint/RPC observers correlating private transactions and ciphertexts;
+- defects or compromise in a reviewed PrivateERC20 implementation admitted by
+  the immutable factory codehash policy. Canonical pools reject other runtime
+  codehashes, verify the private-token interface and enforce exact encrypted
+  balance deltas, but those checks cannot prove the economics of an approved
+  implementation. Mutable proxy and metamorphic implementations must not be
+  approved;
 - compromise or misuse of COTI MPC/precompile/operator infrastructure;
 - hidden recipient identity under the standard token event/interface;
 - asynchronous PoD callback failures or cross-chain settlement;
 - wallet/UI leakage before a transaction is encrypted;
-- reserve-ratio and depth inference by callers using repeated encrypted quotes.
+- gasless confidential exact quoting on COTI runtimes that reject fresh MPC
+  execution under `eth_call`; the transaction fallback adds gas, latency and
+  public caller/pool/direction/timing metadata;
 - active differencing of low-volume confidential fee batches by a beneficiary or
   adversary that already knows most constituent trades; count/time batching and
   the vault sweep cadence reduce routine per-swap disclosure but cannot create
   unknown traffic;
-- confidentiality or retention behavior of an independently operated quote
-  service after it decrypts its own requested results;
+- quote-identity key compromise, request logging or traffic analysis; the quote
+  identity is non-custodial but learns its own requested outputs;
 - whether a launchpad's encrypted allowances are economically scoped to its
   migration transaction; a malicious launchpad can still spend whatever allowance
   a creator explicitly grants it.
+- launch availability after another participant initializes the canonical pool;
+  migration fails closed before MPC work or token movement, but the permissionless
+  factory does not reserve a pair for a launch creator or create an alternate pool.
 
 ## Required review before release
 
@@ -59,7 +72,6 @@ callbacks, gas griefing, pool initialization, LP rounding, event linkability,
 precompile behavior under `eth_call`, and testnet-to-mainnet compiler/deployment
 differences. No external audit is claimed.
 
-Patched execution contracts report protocol version 2; the launchpad migrator
-reports version 3. Legacy version-1 contracts are immutable and are not made safe
-by updating this repository. Integrations must bind execution to the new factory
-addresses and versions. See `SECURITY_UPGRADE_V2.md`.
+Execution contracts report protocol version 2; the launchpad migrator reports
+version 3. Integrations must bind execution to the configured factory, fee vault,
+protocol version and canonical pool mapping.

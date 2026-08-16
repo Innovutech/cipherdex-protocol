@@ -15,9 +15,9 @@ import "./interfaces/IConfidentialLaunchpadMigrator.sol";
  *
  * The creator signs every encrypted input for this contract and its `migrate`
  * selector. The migrator validates those inputs locally, pulls the exact
- * encrypted amounts through the official `transferFromGT` allowance path, and
- * asks the factory to create and initialize a new pool in the same transaction.
- * A failed pool initialization reverts the transfers as well.
+ * encrypted amounts into transaction-scoped escrow, grants the canonical pool
+ * exact encrypted allowances, and initializes it in the same transaction. A
+ * failed pool initialization reverts every transfer and approval.
  *
  * This contract does not claim hidden recipients or hidden token identities.
  * It emits only creator/pool identity; amounts, price bounds and LP shares stay
@@ -42,11 +42,11 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
 
     error InvalidFactory();
     error InvalidTokenPair();
-    error PoolAlreadyInitialized();
     error DeadlineExpired();
     error InputAlreadyConsumed();
     error Reentrancy();
     error InvalidAuthorization();
+    error PrivateTransferAmountMismatch();
 
     modifier nonReentrant() {
         if (reentrancyState != 1) revert Reentrancy();
@@ -56,14 +56,14 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
     }
 
     constructor(address factory_) {
-        if (factory_ == address(0)) revert InvalidFactory();
+        if (factory_.code.length == 0) revert InvalidFactory();
         factory = factory_;
         deploymentChainId = block.chainid;
         deploymentDomainSeparator = _buildDomainSeparator(block.chainid);
     }
 
     /**
-     * @notice Create a one-shot creator-scoped factory pool and seed it atomically.
+     * @notice Create or resolve the canonical factory pool and seed it atomically.
      *
      * Inputs use the pool's canonical order after address sorting: `amount0`
      * belongs to the lower token address and `amount1` to the higher address.
@@ -118,39 +118,44 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             )
         ) revert InvalidAuthorization();
 
+        (address token0, address token1, uint8 decimals0, uint8 decimals1) = request.tokenA < request.tokenB
+            ? (request.tokenA, request.tokenB, request.decimalsA, request.decimalsB)
+            : (request.tokenB, request.tokenA, request.decimalsB, request.decimalsA);
+        IConfidentialCPMMFactory factoryContract = IConfidentialCPMMFactory(factory);
+        // Resolve the canonical market before invoking MPC. An initialized or
+        // maliciously pre-seeded pool therefore fails closed without consuming
+        // encrypted inputs or touching token allowances. If a new pool is
+        // created here, every later failure reverts that creation atomically.
+        pool = factoryContract.getOrCreatePoolForBootstrap(
+            token0,
+            token1,
+            decimals0,
+            decimals1,
+            request.feeBps
+        );
+
         gtUint256 gtAmount0 = _validateAndConsume(request.amount0, 0);
         gtUint256 gtAmount1 = _validateAndConsume(request.amount1, 1);
         gtUint256 gtMinShares = _validateAndConsume(request.minShares, 2);
         gtUint256 gtMinPrice = _validateAndConsume(request.minPriceX18, 3);
         gtUint256 gtMaxPrice = _validateAndConsume(request.maxPriceX18, 4);
 
-        (address token0, address token1, uint8 decimals0, uint8 decimals1) = request.tokenA < request.tokenB
-            ? (request.tokenA, request.tokenB, request.decimalsA, request.decimalsB)
-            : (request.tokenB, request.tokenA, request.decimalsB, request.decimalsA);
-        IConfidentialCPMMFactory factoryContract = IConfidentialCPMMFactory(factory);
-        bytes32 key = factoryContract.launchPoolKey(
+        // Pull into atomic escrow using the creator's explicit encrypted
+        // allowances. The pool then pulls the same values using one-time exact
+        // approvals, allowing it to verify transfer deltas even when its
+        // deterministic address received an unsolicited balance beforehand.
+        gtUint256 startingBalance0 = _pullPrivateExact(
+            IPrivateERC20(token0),
             msg.sender,
-            token0,
-            token1,
-            decimals0,
-            decimals1,
-            request.feeBps
+            gtAmount0
         );
-        if (factoryContract.getLaunchPool(key) != address(0)) revert PoolAlreadyInitialized();
-        pool = factoryContract.createLaunchpadPool(
+        gtUint256 startingBalance1 = _pullPrivateExact(
+            IPrivateERC20(token1),
             msg.sender,
-            token0,
-            token1,
-            decimals0,
-            decimals1,
-            request.feeBps
+            gtAmount1
         );
-
-        // The signed values were validated for this migrator and selector;
-        // transferFromGT only consumes the resulting MPC values under the
-        // explicit encrypted allowances granted to this migrator.
-        IPrivateERC20(token0).transferFromGT(msg.sender, pool, gtAmount0);
-        IPrivateERC20(token1).transferFromGT(msg.sender, pool, gtAmount1);
+        IPrivateERC20(token0).approveGT(pool, gtAmount0);
+        IPrivateERC20(token1).approveGT(pool, gtAmount1);
 
         if (withDisposition) {
             (mintedShares, lockId) = factoryContract.bootstrapPoolWithDisposition(
@@ -175,6 +180,8 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
                 gtUint256.unwrap(gtMaxPrice)
             );
         }
+        _requirePrivateBalance(IPrivateERC20(token0), startingBalance0);
+        _requirePrivateBalance(IPrivateERC20(token1), startingBalance1);
         emit LaunchpadMigration(msg.sender, pool);
         if (withDisposition) {
             emit LaunchpadLockDisposition(msg.sender, pool, disposition, lockId, unlockTime);
@@ -197,6 +204,30 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
         );
         (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(digest, request.authorization);
         return error == ECDSA.RecoverError.NoError && recovered == creator;
+    }
+
+    function _pullPrivateExact(
+        IPrivateERC20 token,
+        address from,
+        gtUint256 amount
+    ) internal returns (gtUint256 beforeBalance) {
+        beforeBalance = token.balanceOf();
+        token.transferFromGT(from, address(this), amount);
+        (gtBool overflow, gtUint256 expectedBalance) =
+            MpcCore.checkedAddWithOverflowBit(beforeBalance, amount);
+        if (
+            MpcCore.decrypt(overflow) ||
+            !MpcCore.decrypt(MpcCore.eq(token.balanceOf(), expectedBalance))
+        ) revert PrivateTransferAmountMismatch();
+    }
+
+    function _requirePrivateBalance(
+        IPrivateERC20 token,
+        gtUint256 expectedBalance
+    ) internal {
+        if (!MpcCore.decrypt(MpcCore.eq(token.balanceOf(), expectedBalance))) {
+            revert PrivateTransferAmountMismatch();
+        }
     }
 
     function _migrationAuthorizationDigest(

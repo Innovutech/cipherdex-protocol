@@ -266,6 +266,20 @@ const config: HardhatUserConfig = {
           },
         },
       },
+      "contracts/mocks/MpcQuoteCallProbe.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 208,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
     },
   },
   networks: {

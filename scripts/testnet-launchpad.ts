@@ -11,6 +11,8 @@ import {
   IT_UINT256,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
+import { decryptPrivateValue256 } from "./coti-testnet-values";
+import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 
 const MIGRATOR_ABI = [
   `function migrate((address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,${IT_UINT256} amountA,${IT_UINT256} amountB,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,uint64 deadline,bytes authorization) request) returns (address pool,${CT_UINT256} shares)`,
@@ -20,6 +22,7 @@ const MIGRATOR_ABI = [
 ];
 
 const FEE_VAULT_DEPLOY_GAS_LIMIT = 1_000_000n;
+const PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const LAUNCHPAD_MIGRATOR_DEPLOY_GAS_LIMIT = 2_500_000n;
 const LAUNCHPAD_ADAPTER_BIND_GAS_LIMIT = 250_000n;
@@ -79,6 +82,15 @@ const optionalBigInt = (name: string, fallback: bigint): bigint => {
 
 const defaultTestAmount = (decimals: number): bigint =>
   decimals >= 3 ? 10n ** BigInt(decimals - 3) : 1n;
+
+async function readPrivateBalance(
+  token: Contract,
+  owner: string,
+  wallet: CotiWallet,
+): Promise<bigint> {
+  const ciphertext = await token.balanceOf.staticCall(owner);
+  return decryptPrivateValue256(wallet, ciphertext);
+}
 
 const optionalDisposition = (): number | undefined => {
   const value = process.env.COTI_LAUNCHPAD_DISPOSITION?.trim();
@@ -143,6 +155,10 @@ async function main(): Promise<void> {
 
   const tokenA = requiredAddress("COTI_TOKEN0");
   const tokenB = requiredAddress("COTI_TOKEN1");
+  const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
+    hardhatEthers.provider,
+    [tokenA, tokenB],
+  );
   const decimalsA = requiredUInt("COTI_TOKEN0_DECIMALS");
   const decimalsB = requiredUInt("COTI_TOKEN1_DECIMALS");
   const feeBps = requiredUInt("COTI_LAUNCHPAD_FEE_BPS", 30);
@@ -195,10 +211,17 @@ async function main(): Promise<void> {
     await hardhatEthers.getContractFactory("CipherDEXFeeVault", deployer)
   ).deploy(walletAddress, { gasLimit: FEE_VAULT_DEPLOY_GAS_LIMIT });
   await feeVault.waitForDeployment();
+  const lpTokenFactory = await (
+    await hardhatEthers.getContractFactory("PrivateLPTokenFactory", deployer)
+  ).deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT });
+  await lpTokenFactory.waitForDeployment();
   const factoryFactory = await hardhatEthers.getContractFactory("ConfidentialCPMMFactory", deployer);
-  const factory = await factoryFactory.deploy(await feeVault.getAddress(), {
-    gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT,
-  });
+  const factory = await factoryFactory.deploy(
+    await feeVault.getAddress(),
+    await lpTokenFactory.getAddress(),
+    privateTokenCodehashes,
+    { gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT },
+  );
   await factory.waitForDeployment();
   const factoryAddress = await factory.getAddress();
 
@@ -215,14 +238,6 @@ async function main(): Promise<void> {
     }),
   );
 
-async function readPrivateBalance(
-  token: Contract,
-  owner: string,
-  wallet: CotiWallet,
-): Promise<bigint> {
-  const ciphertext = await token.balanceOf.staticCall(owner);
-  return wallet.decryptValue256(ciphertext);
-}
   if ((await factory.bootstrapAdapter()).toLowerCase() !== migratorAddress.toLowerCase()) {
     throw new Error("factory did not bind the launchpad adapter");
   }
@@ -233,11 +248,65 @@ async function readPrivateBalance(
   const token1 = new Contract(canonicalToken1, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const approveSelector0 = token0.interface.getFunction("approve")?.selector;
   const approveSelector1 = token1.interface.getFunction("approve")?.selector;
+  const transferSelector0 = token0.interface.getFunction("transfer")?.selector;
   const migrator = new Contract(migratorAddress, MIGRATOR_ABI, wallet);
   const migrateSelector = migrator.interface
     .getFunction(disposition === undefined ? "migrate" : "migrateWithDisposition")?.selector;
-  if (!approveSelector0 || !approveSelector1 || !migrateSelector) {
+  if (!approveSelector0 || !approveSelector1 || !transferSelector0 || !migrateSelector) {
     throw new Error("required selector unavailable");
+  }
+
+  const canonicalPoolKey = await factory.poolKey(
+    canonicalToken0,
+    canonicalToken1,
+    canonicalDecimals0,
+    canonicalDecimals1,
+    feeBps,
+  );
+  if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
+    throw new Error("launchpad proof requires an empty canonical pool slot");
+  }
+  const poolFactory = await hardhatEthers.getContractFactory("ConfidentialCPMM", deployer);
+  const poolDeployment = await poolFactory.getDeployTransaction(
+    canonicalToken0,
+    canonicalToken1,
+    canonicalDecimals0,
+    canonicalDecimals1,
+    feeBps,
+    await feeVault.getAddress(),
+  );
+  if (!poolDeployment.data) throw new Error("canonical pool init code unavailable");
+  const predictedPoolAddress = ethers.getCreate2Address(
+    factoryAddress,
+    canonicalPoolKey,
+    ethers.keccak256(poolDeployment.data),
+  );
+  if (await hardhatEthers.provider.getCode(predictedPoolAddress) !== "0x") {
+    throw new Error("predicted canonical pool address is already deployed");
+  }
+
+  const prefundAmount = 1n;
+  const beforePrefund = await readPrivateBalance(token0, walletAddress, wallet);
+  if (beforePrefund < amount0 + prefundAmount) {
+    throw new Error("token0 balance cannot cover launchpad amount and pre-fund proof");
+  }
+  const prefundInput = await wallet.encryptValue256(
+    prefundAmount,
+    canonicalToken0,
+    transferSelector0,
+  );
+  stage = "deterministic pool pre-fund proof";
+  await submit(stage, token0.transfer(predictedPoolAddress, prefundInput, {
+    gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+  }));
+  if ((await readPrivateBalance(token0, walletAddress, wallet)) !== beforePrefund - prefundAmount) {
+    throw new Error("deterministic pool pre-fund did not move the exact private amount");
+  }
+  if (
+    await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress ||
+    await hardhatEthers.provider.getCode(predictedPoolAddress) !== "0x"
+  ) {
+    throw new Error("pre-fund unexpectedly changed canonical pool discovery or deployment");
   }
 
   const zeroApproval0 = await wallet.encryptValue256(0n, canonicalToken0, approveSelector0);
@@ -369,16 +438,8 @@ async function readPrivateBalance(
     deadline,
     rejectedAuthorization,
   ];
-  const launchPoolKey = await factory.launchPoolKey(
-    wallet.address,
-    canonicalToken0,
-    canonicalToken1,
-    canonicalDecimals0,
-    canonicalDecimals1,
-    feeBps,
-  );
-  if (await factory.getLaunchPool(launchPoolKey) !== ethers.ZeroAddress) {
-    throw new Error("launchpad rollback probe requires an empty creator-scoped pool slot");
+  if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
+    throw new Error("launchpad rollback probe requires an empty canonical pool slot");
   }
   stage = "rollback probe balance snapshot";
   const beforeRejected0 = await readPrivateBalance(token0, walletAddress, wallet);
@@ -401,8 +462,8 @@ async function readPrivateBalance(
     rejectedBoundRolledBack = true;
   }
   if (!rejectedBoundRolledBack) throw new Error("launchpad accepted an impossible price bound");
-  if (await factory.getLaunchPool(launchPoolKey) !== ethers.ZeroAddress) {
-    throw new Error("failed launchpad migration left a creator-scoped pool behind");
+  if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
+    throw new Error("failed launchpad migration left a canonical pool behind");
   }
   if (
     (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeRejected0 ||
@@ -449,6 +510,9 @@ async function readPrivateBalance(
     }
   }
   if (!poolAddress || !ethers.isAddress(poolAddress)) throw new Error("launchpad pool event missing");
+  if (poolAddress.toLowerCase() !== predictedPoolAddress.toLowerCase()) {
+    throw new Error("launchpad did not deploy the predicted canonical pool");
+  }
   if (disposition === undefined) {
     if (lockDisposition) throw new Error("unexpected launchpad lock disposition event");
   } else {
@@ -483,7 +547,7 @@ async function readPrivateBalance(
     throw new Error("launchpad pool did not inherit the v1 protocol fee split");
   }
   const shares = await pool.myShares.staticCall();
-  const decryptedShares = await wallet.decryptValue256(shares);
+  const decryptedShares = await decryptPrivateValue256(wallet, shares);
   if (disposition === undefined || disposition === 0) {
     if (decryptedShares <= 0n) throw new Error("creator-held launchpad shares were not minted");
   } else {
@@ -527,8 +591,8 @@ async function readPrivateBalance(
   ) {
     throw new Error("rejected launchpad replay changed private token balances");
   }
-  if ((await factory.getLaunchPool(launchPoolKey)).toLowerCase() !== poolAddress.toLowerCase()) {
-    throw new Error("launchpad replay changed creator-scoped pool discovery");
+  if ((await factory.getPool(canonicalPoolKey)).toLowerCase() !== poolAddress.toLowerCase()) {
+    throw new Error("launchpad replay changed canonical pool discovery");
   }
   console.log(`launchpad pool: ${poolAddress}`);
   console.log("COTI launchpad migration completed without printing private values.");

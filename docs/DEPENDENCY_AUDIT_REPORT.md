@@ -1,6 +1,6 @@
 # Dependency Audit Report
 
-Date: 2026-08-14
+Date: 2026-08-16
 
 ## Baseline
 
@@ -68,4 +68,3 @@ No broad override or advisory suppression was added. A future Hardhat 3 migratio
 must be reviewed separately because it changes the configuration/plugin model and
 would affect the build toolchain. Production deployment remains blocked if the
 production-only audit reports a new critical or high advisory.
-

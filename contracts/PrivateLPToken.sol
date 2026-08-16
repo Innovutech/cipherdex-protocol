@@ -18,6 +18,7 @@ contract PrivateLPToken is PrivateERC20 {
 
     error InvalidPool();
     error PoolOnly();
+    error HolderBurnDisabled();
 
     constructor(address pool_)
         PrivateERC20("CipherDEX Private LP Share", "cLP")
@@ -43,5 +44,17 @@ contract PrivateLPToken is PrivateERC20 {
     {
         if (msg.sender != pool) revert PoolOnly();
         _burn(account, amount);
+    }
+
+    function burn(uint256) public pure override {
+        revert HolderBurnDisabled();
+    }
+
+    function burn(itUint256 calldata) public pure override {
+        revert HolderBurnDisabled();
+    }
+
+    function burnGt(gtUint256) public pure override {
+        revert HolderBurnDisabled();
     }
 }

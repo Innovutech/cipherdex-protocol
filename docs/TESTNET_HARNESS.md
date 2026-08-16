@@ -1,149 +1,121 @@
-# COTI Testnet Harness Requirements
+# COTI Testnet Harness
 
-The integration test is intentionally gated until real COTI testnet inputs are
-available. It must use the official COTI SDK/COTI Ethers package and an onboarded
-test account; it must not replace the MPC precompile with a plaintext mock.
+The testnet harness uses the pinned official COTI SDK and real MPC precompiles.
+It never substitutes plaintext mocks for network evidence. Test identities must
+be disposable and explicitly funded; no funded-network script runs in CI.
 
-The harness must:
-
-- prepare authenticated `itUint256` values with the exact pool address and function
-  selector;
-- approve the pool with the official private approval flow;
-- add arbitrary-ratio liquidity and decrypt only user-specific ciphertexts locally;
-- add a second LP proportionally to the same canonical pool without donating
-  surplus input;
-- verify that current COTI testnet static simulation rejects MPC execution and
-  use the encrypted transactional quote-result transport;
-- execute both swap directions with a private minimum output and a short
-  explicit deadline;
-- verify that each successful direction increments only its encrypted
-  protocol-fee batch and that collection is rejected before the immutable
-  threshold;
-- exercise failed slippage and replayed encrypted-input paths;
-- remove liquidity and check the full-exit path;
-- record gas/latency without printing amounts, AES keys, ciphertexts or signatures.
-
-The harness should be enabled only with explicit environment variables and should
-never run from CI against a funded wallet by default.
+The scripts never print private balances, decrypted values, AES keys,
+ciphertexts, signatures or raw RPC payloads.
 
 ## Preflight
 
-Run the non-mutating configuration check before deployment or the scenario:
+Run the non-mutating network and identity gate:
 
 ```text
 npm run testnet:preflight
 ```
 
-This is a no-compile configuration and network gate, so missing environment
-variables fail immediately without compiling the MPC contract graph. It verifies
-the COTI testnet chain, native gas, token contract code and decimals, and the
-caller-encrypted `PrivateERC20.balanceOf(address)` read/decrypt path for the
-primary LP/trader and funded second LP. It also validates a distinct,
-non-custodial quote-service identity without requiring that identity to hold
-either token. Both LP accounts must have gas; the quote identity performs no
-transaction. It does not submit transactions and does not print private
-balances, ciphertexts, AES material or raw RPC payloads.
-`publicAmountsEnabled` is reported for awareness only; the protocol uses the
-encrypted token methods regardless of that separate token setting.
+It verifies the configured chain, native gas, token contract code and decimals,
+and caller-encrypted `PrivateERC20.balanceOf(address)` read/decrypt behavior for
+the two LP identities. It also validates the separate MPC-call probe identity.
+Preflight submits no transaction.
 
-The Hardhat COTI testnet network uses `COTI_TESTNET_GAS_LIMIT` (default
-`30000000`) as an explicit transaction cap. This avoids an unsupported
-pending-block lookup observed during Hardhat transaction population. The cap
-is below the measured testnet block limit (`120000000`) and above the largest
-locally measured deployment (`6999610` gas for the confidential factory).
-Receipts still charge and report only actual gas consumed.
+The Hardhat network uses `COTI_TESTNET_GAS_LIMIT` (default `30000000`) as an
+explicit transaction cap. Receipts charge only actual gas used.
 
-## Full scenario runner
+## MPC `eth_call` probe
 
-After the isolated quote/swap harness is reviewed, run the full scenario with:
+Run the isolated runtime capability test:
+
+```text
+npm run testnet:quote-call-probe
+```
+
+The probe first mines a control transaction, then independently tests a stored
+user ciphertext read, raw `SetPublic`, raw stored-ciphertext `OnBoard`,
+authenticated validation, add, multiply/divide, compare/mux, user offboarding,
+and complete public-input and encrypted-input quote paths. One full public-input
+path uses deployment-time encrypted zero, one, denominator and fee constants to
+remove `SetPublic` from quote execution. The storage-only read works; raw
+`OnBoard` and every complete path requiring fresh MPC execution fail under
+`eth_call`. The same MPC control succeeds in a transaction.
+
+This matrix is the evidence for retaining the encrypted transaction/event quote
+fallback. It must be rerun when the RPC/runtime changes; a different failure may
+not be normalized to this known boundary.
+
+## Full confidential scenario
+
+Run:
 
 ```text
 npm run testnet:scenario
 ```
 
-When `COTI_POOL` is unset, it creates a permissionless factory plus two canonical
-pools for the configured fee tiers. It seeds both pools at independently chosen
-ratios, adds a distinct second LP to the primary pool, and verifies from that
-LP's local decrypted balances that only the rounded-up proportional deposits
-were accepted. A dedicated quote identity creates fresh inputs for both pools,
-submits caller-encrypted quote requests, decrypts the results only in memory, and
-selects the best candidate through the SDK helper. The primary wallet then
-creates fresh authenticated inputs and swaps directly against that selected
-pool. The quote identity never signs a transaction or receives user funds.
+Leave `COTI_POOL` and `COTI_QUOTE_POOL` unset for the reproducible gate. The
+runner deploys a fresh fee vault and confidential factory, creates two canonical
+fee-tier pools for the same pair, and initializes both at independently supplied
+ratios. The second LP joins the primary pool proportionally, and local decrypted
+balance checks prove that only rounded-up proportional deposits were accepted.
 
-The scenario also executes both swap directions, failed slippage, encrypted-input
-replay rejection, a complete personal exit for the second LP, a timed lock and
-unlock, a permanent lock, and removal of the primary LP's remaining unlocked
-shares. It logs only public addresses, selected fee tier, transaction hashes,
-gas, and latency. It does not print any amount, decrypted quote, ciphertext,
-signature, AES key, or raw RPC error.
+The scenario uses a separate quote EOA/AES identity to submit one encrypted quote
+transaction per canonical fee-tier candidate, verify discovery provenance,
+decrypt its own results and select the largest output. The user then creates
+fresh pool-bound inputs and executes directly. No decrypted value is printed or
+persisted.
 
-The scenario requires the three private-key/AES-key pairs documented in
-`.env.example`, both fee tiers, primary and quote-candidate bootstrap amounts,
-second-LP offered amounts, and both swap amounts. All amount variables are in
-the canonical sorted `token0`/`token1` order. The primary wallet must fund both
-fresh candidate pools plus the swap inputs; the second LP must fund its own
-offered deposits. Use disposable COTI testnet accounts only.
+The runner exercises:
 
-For the complete reproducible gate, leave `COTI_POOL` and `COTI_QUOTE_POOL`
-unset so both candidates are fresh and arbitrary-ratio initialization can be
-verified exactly. To exercise already-deployed candidates, set both addresses;
-also set `COTI_FACTORY` and `COTI_FEE_VAULT` to independently trusted v2
-deployment addresses. The runner pins both candidates to that exact factory,
-canonical mapping, immutable vault and protocol version. It cannot reconstruct
-historical reserves or prove their original initialization.
+- discovery provenance and best-output selection across canonical fee tiers;
+- direct encrypted swaps in both directions;
+- expiry, slippage and encrypted-input replay rejection;
+- per-input-token protocol-fee batch accounting and premature collection
+  rejection;
+- a second-LP full personal exit;
+- timed and permanent LP locks;
+- the primary LP's remaining unlocked exit;
+- a true full exit from the independent second fee-tier pool.
 
-## Launchpad migration runner
+The primary and second LP identities need private token balances and native gas.
+The separate quote identity needs native gas for the diagnostic quote
+transactions but never receives user assets or signs settlement. Raw swap inputs
+must be large enough for the one-sixth protocol share to remain nonzero after
+integer rounding. The runner validates this before any RPC or deployment work
+and reports the exact minimum for every configured fee tier.
 
-Run the atomic migration proof separately with:
+## Launchpad bootstrap
+
+Run the atomic canonical bootstrap proof separately:
 
 ```text
 npm run testnet:launchpad
 ```
 
-It deploys a fresh factory and migrator, creates exact encrypted allowances for
-the migrator, derives or accepts encrypted normalized price bounds, and executes
-the atomic create/select, pull and bootstrap transaction. Before the valid
-migration it submits a separately authenticated request for the same
-logical amounts with an impossible encrypted price interval, then proves that
-the private token pulls and factory pool creation rolled back. Separate probe
-ciphertexts keep the successful path independent from precompile replay
-semantics. After success it replays the exact successful request and proves no
-additional token movement or pool-discovery change occurred.
+It deploys a fresh factory and migrator, sends one encrypted raw token unit to
+the predicted CREATE2 pool address before deployment, creates exact encrypted
+creator allowances and normalized price bounds, then executes canonical pool
+resolution, migrator escrow, pool allowances, exact pool pulls and bootstrap
+atomically. The valid migration must deploy at that pre-funded address, proving
+an unsolicited raw balance cannot block bootstrap or change canonical discovery.
+An impossible price interval first proves that token pulls and new canonical
+pool creation roll back. A valid migration then succeeds, and replay proves
+there is no additional movement or discovery change.
 
-By default the script uses the legacy creator-held call. Set
-`COTI_LAUNCHPAD_DISPOSITION=0` to exercise explicit creator-held disposition,
-`=1` with a future absolute `COTI_LAUNCHPAD_UNLOCK_TIME` for a timed lock, or `=2`
-for a permanent lock. Run all three explicit values against separate fresh
-deployments for the complete disposition gate. The script verifies pool/lock
-state and decrypts the caller-specific share result locally without printing it.
-It uses the same token, decimal, primary private-key and AES variables as the
-full scenario. Launchpad amounts are independent: set raw-unit
-`COTI_LAUNCHPAD_AMOUNT0` and `COTI_LAUNCHPAD_AMOUNT1`, or leave them unset for
-the conservative default of 0.001 token per side. The runner does not reuse the
-larger general pool-scenario liquidity amounts.
-
-The two runners are intentionally separate: use `testnet:launchpad` for the
-launchpad boundary, then `testnet:scenario` with a new disposable pool for swaps,
-liquidity exit and locks. Never reuse a funded production account or commit the
-environment file.
+Set `COTI_LAUNCHPAD_DISPOSITION=0` for creator-held shares, `=1` with a future
+`COTI_LAUNCHPAD_UNLOCK_TIME` for a timed lock, or `=2` for a permanent lock. Run
+the three modes against separate fresh deployments for the complete gate.
 
 ## Mature confidential fee collection
 
 Set `COTI_FEE_COLLECTION_POOL` to a disposable fee-enabled pool controlled by
-the primary test identity, then run:
+the primary identity, then run:
 
 ```text
 npm run testnet:fee-collection
 ```
 
-The runner uses fresh encrypted inputs to bring each token-side batch to eight
-successful swaps. Defaults are 0.1 token per side for initialization and 0.01
-token per swap; raw-unit overrides are available through the `COTI_FEE_TEST_*`
-variables. If the immutable one-hour collection window has not elapsed, the
-runner prints only the public `readyAt` timestamp and exits successfully. Rerun
-after that time. It then performs a full LP exit before collecting both encrypted
-fee aggregates to the pool's immutable vault, proving that LP withdrawal does
-not consume protocol-owned fees. Amounts, balances, ciphertexts and keys are not
-printed. The vault's separate 24-hour beneficiary sweep remains an operational
-delay and must not be bypassed for testing.
+The runner brings each token-side batch to eight successful swaps. If the
+immutable one-hour window has not elapsed, it reports only the public `readyAt`
+time and exits. A later run performs a full LP exit before collecting both
+encrypted fee aggregates, proving that LP withdrawal cannot consume
+protocol-owned fees. The vault's separate 24-hour sweep delay remains intact.

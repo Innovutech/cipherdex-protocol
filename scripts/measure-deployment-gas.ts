@@ -1,5 +1,6 @@
 import { BaseContract, ContractFactory } from "ethers";
 import { ethers } from "hardhat";
+import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 
 async function deployAndMeasure(
   label: string,
@@ -22,10 +23,9 @@ async function main(): Promise<void> {
     await ethers.getContractFactory("CipherDEXFeeVault"),
     beneficiary.address,
   );
-  const confidentialFactory = await deployAndMeasure(
-    "ConfidentialCPMMFactory",
-    await ethers.getContractFactory("ConfidentialCPMMFactory"),
-    await feeVault.getAddress(),
+  const privateLpTokenFactory = await deployAndMeasure(
+    "PrivateLPTokenFactory",
+    await ethers.getContractFactory("PrivateLPTokenFactory"),
   );
   const tokenA = await deployAndMeasure(
     "MockTokenMetadata(18)",
@@ -36,6 +36,17 @@ async function main(): Promise<void> {
     "MockTokenMetadata(6)",
     await ethers.getContractFactory("MockTokenMetadata"),
     6,
+  );
+  const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
+    ethers.provider,
+    [await tokenA.getAddress(), await tokenB.getAddress()],
+  );
+  const confidentialFactory = await deployAndMeasure(
+    "ConfidentialCPMMFactory",
+    await ethers.getContractFactory("ConfidentialCPMMFactory"),
+    await feeVault.getAddress(),
+    await privateLpTokenFactory.getAddress(),
+    privateTokenCodehashes,
   );
   const createPoolTransaction = await (
     confidentialFactory as BaseContract & {

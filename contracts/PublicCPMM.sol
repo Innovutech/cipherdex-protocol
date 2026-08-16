@@ -119,6 +119,12 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint256 debitedAmount,
         uint256 receivedAmount
     );
+    event ProtocolFeeLossReconciled(
+        address indexed token,
+        uint256 previousClaim,
+        uint256 remainingClaim,
+        uint256 loss
+    );
 
     modifier nonReentrant() {
         if (reentrancyState != 1) revert Reentrancy();
@@ -171,6 +177,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
     ) external nonReentrant returns (uint256 amountOut) {
         _requireBeforeDeadline(deadline);
         if (amountIn == 0) revert InvalidAmount();
+        _reconcileProtocolFeeLosses();
 
         IERC20 inputToken = IERC20(zeroForOne ? token0 : token1);
         IERC20 outputToken = IERC20(zeroForOne ? token1 : token0);
@@ -206,6 +213,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
         _requireBeforeDeadline(deadline);
         if (amount0 == 0 || amount1 == 0) revert InvalidAmount();
         if (minPriceX18 > maxPriceX18) revert InvalidPriceBounds();
+        _reconcileProtocolFeeLosses();
 
         IERC20 first = IERC20(token0);
         IERC20 second = IERC20(token1);
@@ -295,9 +303,10 @@ contract PublicCPMM is CipherDEXFeePolicy {
         _requireBeforeDeadline(deadline);
         if (shareInput == 0 || totalShares == 0) revert InsufficientShares();
         if (shareInput > shares[msg.sender]) revert InsufficientShares();
+        _reconcileProtocolFeeLosses();
 
         (uint256 reserve0, uint256 reserve1) = _effectiveReserves();
-        if (reserve0 == 0 || reserve1 == 0) revert InsufficientLiquidity();
+        if (reserve0 == 0 && reserve1 == 0) revert InsufficientLiquidity();
         bool fullExit = shareInput == totalShares;
         uint256 nominalAmount0 = fullExit
             ? reserve0
@@ -322,14 +331,16 @@ contract PublicCPMM is CipherDEXFeePolicy {
      * @notice Moves selected protocol-owned balances to the immutable vault.
      * @dev Collection is permissionless because the destination is immutable.
      *      Each token can be collected independently so a reverting token cannot
-     *      block the paired asset. Accounting uses the pool's exact debit while
-     *      reporting the vault's measured receipt for outbound-tax tokens.
+     *      block the paired asset. A selected token must credit the immutable
+     *      vault by the full protocol-owned amount; short-credit tokens revert
+     *      atomically so the nominal claim is never silently erased.
      */
     function collectProtocolFees(bool collectToken0, bool collectToken1)
         external
         nonReentrant
         returns (uint256 received0, uint256 received1)
     {
+        _reconcileProtocolFeeLosses();
         uint256 amount0 = collectToken0 ? protocolFees0 : 0;
         uint256 amount1 = collectToken1 ? protocolFees1 : 0;
         if (amount0 == 0 && amount1 == 0) revert NoProtocolFees();
@@ -337,11 +348,13 @@ contract PublicCPMM is CipherDEXFeePolicy {
         if (amount0 != 0) {
             protocolFees0 = 0;
             received0 = _transferOut(IERC20(token0), feeVault, amount0);
+            if (received0 != amount0) revert TransferAmountMismatch();
             emit ProtocolFeeCollected(token0, feeVault, amount0, received0);
         }
         if (amount1 != 0) {
             protocolFees1 = 0;
             received1 = _transferOut(IERC20(token1), feeVault, amount1);
+            if (received1 != amount1) revert TransferAmountMismatch();
             emit ProtocolFeeCollected(token1, feeVault, amount1, received1);
         }
     }
@@ -423,8 +436,24 @@ contract PublicCPMM is CipherDEXFeePolicy {
         pure
         returns (uint256)
     {
-        if (rawBalance < accruedProtocolFee) revert ProtocolFeeAccountingMismatch();
+        if (rawBalance < accruedProtocolFee) return 0;
         return rawBalance - accruedProtocolFee;
+    }
+
+    function _reconcileProtocolFeeLosses() internal {
+        uint256 raw0 = IERC20(token0).balanceOf(address(this));
+        if (protocolFees0 > raw0) {
+            uint256 previous0 = protocolFees0;
+            protocolFees0 = raw0;
+            emit ProtocolFeeLossReconciled(token0, previous0, raw0, previous0 - raw0);
+        }
+
+        uint256 raw1 = IERC20(token1).balanceOf(address(this));
+        if (protocolFees1 > raw1) {
+            uint256 previous1 = protocolFees1;
+            protocolFees1 = raw1;
+            emit ProtocolFeeLossReconciled(token1, previous1, raw1, previous1 - raw1);
+        }
     }
 
     function _sweepUnmanagedBalance(IERC20 token, uint256 amount) internal {
@@ -437,6 +466,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
         internal
         returns (uint256 received)
     {
+        if (amount == 0) return 0;
         uint256 senderBefore = token.balanceOf(address(this));
         uint256 recipientBefore = token.balanceOf(recipient);
         if (senderBefore < amount) revert TransferAmountMismatch();

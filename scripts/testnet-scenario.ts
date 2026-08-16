@@ -6,7 +6,9 @@ import {
   CIPHERDEX_PROTOCOL_VERSION,
   DISCLOSURE_SCHEMA_VERSION,
   PRIVACY_MODE,
+  calculateCipherDEXV1FeeBreakdown,
   getCipherDEXV1FeePolicy,
+  minimumCipherDEXV1ConfidentialInput,
   selectBestConfidentialPoolQuote,
   verifyConfidentialPoolDiscovery,
   type ConfidentialPoolDiscovery,
@@ -16,6 +18,8 @@ import {
   CONFIDENTIAL_POOL_TESTNET_ABI,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
+import { decryptPrivateValue256 } from "./coti-testnet-values";
+import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 
 const requiredAddress = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -50,7 +54,20 @@ const delay = (milliseconds: number): Promise<void> =>
 const ceilDiv = (numerator: bigint, denominator: bigint): bigint =>
   numerator / denominator + (numerator % denominator === 0n ? 0n : 1n);
 
+const requireConfidentialFeeAccrual = (
+  name: string,
+  amountIn: bigint,
+  feeBps: number,
+): void => {
+  if (calculateCipherDEXV1FeeBreakdown(amountIn, feeBps).protocolFee > 0n) return;
+  throw new Error(
+    `${name}=${amountIn} is below the ${minimumCipherDEXV1ConfidentialInput(feeBps)} raw-unit ` +
+      `minimum for confidential fee tier ${feeBps}; the protocol share would round to zero`,
+  );
+};
+
 const CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
+const PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const CONFIDENTIAL_POOL_CREATE_GAS_LIMIT = 6_500_000n;
 const FEE_VAULT_DEPLOY_GAS_LIMIT = 1_000_000n;
 const COTI_TESTNET_TX_OVERRIDES = {
@@ -118,7 +135,7 @@ async function readPrivateBalance(
   wallet: CotiWallet,
 ): Promise<bigint> {
   const ciphertext = await token.balanceOf.staticCall(owner);
-  return wallet.decryptValue256(ciphertext);
+  return decryptPrivateValue256(wallet, ciphertext);
 }
 
 async function readPrivateShares(pool: Contract, wallet: CotiWallet): Promise<bigint> {
@@ -127,10 +144,10 @@ async function readPrivateShares(pool: Contract, wallet: CotiWallet): Promise<bi
     const owner = await wallet.getAddress();
     const lpToken = new Contract(privateLpToken, PRIVATE_ERC20_TESTNET_ABI, wallet);
     const ciphertext = await lpToken.balanceOf.staticCall(owner);
-    return wallet.decryptValue256(ciphertext);
+    return decryptPrivateValue256(wallet, ciphertext);
   }
   const ciphertext = await pool.myShares.staticCall();
-  return wallet.decryptValue256(ciphertext);
+  return decryptPrivateValue256(wallet, ciphertext);
 }
 
 async function loadPoolContext(address: string, wallet: CotiWallet): Promise<PoolContext> {
@@ -207,6 +224,9 @@ async function addPrivateLiquidity(
   const encrypted0 = await wallet.encryptValue256(amount0, context.address, selector);
   const encrypted1 = await wallet.encryptValue256(amount1, context.address, selector);
   const minimum = await wallet.encryptValue256(0n, context.address, selector);
+  const minimumPrice = await wallet.encryptValue256(0n, context.address, selector);
+  const maximumPrice = await wallet.encryptValue256(ethers.MaxUint256, context.address, selector);
+  const expectedInitialized = await context.pool.initialized();
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
   await submit(
     label,
@@ -214,6 +234,9 @@ async function addPrivateLiquidity(
       encrypted0,
       encrypted1,
       minimum,
+      minimumPrice,
+      maximumPrice,
+      expectedInitialized,
       deadline,
       COTI_TESTNET_TX_OVERRIDES,
     ),
@@ -253,7 +276,7 @@ function encryptedQuoteFromReceipt(
         return parsed.args.result;
       }
     } catch {
-      // Ignore logs emitted by unrelated contracts.
+      // Ignore logs emitted by token contracts.
     }
   }
   throw new Error("encrypted quote result event missing");
@@ -280,14 +303,15 @@ async function requestPrivateQuote(
       COTI_TESTNET_TX_OVERRIDES,
     ),
   );
-  const encryptedResult = encryptedQuoteFromReceipt(
-    context.pool,
-    receipt,
-    caller,
-    requestId,
-    zeroForOne,
+  return wallet.decryptValue256(
+    encryptedQuoteFromReceipt(
+      context.pool,
+      receipt,
+      caller,
+      requestId,
+      zeroForOne,
+    ) as never,
   );
-  return wallet.decryptValue256(encryptedResult as never);
 }
 
 async function main(): Promise<void> {
@@ -312,6 +336,13 @@ async function main(): Promise<void> {
   const swapAmount0 = requiredBigInt("COTI_SWAP_AMOUNT0");
   const swapAmount1 = requiredBigInt("COTI_SWAP_AMOUNT1");
   const lockSeconds = requiredUInt("COTI_TEST_LOCK_SECONDS", 10);
+  requireConfidentialFeeAccrual("COTI_SWAP_AMOUNT0", swapAmount0, feeBps);
+  requireConfidentialFeeAccrual("COTI_SWAP_AMOUNT0", swapAmount0, quoteFeeBps);
+  requireConfidentialFeeAccrual("COTI_SWAP_AMOUNT1", swapAmount1, feeBps);
+  const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
+    ethers.provider,
+    [tokenAddressA, tokenAddressB],
+  );
 
   const secondPrivateKey = requiredPrivateKey("COTI_SECOND_LP_PRIVATE_KEY");
   const secondAesKey = process.env.COTI_SECOND_LP_AES_KEY?.trim();
@@ -319,7 +350,6 @@ async function main(): Promise<void> {
   const quotePrivateKey = requiredPrivateKey("COTI_QUOTE_PRIVATE_KEY");
   const quoteAesKey = process.env.COTI_QUOTE_AES_KEY?.trim();
   if (!quoteAesKey) throw new Error("missing COTI_QUOTE_AES_KEY");
-
   stage = "identity initialization";
   const [deployer] = await ethers.getSigners();
   const wallet = new CotiWallet(privateKey, ethers.provider, { aesKey });
@@ -358,11 +388,21 @@ async function main(): Promise<void> {
     const feeVaultAddress = await feeVault.getAddress();
     trustedFeeVaultAddress = feeVaultAddress;
     console.log(`fee vault deployed: ${feeVaultAddress}`);
+    stage = "private LP token factory deployment";
+    const lpTokenFactory = await (
+      await ethers.getContractFactory("PrivateLPTokenFactory", wallet)
+    ).deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT });
+    await lpTokenFactory.waitForDeployment();
+    const lpTokenFactoryAddress = await lpTokenFactory.getAddress();
+    console.log(`private LP token factory deployed: ${lpTokenFactoryAddress}`);
     stage = "confidential factory deployment";
     const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory", wallet);
-    const factory = await factoryFactory.deploy(feeVaultAddress, {
-      gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT,
-    });
+    const factory = await factoryFactory.deploy(
+      feeVaultAddress,
+      lpTokenFactoryAddress,
+      privateTokenCodehashes,
+      { gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT },
+    );
     await factory.waitForDeployment();
     const factoryAddress = await factory.getAddress();
     trustedFactoryAddress = factoryAddress;
@@ -497,6 +537,12 @@ async function main(): Promise<void> {
   if (poolContext.feeBps !== feeBps || quotePoolContext.feeBps !== quoteFeeBps) {
     throw new Error("configured pool fee tiers do not match the deployed candidates");
   }
+  if (!createdPrimaryPool || !createdQuotePool) {
+    throw new Error(
+      "the full scenario requires fresh uninitialized pools because confidential reserves " +
+      "cannot be read or quoted gaslessly on the current COTI runtime",
+    );
+  }
   if (
     poolContext.feeVault === ethers.ZeroAddress ||
     quotePoolContext.feeVault === ethers.ZeroAddress ||
@@ -621,13 +667,13 @@ async function main(): Promise<void> {
   if ((await readPrivateShares(pool, wallet)) !== initialShares) {
     throw new Error("second LP add changed the first LP share balance");
   }
-  if (createdPrimaryPool) {
-    const expectedSecondShares0 = (secondLiquidityAmount0 * initialShares) / liquidityAmount0;
-    const expectedSecondShares1 = (secondLiquidityAmount1 * initialShares) / liquidityAmount1;
-    const expectedSecondShares =
-      expectedSecondShares0 < expectedSecondShares1 ? expectedSecondShares0 : expectedSecondShares1;
-    const expectedSpend0 = ceilDiv(expectedSecondShares * liquidityAmount0, initialShares);
-    const expectedSpend1 = ceilDiv(expectedSecondShares * liquidityAmount1, initialShares);
+  const expectedSecondShares0 = (secondLiquidityAmount0 * initialShares) / liquidityAmount0;
+  const expectedSecondShares1 = (secondLiquidityAmount1 * initialShares) / liquidityAmount1;
+  const expectedSecondShares =
+    expectedSecondShares0 < expectedSecondShares1 ? expectedSecondShares0 : expectedSecondShares1;
+  const expectedSpend0 = ceilDiv(expectedSecondShares * liquidityAmount0, initialShares);
+  const expectedSpend1 = ceilDiv(expectedSecondShares * liquidityAmount1, initialShares);
+  {
     const secondAfter0 = await readPrivateBalance(
       secondContext.token0,
       secondWalletAddress,
@@ -647,8 +693,8 @@ async function main(): Promise<void> {
     }
   }
 
-  stage = "walletless quote candidate preparation";
-  const quoteRequestId = ethers.keccak256(
+  stage = "walletless transactional quote candidate evaluation";
+  const logicalRequestId = ethers.keccak256(
     ethers.solidityPacked(
       ["address", "address", "address", "uint256"],
       [quoteWalletAddress, poolAddress, quotePoolAddress, await ethers.provider.getBlockNumber()],
@@ -657,12 +703,13 @@ async function main(): Promise<void> {
   const quoteEvaluations: ConfidentialQuoteEvaluation[] = [];
   const quoteStarted = Date.now();
   for (const candidateAddress of [poolAddress, quotePoolAddress]) {
-    stage = "walletless encrypted quote evaluation";
     const candidate = await loadPoolContext(candidateAddress, quoteWallet);
-    const candidateRequestId = ethers.keccak256(ethers.solidityPacked(
-      ["bytes32", "address"],
-      [quoteRequestId, candidateAddress],
-    ));
+    const candidateInitializedBefore = Boolean(await candidate.pool.initialized());
+    const candidateFeeCount0Before = BigInt(await candidate.pool.protocolFeeSwapCount0());
+    const candidateFeeCount1Before = BigInt(await candidate.pool.protocolFeeSwapCount1());
+    const candidateRequestId = ethers.keccak256(
+      ethers.solidityPacked(["bytes32", "address"], [logicalRequestId, candidateAddress]),
+    );
     const decryptedOutput = await requestPrivateQuote(
       candidate,
       quoteWallet,
@@ -672,6 +719,13 @@ async function main(): Promise<void> {
       `walletless encrypted quote fee ${candidate.feeBps}`,
     );
     if (decryptedOutput <= 0n) throw new Error("quote candidate returned zero");
+    if (
+      Boolean(await candidate.pool.initialized()) !== candidateInitializedBefore ||
+      BigInt(await candidate.pool.protocolFeeSwapCount0()) !== candidateFeeCount0Before ||
+      BigInt(await candidate.pool.protocolFeeSwapCount1()) !== candidateFeeCount1Before
+    ) {
+      throw new Error("transactional quote changed pool accounting state");
+    }
     const discovery: ConfidentialPoolDiscovery = {
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
       protocolVersion: discoveryProtocolVersion,
@@ -697,6 +751,8 @@ async function main(): Promise<void> {
       {
         getCode: (address) => ethers.provider.getCode(address),
         readFactoryProtocolVersion: async () => discoveryFactory.PROTOCOL_VERSION(),
+        isFactoryPrivateTokenApproved: async (_factoryAddress, token) =>
+          discoveryFactory.isApprovedPrivateToken(token),
         isFactoryPool: async (_factoryAddress, candidatePool) =>
           discoveryFactory.isPool(candidatePool),
         getCanonicalPool: async (_factoryAddress, candidateDiscovery) => {
@@ -749,7 +805,8 @@ async function main(): Promise<void> {
     );
     quoteEvaluations.push({
       discovery: verifiedDiscovery,
-      requestId: quoteRequestId,
+      requestId: logicalRequestId,
+      amountIn: swapAmount0,
       zeroForOne: true,
       decryptedAmountOut: decryptedOutput,
     });
@@ -758,9 +815,6 @@ async function main(): Promise<void> {
   if (!selectedQuote) throw new Error("no confidential quote candidate selected");
   const selectedContext = await loadPoolContext(selectedQuote.discovery.pool, wallet);
   const selectedPool = selectedContext.pool;
-  const selectedPoolWasCreated = selectedContext.address.toLowerCase() === poolAddress.toLowerCase()
-    ? createdPrimaryPool
-    : createdQuotePool;
   const protocolFeeCount0Before = BigInt(await selectedPool.protocolFeeSwapCount0());
   const protocolFeeCount1Before = BigInt(await selectedPool.protocolFeeSwapCount1());
   const selectedSwapSelector = selectedPool.interface.getFunction("swapExactInput")?.selector;
@@ -842,13 +896,13 @@ async function main(): Promise<void> {
   );
   const afterSwap0 = await readPrivateBalance(token0, walletAddress, wallet);
   const afterSwap1 = await readPrivateBalance(token1, walletAddress, wallet);
-  if (afterSwap0 >= beforeSwap0 || afterSwap1 <= beforeSwap1) {
-    throw new Error("first private swap balance invariant failed");
-  }
   if (
-    selectedPoolWasCreated &&
-    BigInt(await selectedPool.protocolFeeSwapCount0()) !== protocolFeeCount0Before + 1n
+    beforeSwap0 - afterSwap0 !== swapAmount0 ||
+    afterSwap1 - beforeSwap1 !== localQuote
   ) {
+    throw new Error("selected quote did not match first private swap settlement");
+  }
+  if (BigInt(await selectedPool.protocolFeeSwapCount0()) !== protocolFeeCount0Before + 1n) {
     throw new Error("token0 protocol-fee batch did not record exactly one successful swap");
   }
 
@@ -869,20 +923,18 @@ async function main(): Promise<void> {
   }
   if (!replayRejected) throw new Error("replayed encrypted swap input was accepted");
 
-  const quoteSelectedContext = await loadPoolContext(selectedContext.address, quoteWallet);
-  const reverseQuoteRequestId = ethers.keccak256(ethers.solidityPacked(
-    ["bytes32", "uint8"],
-    [quoteRequestId, 1],
-  ));
+  const reverseQuoteContext = await loadPoolContext(selectedContext.address, quoteWallet);
+  const reverseQuoteRequestId = ethers.keccak256(
+    ethers.solidityPacked(["bytes32", "uint8"], [logicalRequestId, 1]),
+  );
   const reverseQuote = await requestPrivateQuote(
-    quoteSelectedContext,
+    reverseQuoteContext,
     quoteWallet,
     swapAmount1,
     false,
     reverseQuoteRequestId,
-    "walletless encrypted reverse quote",
+    "walletless reverse encrypted quote",
   );
-  if (reverseQuote <= 0n) throw new Error("reverse private quote returned zero");
   const swapInput1 = await wallet.encryptValue256(
     swapAmount1,
     selectedContext.address,
@@ -908,27 +960,26 @@ async function main(): Promise<void> {
   );
   const afterReverse0 = await readPrivateBalance(token0, walletAddress, wallet);
   const afterReverse1 = await readPrivateBalance(token1, walletAddress, wallet);
-  if (afterReverse0 <= beforeReverse0 || afterReverse1 >= beforeReverse1) {
-    throw new Error("reverse private swap balance invariant failed");
+  if (
+    afterReverse0 - beforeReverse0 !== reverseQuote ||
+    beforeReverse1 - afterReverse1 !== swapAmount1
+  ) {
+    throw new Error("reverse quote did not match private swap settlement");
   }
-  if (selectedPoolWasCreated) {
-    if (
-      BigInt(await selectedPool.protocolFeeSwapCount1()) !== protocolFeeCount1Before + 1n
-    ) {
-      throw new Error("token1 protocol-fee batch did not record exactly one successful swap");
-    }
-    let earlyCollectionRejected = false;
-    try {
-      await submit(
-        "premature confidential fee collection check",
-        selectedPool.collectProtocolFees(true, true, COTI_TESTNET_TX_OVERRIDES),
-      );
-    } catch {
-      earlyCollectionRejected = true;
-    }
-    if (!earlyCollectionRejected) {
-      throw new Error("confidential protocol fees were collectible before the batch threshold");
-    }
+  if (BigInt(await selectedPool.protocolFeeSwapCount1()) !== protocolFeeCount1Before + 1n) {
+    throw new Error("token1 protocol-fee batch did not record exactly one successful swap");
+  }
+  let earlyCollectionRejected = false;
+  try {
+    await submit(
+      "premature confidential fee collection check",
+      selectedPool.collectProtocolFees(true, true, COTI_TESTNET_TX_OVERRIDES),
+    );
+  } catch {
+    earlyCollectionRejected = true;
+  }
+  if (!earlyCollectionRejected) {
+    throw new Error("confidential protocol fees were collectible before the batch threshold");
   }
 
   const secondRemoveSelector = secondContext.pool.interface.getFunction("removeLiquidity")?.selector;

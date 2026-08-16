@@ -4,12 +4,15 @@
 
 - `contracts/ConfidentialCPMM.sol`: immutable pair, fee policy, private reserve
   math, swap execution and private LP share accounting.
-- `contracts/ConfidentialCPMMFactory.sol`: permissionless deterministic manual
-  pool creation plus an adapter-only, creator-scoped launchpad pool namespace.
+- `contracts/ConfidentialCPMMFactory.sol`: one permissionless deterministic
+  canonical registry plus an adapter-only atomic bootstrap hook over that same
+  registry.
 - `contracts/PrivateLPToken.sol`: pool-bound encrypted LP-share token using the
   official COTI `PrivateERC20` implementation.
-- `contracts/PrivateLPTokenFactory.sol`: factory-owned deployer that keeps the
-  COTI token creation bytecode out of the canonical CPMM factory runtime.
+- `contracts/PrivateLPTokenFactory.sol`: stateless permissionless deployer that
+  keeps COTI token creation bytecode out of the canonical CPMM factory runtime.
+  A token created by an arbitrary caller has no pool authority; only a canonical
+  pool can bind its expected pool-owned token once during factory deployment.
 - `contracts/PublicCPMM.sol`: ordinary public/public ERC-20 CPMM with public
   amounts, fees, swaps, liquidity accounting and locks.
 - `contracts/PublicCPMMFactory.sol`: separate public/public pool registry.
@@ -49,9 +52,16 @@ amount-confidential/private-LP mode. A future fully confidential mode is not
 represented as an enabled value; recipient and participant addresses remain
 public under the official PrivateERC20 interface.
 
-The pool is a non-custodial pair of official COTI PrivateERC20-compatible assets.
-It maintains encrypted protocol-accounting reserves rather than a public reserve
-ledger or a raw-balance price oracle. Compatible token transfers revert
+The pool is a non-custodial pair of reviewed COTI PrivateERC20-compatible assets.
+The canonical factory accepts only immutable deployment-time runtime codehashes,
+and each pool also verifies the expected private-token interface and exact
+encrypted transfer balance deltas. Approving mutable proxy or metamorphic token
+code is outside the supported policy because its behavior can change without a
+codehash change at the proxy address. Adding another implementation requires a
+new reviewed factory deployment and protocol allowlist.
+
+The pool maintains encrypted protocol-accounting reserves rather than a public
+reserve ledger or a raw-balance price oracle. Compatible token transfers revert
 atomically on failure. Unsolicited private-token donations remain outside the
 accounting reserves and cannot alter price or LP claims. The first ordinary
 liquidity add requires both accounting reserves to be zero; the first LP may
@@ -78,10 +88,14 @@ Public pools track each token's protocol fees in public counters; confidential
 pools use encrypted counters. Both collect only to an immutable fee vault, and
 collection never changes effective reserves or price. See `FEE_ECONOMICS.md`.
 
-Exact private quotes remain caller-encrypted. The core pool exposes no public
-reserve, TVL, spot-price, TWAP, or exact-quote getter. Public market data would
-be an intentional disclosure and therefore belongs, if ever added, in a
-separately reviewed optional oracle rather than the settlement pool.
+The core pool exposes no public reserve, TVL, spot-price or TWAP getter. Current
+COTI testnet nodes allow ciphertext-only state reads but reject fresh MPC
+precompile work in `eth_call`, including stored ciphertext onboarding. The pool
+therefore retains an exact encrypted transaction/event quote fallback. A
+dedicated non-custodial quote identity can compare canonical fee-tier candidates,
+but pays gas and exposes request metadata. Public market data would be an
+intentional disclosure and belongs, if ever added, in a separately reviewed
+oracle or batch design rather than being inferred from settlement state.
 
 Pool construction also verifies each token's public `decimals()` response and
 rejects non-contract or incompatible metadata before storing normalization
@@ -93,8 +107,9 @@ declared decimals silently disagree with the token contract.
 LP shares are ciphertext stored in aggregate by the pool. Factory-created pools
 also mint a pool-bound `PrivateLPToken` for each provider, so the encrypted share
 position can use the official COTI transfer and approval paths. The pool remains
-the only minter/burner. Directly deployed pools retain the internal ledger as a
-backward-compatible deployment mode. Initial shares equal the smaller of the two
+the only minter/burner. Directly deployed pools retain the internal ledger only
+as a standalone test-harness mode; canonical discovery uses factory-created LP
+tokens. Initial shares equal the smaller of the two
 18-decimal-normalized deposits. This supports an arbitrary non-zero initial price,
 avoids an overflow-prone encrypted product and square-root loop, and does not
 change ownership because the first LP receives 100% of issued shares. Subsequent
@@ -142,33 +157,42 @@ invalidate the signature; a router that accepts the original user as an
 unchecked parameter would weaken that binding. Private routing therefore needs
 an official, reviewed delegation primitive, not a forwarding wrapper.
 
-Off-chain routing does not require a protocol router. A quote service may use a
-dedicated onboarded COTI identity and AES key to request the same logical input
-against each canonical fee-tier candidate, decrypt the results only in process,
-and select the largest output. The current testnet uses encrypted transaction
-result events; a compatible future RPC may execute the same MPC path under
-`eth_call`. The service never holds funds or signs swaps. The user must
-re-encrypt fresh amount and slippage inputs for the selected pool and execute
-directly.
+Public pools use ordinary read-only quote calls. Confidential candidate selection
+uses the explicit encrypted transaction/event fallback on the current runtime;
+it is never silently presented as gasless. The service verifies canonical pool
+provenance, creates one fresh input per pool, decrypts only its own outputs and
+selects a single pool. The user then creates fresh inputs and calls that pool
+directly. A future runtime may replace only the quote transport by supporting MPC
+precompiles in `eth_call`; any oracle or snapshot alternative requires a separate
+leakage and manipulation review.
 
 ## Launchpad migration boundary
 
 The launchpad path does not forward authenticated inputs. The creator signs all
 five encrypted values for the migrator's exact selector and separately signs an
 EIP-712 migration authorization containing their ordered ciphertext commitment
-hash and public migration context. The migrator validates both layers, calls the official `transferFromGT` function under explicit encrypted
-allowances, and then calls the factory's pool bootstrap hook with the resulting MPC
-values. The pool verifies its actual private balances and encrypted normalized
-price bounds before setting its initial reserves/shares. Any failure reverts the
-whole transaction, including the token pulls.
+hash and public migration context. The migrator validates the public authorization,
+resolves the canonical pool, validates each MPC input and pulls exact amounts into
+transaction-scoped escrow under explicit encrypted creator allowances. It then
+grants the canonical pool matching encrypted allowances. The factory invokes the
+pool bootstrap hook, and the pool verifies logical empty-reserve state, encrypted
+normalized price bounds and exact transfer deltas while pulling from the adapter.
+Compatible token transfers and accounting are atomic; unsolicited raw token
+balances stay outside price and LP claims and cannot block deterministic-address
+bootstrap. Any failure reverts pool creation, escrow, approvals and token pulls.
 
-The bootstrap path is restricted to factory-created empty pools and cannot be used
-to withdraw or mutate an initialized pool. Launchpad pools use a domain-separated
-key that includes the creator. Manual pool creation and another creator's launch
-therefore cannot occupy the intended migration slot, while every pool remains in
-the factory's common `isPool` and `allPools` discovery registries. Each launch key
-is one-shot and cannot be reused after a full exit. The initial share unit is the minimum
-of the normalized private deposits, while full exit remains reserve-complete.
+The bootstrap path is restricted to factory-created empty pools and cannot
+withdraw from or mutate an initialized pool. It resolves the same canonical key
+used by permissionless creation: ordered token pair, approved fee tier, privacy
+mode, and protocol version. If absent, creation and bootstrap occur in one outer
+transaction. If present and empty, it is reused. If initialized, migration
+rejects before MPC work or token movement. There is no creator-specific namespace
+or alternate liquidity market. The initial share unit is the minimum of the
+normalized private deposits, while full exit remains reserve-complete.
+This protects custody and canonical identity, not launch liveness: the factory
+does not reserve a permissionless pair for a creator. A prior initialized market
+therefore causes a fail-closed rejection rather than privileged overwrite or a
+parallel launch pool.
 The launchpad can select creator-held, timed-lock, or permanent-lock disposition
 as part of the same bootstrap transaction. A locked bootstrap records the private
 share amount directly in the pool lock and does not mint it to the creator; timed

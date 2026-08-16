@@ -358,4 +358,101 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     expect(reserve0).to.equal(10_000n);
     expect(reserve1).to.equal(10_000n);
   });
+
+  it("reconciles an externally burned protocol claim without locking the paired reserve", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const burnable = await (
+      await ethers.getContractFactory("ExternallyBurnableERC20")
+    ).deploy("Burnable Token", "BURN", 18);
+    const paired = await (
+      await ethers.getContractFactory("MockERC20")
+    ).deploy("Paired Token", "PAIR", 18);
+    await Promise.all([burnable.waitForDeployment(), paired.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+      await burnable.getAddress(),
+      await paired.getAddress(),
+      18,
+      18,
+      30,
+      await vault.getAddress(),
+    );
+    await pool.waitForDeployment();
+
+    await burnable.mint(owner.address, 10_000n);
+    await paired.mint(owner.address, 10_000n);
+    await burnable.mint(trader.address, 10_000n);
+    await burnable.approve(await pool.getAddress(), 10_000n);
+    await paired.approve(await pool.getAddress(), 10_000n);
+    await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+    await burnable.connect(trader).approve(await pool.getAddress(), 10_000n);
+    await pool.connect(trader).swapExactInput(10_000n, 0n, true, MAX_DEADLINE);
+
+    const previousClaim = await pool.protocolFees0();
+    expect(previousClaim).to.be.greaterThan(1n);
+    const poolAddress = await pool.getAddress();
+    const rawBalance = await burnable.balanceOf(poolAddress);
+    const remainingClaim = previousClaim - 1n;
+    await burnable.burnFrom(poolAddress, rawBalance - remainingClaim);
+
+    const pairedBefore = await paired.balanceOf(owner.address);
+    const pairedReserve = (await pool.effectiveReserves())[1];
+    await expect(
+      pool.removeLiquidity(await pool.totalShares(), 0n, 0n, MAX_DEADLINE),
+    ).to.emit(pool, "ProtocolFeeLossReconciled").withArgs(
+      await burnable.getAddress(),
+      previousClaim,
+      remainingClaim,
+      1n,
+    );
+
+    expect(await paired.balanceOf(owner.address)).to.equal(pairedBefore + pairedReserve);
+    expect(await pool.totalShares()).to.equal(0n);
+    expect(await pool.initialized()).to.equal(false);
+    expect(await pool.protocolFees0()).to.equal(remainingClaim);
+    expect(await burnable.balanceOf(poolAddress)).to.equal(remainingClaim);
+  });
+
+  it("keeps protocol-fee accounting intact when an outbound tax short-credits the vault", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const taxed = await (
+      await ethers.getContractFactory("FeeOnTransferERC20")
+    ).deploy("Taxed Token", "TAX", 5_000);
+    const paired = await (
+      await ethers.getContractFactory("MockERC20")
+    ).deploy("Paired Token", "PAIR", 18);
+    await Promise.all([taxed.waitForDeployment(), paired.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+      await taxed.getAddress(),
+      await paired.getAddress(),
+      18,
+      18,
+      30,
+      await vault.getAddress(),
+    );
+    await pool.waitForDeployment();
+    const poolAddress = await pool.getAddress();
+    await taxed.setTaxedSender(poolAddress);
+
+    await taxed.mint(owner.address, 10_000n);
+    await paired.mint(owner.address, 10_000n);
+    await taxed.mint(trader.address, 10_000n);
+    await taxed.approve(poolAddress, 10_000n);
+    await paired.approve(poolAddress, 10_000n);
+    await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+    await taxed.connect(trader).approve(poolAddress, 10_000n);
+    await pool.connect(trader).swapExactInput(10_000n, 0n, true, MAX_DEADLINE);
+
+    const claimBefore = await pool.protocolFees0();
+    const poolBalanceBefore = await taxed.balanceOf(poolAddress);
+    const vaultBalanceBefore = await taxed.balanceOf(await vault.getAddress());
+    expect(claimBefore).to.be.greaterThan(0n);
+
+    await expect(pool.collectProtocolFees(true, false))
+      .to.be.revertedWithCustomError(pool, "TransferAmountMismatch");
+    expect(await pool.protocolFees0()).to.equal(claimBefore);
+    expect(await taxed.balanceOf(poolAddress)).to.equal(poolBalanceBefore);
+    expect(await taxed.balanceOf(await vault.getAddress())).to.equal(vaultBalanceBefore);
+  });
 });

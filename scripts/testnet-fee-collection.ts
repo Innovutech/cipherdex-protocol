@@ -2,9 +2,11 @@ import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { Contract } from "ethers";
 import { ethers } from "hardhat";
 import {
+  CONFIDENTIAL_FACTORY_TESTNET_ABI,
   CONFIDENTIAL_POOL_TESTNET_ABI,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
+import { decryptPrivateValue256 } from "./coti-testnet-values";
 
 const TARGET_SWAP_COUNT = 8n;
 const COLLECTION_DELAY_SECONDS = 3_600n;
@@ -74,7 +76,7 @@ async function submit(
 
 async function privateBalance(token: Contract, owner: string, wallet: CotiWallet): Promise<bigint> {
   const encrypted = await token.balanceOf.staticCall(owner);
-  return wallet.decryptValue256(encrypted);
+  return decryptPrivateValue256(wallet, encrypted);
 }
 
 async function setPrivateAllowance(
@@ -95,6 +97,8 @@ async function setPrivateAllowance(
 
 async function main(): Promise<void> {
   const poolAddress = requiredAddress("COTI_FEE_COLLECTION_POOL");
+  const factoryAddress = requiredAddress("COTI_FACTORY");
+  const expectedFeeVault = requiredAddress("COTI_FEE_VAULT");
   const privateKey = required("COTI_TESTNET_PRIVATE_KEY");
   const aesKey = required("COTI_AES_KEY");
   if (!/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
@@ -106,10 +110,58 @@ async function main(): Promise<void> {
   const walletAddress = await wallet.getAddress();
   const pool = new Contract(poolAddress, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
   stage = "pool metadata validation";
+  const factory = new Contract(
+    factoryAddress,
+    CONFIDENTIAL_FACTORY_TESTNET_ABI,
+    ethers.provider,
+  );
+  const [factoryCode, poolCode, vaultCode] = await Promise.all([
+    ethers.provider.getCode(factoryAddress),
+    ethers.provider.getCode(poolAddress),
+    ethers.provider.getCode(expectedFeeVault),
+  ]);
+  if (factoryCode === "0x" || poolCode === "0x" || vaultCode === "0x") {
+    throw new Error("factory, pool and fee vault must be deployed contracts");
+  }
   const token0Address = String(await pool.token0());
   const token1Address = String(await pool.token1());
+  const [token0Code, token1Code] = await Promise.all([
+    ethers.provider.getCode(token0Address),
+    ethers.provider.getCode(token1Address),
+  ]);
+  if (
+    token0Code === "0x" ||
+    token1Code === "0x" ||
+    !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token0Code))) ||
+    !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token1Code)))
+  ) {
+    throw new Error("pool token implementation is outside the factory policy");
+  }
+  const decimals0FromPool = Number(await pool.token0Decimals());
+  const decimals1FromPool = Number(await pool.token1Decimals());
+  const feeBps = BigInt(await pool.feeBps());
   const feeVault = String(await pool.feeVault());
-  if (feeVault === ethers.ZeroAddress) throw new Error("pool has no fee vault");
+  const canonicalKey = await factory.poolKey(
+    token0Address,
+    token1Address,
+    decimals0FromPool,
+    decimals1FromPool,
+    feeBps,
+  );
+  const canonicalPool = String(await factory.getPool(canonicalKey));
+  if (
+    BigInt(await factory.PROTOCOL_VERSION()) !== 2n ||
+    BigInt(await factory.PRIVACY_MODE()) !== 1n ||
+    BigInt(await pool.PROTOCOL_VERSION()) !== 2n ||
+    BigInt(await pool.PRIVACY_MODE()) !== 1n ||
+    !(await factory.isPool(poolAddress)) ||
+    canonicalPool.toLowerCase() !== poolAddress.toLowerCase() ||
+    String(await factory.feeVault()).toLowerCase() !== expectedFeeVault.toLowerCase() ||
+    feeVault.toLowerCase() !== expectedFeeVault.toLowerCase() ||
+    String(await pool.bootstrapper()).toLowerCase() !== factoryAddress.toLowerCase()
+  ) {
+    throw new Error("fee-collection pool failed canonical provenance validation");
+  }
   if (
     BigInt(await pool.PROTOCOL_FEE_SHARE_NUMERATOR()) !== 1n ||
     BigInt(await pool.PROTOCOL_FEE_SHARE_DENOMINATOR()) !== 6n
@@ -121,6 +173,14 @@ async function main(): Promise<void> {
   const token1 = new Contract(token1Address, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const decimals0 = Number(await token0.decimals());
   const decimals1 = Number(await token1.decimals());
+  if (decimals0 !== decimals0FromPool || decimals1 !== decimals1FromPool) {
+    throw new Error("pool token decimals are inconsistent");
+  }
+  // COTI's deployed PrivateERC20 implementations may expose public overloads
+  // while still using encrypted balances and encrypted transfer methods. The
+  // publicAmountsEnabled compatibility flag is therefore informational, not a
+  // privacy or provenance boundary. The immutable factory codehash policy and
+  // the encrypted balance reads below are the authoritative checks.
   const liquidity0 = optionalRawAmount(
     "COTI_FEE_TEST_LIQUIDITY0",
     defaultRawAmount(decimals0, 1),
@@ -162,12 +222,17 @@ async function main(): Promise<void> {
       const input0 = await wallet.encryptValue256(liquidity0, poolAddress, selector);
       const input1 = await wallet.encryptValue256(liquidity1, poolAddress, selector);
       const minimum = await wallet.encryptValue256(0n, poolAddress, selector);
+      const minimumPrice = await wallet.encryptValue256(0n, poolAddress, selector);
+      const maximumPrice = await wallet.encryptValue256(ethers.MaxUint256, poolAddress, selector);
       await submit(
         "fee test liquidity initialization",
         pool.addLiquidity(
           input0,
           input1,
           minimum,
+          minimumPrice,
+          maximumPrice,
+          false,
           BigInt(Math.floor(Date.now() / 1000) + 600),
           TX_OVERRIDES,
         ),
@@ -228,7 +293,7 @@ async function main(): Promise<void> {
 
   if (await pool.initialized()) {
     const encryptedShares = await pool.myShares.staticCall();
-    const shares = await wallet.decryptValue256(encryptedShares);
+    const shares = await decryptPrivateValue256(wallet, encryptedShares);
     if (shares > 0n) {
       const selector = pool.interface.getFunction("removeLiquidity")?.selector;
       if (!selector) throw new Error("remove-liquidity selector unavailable");

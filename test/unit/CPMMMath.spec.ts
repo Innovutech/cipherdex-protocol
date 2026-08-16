@@ -1,6 +1,8 @@
 import { expect } from "chai";
 
 const BPS = 10_000n;
+const MAX_UINT256 = (1n << 256n) - 1n;
+const PRICE_SCALE = 1_000_000_000_000_000_000n;
 
 // COTI MpcCore.mux(bit, a, b) selects a when bit is false and b when true.
 const cotiMux = <T>(bit: boolean, whenFalse: T, whenTrue: T): T =>
@@ -81,6 +83,40 @@ function proportionalExit(
   };
 }
 
+function operationallyBounded(
+  reserve0: bigint,
+  reserve1: bigint,
+  totalShares: bigint,
+  scale0: bigint,
+  scale1: bigint,
+): boolean {
+  const products = [
+    reserve0 * reserve1,
+    totalShares * reserve0,
+    totalShares * reserve1,
+    reserve0 * scale0,
+    reserve1 * scale1,
+    reserve1 * scale1 * PRICE_SCALE,
+  ];
+  return reserve0 > 0n && reserve1 > 0n && totalShares > 0n &&
+    products.every((value) => value <= MAX_UINT256);
+}
+
+function priceWithinBounds(
+  amount0: bigint,
+  amount1: bigint,
+  scale0: bigint,
+  scale1: bigint,
+  minimum: bigint,
+  maximum: bigint,
+): boolean {
+  const normalized0 = amount0 * scale0;
+  const numerator = amount1 * scale1 * PRICE_SCALE;
+  const floorPrice = numerator / normalized0;
+  const ceilingPrice = (numerator + normalized0 - 1n) / normalized0;
+  return floorPrice >= minimum && ceilingPrice <= maximum;
+}
+
 describe("Confidential CPMM reference properties", function () {
   it("rounds retained reserves upward and never creates invariant value", function () {
     const result = quote(1n, 10n, 10n, 0n);
@@ -156,6 +192,12 @@ describe("Confidential CPMM reference properties", function () {
     });
   });
 
+  it("identifies zero-protocol-share dust that confidential pools reject", function () {
+    expect(feeBreakdown(334n, 30n).protocolFee).to.equal(0n);
+    expect(feeBreakdown(2_000n, 30n).protocolFee).to.equal(1n);
+    expect(feeBreakdown(10_001n, 5n).protocolFee).to.equal(1n);
+  });
+
   it("keeps encrypted protocol accrual outside effective reserves in both directions", function () {
     let reserve0 = 1_000_000n;
     let reserve1 = 2_000_000n;
@@ -209,6 +251,29 @@ describe("Confidential CPMM reference properties", function () {
     expect(initialShares(2n, 9n, 1n, 1n)).to.equal(2n);
     expect(initialShares(3n, 7n, 1_000_000_000_000_000_000n, 1n)).to.equal(7n);
     expect(initialShares(11n, 5n, 1n, 1_000_000_000_000_000_000n)).to.equal(11n);
+  });
+
+  it("accepts a maximum encrypted upper price bound without multiplying by it", function () {
+    expect(priceWithinBounds(3n, 7n, 1n, 1n, 0n, MAX_UINT256)).to.equal(true);
+    expect(priceWithinBounds(3n, 7n, 1n, 1n, 2_333_333_333_333_333_333n, 2_333_333_333_333_333_334n)).to.equal(true);
+    expect(priceWithinBounds(3n, 7n, 1n, 1n, 2_333_333_333_333_333_334n, MAX_UINT256)).to.equal(false);
+  });
+
+  it("rejects accepted states that would make later confidential arithmetic overflow", function () {
+    expect(operationallyBounded(1_000_000n, 2_000_000n, 1_000_000n, 1n, 1n)).to.equal(true);
+    expect(operationallyBounded(MAX_UINT256, 2n, 1n, 1n, 1n)).to.equal(false);
+    expect(operationallyBounded(1n, MAX_UINT256 / PRICE_SCALE + 1n, 1n, 1n, 1n)).to.equal(false);
+
+    let seed = 211n;
+    for (let index = 0; index < 300; index += 1) {
+      seed = nextRandom(seed);
+      const reserve0 = (seed % 1_000_000_000_000n) + 1n;
+      seed = nextRandom(seed);
+      const reserve1 = (seed % 1_000_000_000_000n) + 1n;
+      seed = nextRandom(seed);
+      const shares = (seed % 1_000_000_000_000n) + 1n;
+      expect(operationallyBounded(reserve0, reserve1, shares, 1n, 1n)).to.equal(true);
+    }
   });
 
   it("accepts only proportional later liquidity and never transfers surplus", function () {

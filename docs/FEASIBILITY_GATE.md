@@ -11,7 +11,7 @@ offboarding required by the pool. The contracts never decrypt an amount. They
 decrypt only policy booleans needed to accept or reject an operation.
 
 The real COTI testnet gate was executed with two funded LP identities, a separate
-quote identity and two deployed `PrivateERC20` assets. Keys, AES material,
+MPC-call probe identity and two deployed `PrivateERC20` assets. Keys, AES material,
 ciphertexts, decrypted values and private balances were neither printed nor
 persisted.
 
@@ -20,7 +20,8 @@ persisted.
 - arbitrary-ratio confidential initialization;
 - a second proportional LP join without surplus donation;
 - two canonical fee-tier candidates for the same pair;
-- walletless encrypted transactional quotes and local best-pool selection;
+- canonical confidential discovery and encrypted transaction quote selection
+  across two fee tiers;
 - direct encrypted swaps in both directions;
 - expired, slippage-failing and replayed-input rejection;
 - per-input-token confidential fee-batch counters and premature collection
@@ -29,12 +30,18 @@ persisted.
   a true full LP exit and with both public batch counters cleared;
 - second-LP exit, timed lock/unlock, permanent lock and true full exit;
 - atomic launchpad rollback for an impossible encrypted price interval;
+- deterministic-address private-token pre-funding does not block canonical
+  launchpad deployment or change the canonical pool address;
 - successful launchpad migration through the same canonical factory fee policy;
 - launchpad replay rejection without additional token movement.
 
-Current COTI testnet does not execute this MPC path under `eth_call`. The
-transactional quote-result event remains encrypted for the requesting identity.
-The direct `quoteExactInput` function stays available for a future compatible RPC.
+The staged probe proves ciphertext-only user reads work under `eth_call`, while
+raw stored-ciphertext `OnBoard`, authenticated validation, arithmetic,
+comparison/mux and both full quote forms fail. A real transaction executes the
+same MPC operations. The stable SDK therefore exposes the exact encrypted
+transaction/event fallback and labels it explicitly. It enables testnet routing
+without publishing reserves, but its gas, latency and public request metadata are
+an unresolved product limitation rather than normal quote UX.
 
 ## Accounting model
 
@@ -56,10 +63,10 @@ The standard `PrivateERC20` interface does not hide participant addresses.
 may expose sender and recipient. CipherDEX protects amounts, slippage, reserves
 and LP positions; it does not claim anonymous participants.
 
-Repeated permissionless quotes allow an active caller to estimate the CPMM curve.
-Encryption protects a specific request/result from passive public disclosure; it
-does not make a publicly probeable deterministic curve information-theoretically
-unknowable.
+If permissionless gasless quotes become available, repeated probes would allow an
+active caller to estimate the CPMM curve. Encryption would protect each
+request/result from passive public disclosure, but would not make a deterministic
+curve information-theoretically unknowable to the caller.
 
 Confidential fee batches similarly reduce routine per-swap disclosure but cannot
 manufacture an anonymity set in a quiet pool. A beneficiary that knows most

@@ -226,7 +226,7 @@ describe("CipherDEX v1 fee economics", function () {
     expect(await token1.balanceOf(await vault.getAddress())).to.equal(10n);
   });
 
-  it("collects outbound-tax fees independently without changing effective reserves", async function () {
+  it("collects a conforming side independently and preserves a short-credit fee claim", async function () {
     const [lp, trader] = await ethers.getSigners();
     const vault = await deployFeeVault();
     const normal = await (await ethers.getContractFactory("MockERC20")).deploy(
@@ -289,14 +289,13 @@ describe("CipherDEX v1 fee economics", function () {
     expect(taxedIsToken0 ? await pool.protocolFees0() : await pool.protocolFees1())
       .to.equal(taxedAccrued);
 
-    const [received0, received1] = taxedIsToken0
-      ? await pool.collectProtocolFees.staticCall(true, false)
-      : await pool.collectProtocolFees.staticCall(false, true);
-    expect(taxedIsToken0 ? received0 : received1).to.equal(495n);
-    await pool.collectProtocolFees(taxedIsToken0, !taxedIsToken0);
-    expect(await taxed.balanceOf(await vault.getAddress())).to.equal(495n);
+    await expect(pool.collectProtocolFees(taxedIsToken0, !taxedIsToken0))
+      .to.be.revertedWithCustomError(pool, "TransferAmountMismatch");
+    expect(await taxed.balanceOf(await vault.getAddress())).to.equal(0n);
     expect(await pool.effectiveReserves()).to.deep.equal(reservesBefore);
-    expect(await pool.protocolFees0()).to.equal(0n);
-    expect(await pool.protocolFees1()).to.equal(0n);
+    expect(taxedIsToken0 ? await pool.protocolFees0() : await pool.protocolFees1())
+      .to.equal(taxedAccrued);
+    expect(taxedIsToken0 ? await pool.protocolFees1() : await pool.protocolFees0())
+      .to.equal(0n);
   });
 });

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 import "./ConfidentialCPMM.sol";
-import "./PrivateLPTokenFactory.sol";
 import "./CipherDEXFeePolicy.sol";
 import "./interfaces/IConfidentialCPMM.sol";
 import "./interfaces/IConfidentialCPMMFactory.sol";
@@ -18,10 +17,10 @@ import "./interfaces/IPrivateLPTokenFactory.sol";
 contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy {
     uint256 public constant PROTOCOL_VERSION = 2;
     uint8 public constant PRIVACY_MODE = 1;
-    bytes32 private constant LAUNCHPAD_POOL_DOMAIN = keccak256("CipherDEX.launchpad.pool");
     mapping(bytes32 => address) public getPool;
-    mapping(bytes32 => address) public getLaunchPool;
     mapping(address => bool) public isPool;
+    mapping(bytes32 => bool) public isApprovedPrivateTokenCodehash;
+    bytes32[] private approvedPrivateTokenCodehashes;
     address[] private pools;
     address public immutable lpTokenFactory;
     address public immutable feeVault;
@@ -31,17 +30,34 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     error InvalidTokenPair();
     error InvalidFee();
     error InvalidFeeVault();
+    error InvalidLPTokenFactory();
+    error InvalidPrivateTokenCodehash();
+    error UnsupportedPrivateTokenImplementation();
     error PoolAlreadyExists();
     error UnknownPool();
     error BootstrapAdapterUnauthorized();
     error BootstrapAdapterAlreadyConfigured();
     error InvalidBootstrapAdapter();
-    error InvalidCreator();
+    error PoolAlreadyInitialized();
 
-    constructor(address feeVault_) {
+    constructor(
+        address feeVault_,
+        address lpTokenFactory_,
+        bytes32[] memory privateTokenCodehashes_
+    ) {
         if (feeVault_.code.length == 0) revert InvalidFeeVault();
+        if (lpTokenFactory_.code.length == 0) revert InvalidLPTokenFactory();
+        if (privateTokenCodehashes_.length == 0) revert InvalidPrivateTokenCodehash();
+        for (uint256 index = 0; index < privateTokenCodehashes_.length; index++) {
+            bytes32 codehash = privateTokenCodehashes_[index];
+            if (codehash == bytes32(0)) revert InvalidPrivateTokenCodehash();
+            if (!isApprovedPrivateTokenCodehash[codehash]) {
+                isApprovedPrivateTokenCodehash[codehash] = true;
+                approvedPrivateTokenCodehashes.push(codehash);
+            }
+        }
         bootstrapConfigurator = msg.sender;
-        lpTokenFactory = address(new PrivateLPTokenFactory());
+        lpTokenFactory = lpTokenFactory_;
         feeVault = feeVault_;
     }
 
@@ -79,12 +95,13 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     }
 
     /**
-     * @notice Creates the creator-scoped pool used by one atomic launchpad migration.
-     * @dev Only the immutable one-time-bound adapter can enter this namespace. A
-     *      manual pool or another creator's launch cannot occupy the same key.
+     * @notice Resolves the one canonical pool for an atomic launchpad bootstrap.
+     * @dev Only the immutable adapter may call this function. If the pool does
+     *      not exist, creation and the later bootstrap occur in the same outer
+     *      migrator transaction. An existing initialized market is never
+     *      replaced or shadowed by an alternate launchpad namespace.
      */
-    function createLaunchpadPool(
-        address creator,
+    function getOrCreatePoolForBootstrap(
         address tokenA,
         address tokenB,
         uint8 decimalsA,
@@ -92,7 +109,6 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         uint256 feeBps
     ) external returns (address pool) {
         if (msg.sender != bootstrapAdapter) revert BootstrapAdapterUnauthorized();
-        if (creator == address(0)) revert InvalidCreator();
         (address token0, address token1, uint8 decimals0, uint8 decimals1) = _validateAndSortPool(
             tokenA,
             tokenB,
@@ -100,11 +116,14 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
             decimalsB,
             feeBps
         );
-        bytes32 key = launchPoolKey(creator, token0, token1, decimals0, decimals1, feeBps);
-        if (getLaunchPool[key] != address(0)) revert PoolAlreadyExists();
-        pool = _deployPool(key, token0, token1, decimals0, decimals1, feeBps);
-        getLaunchPool[key] = pool;
-        emit LaunchpadPoolCreated(creator, token0, token1, decimals0, decimals1, feeBps, pool);
+        bytes32 key = poolKey(token0, token1, decimals0, decimals1, feeBps);
+        pool = getPool[key];
+        if (pool == address(0)) {
+            pool = _deployPool(key, token0, token1, decimals0, decimals1, feeBps);
+            getPool[key] = pool;
+        } else if (IConfidentialCPMM(pool).initialized()) {
+            revert PoolAlreadyInitialized();
+        }
     }
 
     function _validateAndSortPool(
@@ -113,11 +132,15 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         uint8 decimalsA,
         uint8 decimalsB,
         uint256 feeBps
-    ) internal pure returns (address token0, address token1, uint8 decimals0, uint8 decimals1) {
+    ) internal view returns (address token0, address token1, uint8 decimals0, uint8 decimals1) {
         if (tokenA == address(0) || tokenB == address(0) || tokenA == tokenB) {
             revert InvalidTokenPair();
         }
         if (!isApprovedFeeTier(feeBps)) revert InvalidFee();
+        if (
+            !isApprovedPrivateTokenCodehash[tokenA.codehash] ||
+            !isApprovedPrivateTokenCodehash[tokenB.codehash]
+        ) revert UnsupportedPrivateTokenImplementation();
 
         return tokenA < tokenB
             ? (tokenA, tokenB, decimalsA, decimalsB)
@@ -161,44 +184,14 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
             : keccak256(abi.encode(token1, token0, feeBps, PRIVACY_MODE, PROTOCOL_VERSION));
     }
 
-    function launchPoolKey(
-        address creator,
-        address token0,
-        address token1,
-        uint8,
-        uint8,
-        uint256 feeBps
-    ) public pure returns (bytes32) {
-        return token0 < token1
-            ? keccak256(
-                abi.encode(
-                    LAUNCHPAD_POOL_DOMAIN,
-                    creator,
-                    token0,
-                    token1,
-                    feeBps,
-                    PRIVACY_MODE,
-                    PROTOCOL_VERSION
-                )
-            )
-            : keccak256(
-                abi.encode(
-                    LAUNCHPAD_POOL_DOMAIN,
-                    creator,
-                    token1,
-                    token0,
-                    feeBps,
-                    PRIVACY_MODE,
-                    PROTOCOL_VERSION
-                )
-            );
-    }
-
     /**
      * @notice Completes an atomic launchpad bootstrap for a known factory pool.
-     * @dev The launchpad validates the creator-signed inputs and transfers the
-     *      corresponding private assets before calling this function. The pool
-     *      verifies its actual private balances and price bounds again. No
+     * @dev The launchpad validates creator-signed inputs, escrows the exact private
+     *      assets and grants the pool matching encrypted allowances before calling
+     *      this function. The pool validates its logical empty-reserve state and
+     *      price bounds, then pulls exact deltas from the adapter.
+     *      Compatible token transfers and pool accounting remain atomic; raw
+     *      unsolicited token balances never enter reserves or LP claims. No
      *      plaintext amount crosses this boundary.
      */
     function bootstrapPool(
@@ -214,6 +207,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         if (!isPool[pool]) revert UnknownPool();
         return IConfidentialCPMM(pool).bootstrapLiquidity(
             provider,
+            msg.sender,
             amount0,
             amount1,
             minShares,
@@ -241,6 +235,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         if (!isPool[pool]) revert UnknownPool();
         return IConfidentialCPMM(pool).bootstrapLiquidityWithDisposition(
             provider,
+            msg.sender,
             amount0,
             amount1,
             minShares,
@@ -257,5 +252,21 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
 
     function allPools(uint256 index) external view returns (address) {
         return pools[index];
+    }
+
+    function approvedPrivateTokenCodehashesLength() external view returns (uint256) {
+        return approvedPrivateTokenCodehashes.length;
+    }
+
+    function approvedPrivateTokenCodehash(uint256 index) external view returns (bytes32) {
+        return approvedPrivateTokenCodehashes[index];
+    }
+
+    /**
+     * @notice Checks the token's current runtime implementation against this
+     *         factory's immutable deployment-time policy.
+     */
+    function isApprovedPrivateToken(address token) external view returns (bool) {
+        return token.code.length != 0 && isApprovedPrivateTokenCodehash[token.codehash];
     }
 }

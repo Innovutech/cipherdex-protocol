@@ -59,6 +59,11 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : "COTI testnet harness failed");
+  const code = error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code ?? "unknown")
+    : "unknown";
+  console.error(
+    `COTI testnet harness failed; code=${code}; private RPC payloads were suppressed.`,
+  );
   process.exitCode = 1;
 });

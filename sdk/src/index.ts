@@ -68,9 +68,9 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))",
   "function requestQuoteExactInput(((uint256,uint256),bytes),bool,bytes32) returns ((uint256,uint256))",
   "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
-  "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256))",
-  "function bootstrapLiquidity(address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))",
-  "function bootstrapLiquidityWithDisposition(address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)",
+  "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
+  "function bootstrapLiquidity(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))",
+  "function bootstrapLiquidityWithDisposition(address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)",
   "function removeLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256),(uint256,uint256))",
   "function collectProtocolFees(bool,bool)",
   "function myShares() returns ((uint256,uint256))",
@@ -92,17 +92,19 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function PRIVACY_MODE() view returns (uint8)",
   "function lpTokenFactory() view returns (address)",
   "function feeVault() view returns (address)",
+  "function isApprovedPrivateTokenCodehash(bytes32) view returns (bool)",
+  "function isApprovedPrivateToken(address) view returns (bool)",
+  "function approvedPrivateTokenCodehashesLength() view returns (uint256)",
+  "function approvedPrivateTokenCodehash(uint256) view returns (bytes32)",
   "function isApprovedFeeTier(uint256) pure returns (bool)",
   "function bootstrapConfigurator() view returns (address)",
   "function bootstrapAdapter() view returns (address)",
   "function getPool(bytes32) view returns (address)",
-  "function getLaunchPool(bytes32) view returns (address)",
   "function isPool(address) view returns (bool)",
   "function createPool(address,address,uint8,uint8,uint256) returns (address)",
-  "function createLaunchpadPool(address,address,address,uint8,uint8,uint256) returns (address)",
+  "function getOrCreatePoolForBootstrap(address,address,uint8,uint8,uint256) returns (address)",
   "function setBootstrapAdapter(address)",
   "function poolKey(address,address,uint8,uint8,uint256) pure returns (bytes32)",
-  "function launchPoolKey(address,address,address,uint8,uint8,uint256) pure returns (bytes32)",
   "function allPoolsLength() view returns (uint256)",
   "function allPools(uint256) view returns (address)",
   "function bootstrapPool(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))",
@@ -110,7 +112,6 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
   "event PrivateLPTokenCreated(address indexed pool,address indexed token)",
   "event BootstrapAdapterConfigured(address indexed adapter)",
-  "event LaunchpadPoolCreated(address indexed creator,address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
 ] as const;
 
 export const PRIVATE_LP_TOKEN_ABI = [
@@ -286,6 +287,7 @@ export const PUBLIC_CPMM_ABI = [
   "event ProtocolFeeAccrued(address indexed token,uint256 amount)",
   "event ProtocolFeeCollected(address indexed token,address indexed feeVault,uint256 debitedAmount,uint256 receivedAmount)",
   "event UnmanagedBalanceSwept(address indexed token,address indexed feeVault,uint256 debitedAmount,uint256 receivedAmount)",
+  "event ProtocolFeeLossReconciled(address indexed token,uint256 previousClaim,uint256 remainingClaim,uint256 loss)",
 ] as const;
 
 export const PUBLIC_CPMM_FACTORY_ABI = [
@@ -383,6 +385,17 @@ export function calculateCipherDEXV1FeeBreakdown(
   };
 }
 
+export function minimumCipherDEXV1ConfidentialInput(totalFeeBps: number): bigint {
+  const policy = getCipherDEXV1FeePolicy(totalFeeBps);
+  const protocolShareNumerator = BigInt(policy.protocolFeeShareNumerator);
+  const protocolShareDenominator = BigInt(policy.protocolFeeShareDenominator);
+  const minimumTotalFee =
+    protocolShareDenominator / protocolShareNumerator +
+    (protocolShareDenominator % protocolShareNumerator === 0n ? 0n : 1n);
+
+  return ((minimumTotalFee - 1n) * 10_000n) / BigInt(totalFeeBps) + 1n;
+}
+
 export type ConfidentialPoolDiscovery = {
   disclosureSchemaVersion: typeof DISCLOSURE_SCHEMA_VERSION;
   protocolVersion: number;
@@ -395,7 +408,7 @@ export type ConfidentialPoolDiscovery = {
   feeVault: string;
   feePolicy: CipherDEXV1FeePolicy;
   privacyMode: typeof PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP;
-  poolKind: "private-erc20-cpmm-v1" | "private-erc20-cpmm-v2";
+  poolKind: "private-erc20-cpmm-v2";
   quoteTransport: typeof CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT;
 };
 
@@ -410,6 +423,19 @@ export type VerifiedConfidentialPoolDiscovery = Readonly<
     readonly [VERIFIED_CONFIDENTIAL_POOL_DISCOVERY]: true;
   }
 >;
+
+/**
+ * A decrypted result held only inside a quote service process. The current
+ * COTI testnet transport is a paid encrypted result transaction; callers must
+ * not persist or publish these values as market data.
+ */
+export type ConfidentialQuoteEvaluation = {
+  discovery: VerifiedConfidentialPoolDiscovery;
+  requestId: string;
+  amountIn: bigint;
+  zeroForOne: boolean;
+  decryptedAmountOut: bigint;
+};
 
 export type ConfidentialPoolOnchainState = {
   protocolVersion: number | bigint;
@@ -430,6 +456,7 @@ export type ConfidentialPoolOnchainState = {
 export interface ConfidentialPoolVerificationAdapter {
   getCode(address: string): Promise<string>;
   readFactoryProtocolVersion(factory: string): Promise<number | bigint>;
+  isFactoryPrivateTokenApproved(factory: string, token: string): Promise<boolean>;
   isFactoryPool(factory: string, pool: string): Promise<boolean>;
   getCanonicalPool(
     factory: string,
@@ -444,19 +471,6 @@ export type ConfidentialPoolVerificationPolicy = {
   expectedProtocolVersion: number;
 };
 
-/**
- * A decrypted quote held only inside a quote service's process. This is not a
- * discovery or API response shape: callers must not persist or publish it.
- * `requestId` is an opaque local correlation value proving that all compared
- * outputs came from the same logical input and direction.
- */
-export type ConfidentialQuoteEvaluation = {
-  discovery: VerifiedConfidentialPoolDiscovery;
-  requestId: string;
-  zeroForOne: boolean;
-  decryptedAmountOut: bigint;
-};
-
 export type PublicPoolDiscovery = {
   disclosureSchemaVersion: typeof DISCLOSURE_SCHEMA_VERSION;
   protocolVersion: number;
@@ -469,8 +483,35 @@ export type PublicPoolDiscovery = {
   feeVault: string;
   feePolicy: CipherDEXV1FeePolicy;
   privacyMode: typeof PRIVACY_MODE.TRANSPARENT;
-  poolKind: "public-erc20-cpmm-v1" | "public-erc20-cpmm-v2";
+  poolKind: "public-erc20-cpmm-v2";
 };
+
+const VERIFIED_PUBLIC_POOL_DISCOVERY: unique symbol = Symbol(
+  "CipherDEX.VerifiedPublicPoolDiscovery",
+);
+const verifiedPublicPoolDiscoveries = new WeakSet<object>();
+
+export type VerifiedPublicPoolDiscovery = Readonly<
+  PublicPoolDiscovery & {
+    factory: string;
+    readonly [VERIFIED_PUBLIC_POOL_DISCOVERY]: true;
+  }
+>;
+
+export type PublicPoolOnchainState = ConfidentialPoolOnchainState;
+
+export interface PublicPoolVerificationAdapter {
+  getCode(address: string): Promise<string>;
+  readFactoryProtocolVersion(factory: string): Promise<number | bigint>;
+  isFactoryPool(factory: string, pool: string): Promise<boolean>;
+  getCanonicalPool(
+    factory: string,
+    discovery: PublicPoolDiscovery,
+  ): Promise<string>;
+  readPoolState(pool: string): Promise<PublicPoolOnchainState>;
+}
+
+export type PublicPoolVerificationPolicy = ConfidentialPoolVerificationPolicy;
 
 export type ConfidentialLockMetadata = {
   lockId: string;
@@ -531,9 +572,8 @@ export function isConfidentialPoolDiscovery(
   const candidate = value as Partial<ConfidentialPoolDiscovery>;
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
-    ((candidate.protocolVersion === 1 && candidate.poolKind === "private-erc20-cpmm-v1") ||
-      (candidate.protocolVersion === CIPHERDEX_PROTOCOL_VERSION &&
-        candidate.poolKind === "private-erc20-cpmm-v2")) &&
+    candidate.protocolVersion === CIPHERDEX_PROTOCOL_VERSION &&
+    candidate.poolKind === "private-erc20-cpmm-v2" &&
     isAddressLike(candidate.pool) &&
     isAddressLike(candidate.token0) &&
     isAddressLike(candidate.token1) &&
@@ -618,6 +658,29 @@ const snapshotConfidentialPoolDiscovery = (value: unknown): unknown => {
   }
 };
 
+const snapshotPublicPoolDiscovery = (value: unknown): unknown => {
+  if (!value || typeof value !== "object") return value;
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    return {
+      disclosureSchemaVersion: ownDataValue(descriptors, "disclosureSchemaVersion"),
+      protocolVersion: ownDataValue(descriptors, "protocolVersion"),
+      pool: ownDataValue(descriptors, "pool"),
+      token0: ownDataValue(descriptors, "token0"),
+      token1: ownDataValue(descriptors, "token1"),
+      token0Decimals: ownDataValue(descriptors, "token0Decimals"),
+      token1Decimals: ownDataValue(descriptors, "token1Decimals"),
+      feeBps: ownDataValue(descriptors, "feeBps"),
+      feeVault: ownDataValue(descriptors, "feeVault"),
+      feePolicy: snapshotFeePolicy(ownDataValue(descriptors, "feePolicy")),
+      privacyMode: ownDataValue(descriptors, "privacyMode"),
+      poolKind: ownDataValue(descriptors, "poolKind"),
+    };
+  } catch {
+    return undefined;
+  }
+};
+
 const toSafeChainNumber = (value: number | bigint): number | undefined => {
   if (typeof value === "number") return Number.isSafeInteger(value) ? value : undefined;
   if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
@@ -662,6 +725,8 @@ export async function verifyConfidentialPoolDiscovery(
   let factoryCode: string;
   let poolCode: string;
   let factoryVersionValue: number | bigint;
+  let token0Approved: boolean;
+  let token1Approved: boolean;
   let factoryRecognizesPool: boolean;
   let canonicalPool: string;
   let poolState: ConfidentialPoolOnchainState;
@@ -670,6 +735,8 @@ export async function verifyConfidentialPoolDiscovery(
       factoryCode,
       poolCode,
       factoryVersionValue,
+      token0Approved,
+      token1Approved,
       factoryRecognizesPool,
       canonicalPool,
       poolState,
@@ -677,6 +744,8 @@ export async function verifyConfidentialPoolDiscovery(
       adapter.getCode(policy.expectedFactory),
       adapter.getCode(discovery.pool),
       adapter.readFactoryProtocolVersion(policy.expectedFactory),
+      adapter.isFactoryPrivateTokenApproved(policy.expectedFactory, discovery.token0),
+      adapter.isFactoryPrivateTokenApproved(policy.expectedFactory, discovery.token1),
       adapter.isFactoryPool(policy.expectedFactory, discovery.pool),
       adapter.getCanonicalPool(policy.expectedFactory, discovery),
       adapter.readPoolState(discovery.pool),
@@ -695,6 +764,8 @@ export async function verifyConfidentialPoolDiscovery(
   if (
     !hasDeployedCode(factoryCode) ||
     !hasDeployedCode(poolCode) ||
+    !token0Approved ||
+    !token1Approved ||
     !factoryRecognizesPool ||
     factoryVersion !== policy.expectedProtocolVersion ||
     poolVersion !== discovery.protocolVersion ||
@@ -732,10 +803,9 @@ export async function verifyConfidentialPoolDiscovery(
 }
 
 /**
- * Deterministically selects the largest decrypted output among candidate
- * confidential pools. The service must create fresh authenticated quote inputs
- * per pool, decrypt each result with its own dedicated quote identity, and pass
- * only evaluations for one request into this function.
+ * Selects the largest output among factory-proven canonical fee-tier pools.
+ * Each evaluation must represent the same logical request and direction. The
+ * service creates a fresh pool-bound encrypted input for every transaction.
  */
 export function selectBestConfidentialPoolQuote(
   evaluations: readonly ConfidentialQuoteEvaluation[],
@@ -745,6 +815,7 @@ export function selectBestConfidentialPoolQuote(
   const first = evaluations[0];
   if (
     first.requestId.length === 0 ||
+    first.amountIn <= 0n ||
     first.decryptedAmountOut <= 0n ||
     !verifiedConfidentialPoolDiscoveries.has(first.discovery)
   ) {
@@ -753,6 +824,8 @@ export function selectBestConfidentialPoolQuote(
 
   const token0 = first.discovery.token0.toLowerCase();
   const token1 = first.discovery.token1.toLowerCase();
+  const factory = first.discovery.factory.toLowerCase();
+  const feeVault = first.discovery.feeVault.toLowerCase();
   const seenPools = new Set<string>();
   let best = first;
 
@@ -760,11 +833,17 @@ export function selectBestConfidentialPoolQuote(
     const pool = evaluation.discovery.pool.toLowerCase();
     if (
       evaluation.requestId !== first.requestId ||
+      evaluation.amountIn !== first.amountIn ||
       evaluation.zeroForOne !== first.zeroForOne ||
       evaluation.decryptedAmountOut <= 0n ||
       !verifiedConfidentialPoolDiscoveries.has(evaluation.discovery) ||
       evaluation.discovery.token0.toLowerCase() !== token0 ||
       evaluation.discovery.token1.toLowerCase() !== token1 ||
+      evaluation.discovery.factory.toLowerCase() !== factory ||
+      evaluation.discovery.feeVault.toLowerCase() !== feeVault ||
+      evaluation.discovery.protocolVersion !== first.discovery.protocolVersion ||
+      evaluation.discovery.privacyMode !== first.discovery.privacyMode ||
+      evaluation.discovery.poolKind !== first.discovery.poolKind ||
       seenPools.has(pool)
     ) {
       throw new TypeError("Incomparable confidential quote evaluations");
@@ -791,20 +870,128 @@ export function isPublicPoolDiscovery(value: unknown): value is PublicPoolDiscov
   const candidate = value as Partial<PublicPoolDiscovery>;
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
-    ((candidate.protocolVersion === 1 && candidate.poolKind === "public-erc20-cpmm-v1") ||
-      (candidate.protocolVersion === CIPHERDEX_PROTOCOL_VERSION &&
-        candidate.poolKind === "public-erc20-cpmm-v2")) &&
-    typeof candidate.pool === "string" &&
-    typeof candidate.token0 === "string" &&
-    typeof candidate.token1 === "string" &&
-    typeof candidate.protocolVersion === "number" &&
-    typeof candidate.token0Decimals === "number" &&
-    typeof candidate.token1Decimals === "number" &&
-    typeof candidate.feeBps === "number" &&
+    candidate.protocolVersion === CIPHERDEX_PROTOCOL_VERSION &&
+    candidate.poolKind === "public-erc20-cpmm-v2" &&
+    isAddressLike(candidate.pool) &&
+    isAddressLike(candidate.token0) &&
+    isAddressLike(candidate.token1) &&
+    candidate.token0!.toLowerCase() < candidate.token1!.toLowerCase() &&
+    Number.isInteger(candidate.protocolVersion) &&
+    candidate.protocolVersion! > 0 &&
+    Number.isInteger(candidate.token0Decimals) &&
+    candidate.token0Decimals! >= 0 &&
+    candidate.token0Decimals! <= 18 &&
+    Number.isInteger(candidate.token1Decimals) &&
+    candidate.token1Decimals! >= 0 &&
+    candidate.token1Decimals! <= 18 &&
+    Number.isInteger(candidate.feeBps) &&
+    candidate.feeBps! >= 0 &&
     isAddressLike(candidate.feeVault) &&
     isCipherDEXV1FeePolicy(candidate.feePolicy, candidate.feeBps) &&
     candidate.privacyMode === PRIVACY_MODE.TRANSPARENT
   );
+}
+
+export const isPublicPoolDiscoveryShape = isPublicPoolDiscovery;
+
+/**
+ * Converts untrusted public-market metadata into a process-local value bound
+ * to the expected canonical factory, fee vault, protocol and immutable pool
+ * state. Shape validation alone is not provenance validation.
+ */
+export async function verifyPublicPoolDiscovery(
+  value: unknown,
+  policy: PublicPoolVerificationPolicy,
+  adapter: PublicPoolVerificationAdapter,
+): Promise<VerifiedPublicPoolDiscovery> {
+  if (containsSensitiveDisclosure(value)) {
+    throw new TypeError("Invalid public pool discovery shape");
+  }
+  const discoverySnapshot = snapshotPublicPoolDiscovery(value);
+  if (!isPublicPoolDiscovery(discoverySnapshot)) {
+    throw new TypeError("Invalid public pool discovery shape");
+  }
+  const discovery = discoverySnapshot;
+  if (
+    !isAddressLike(policy.expectedFactory) ||
+    !isAddressLike(policy.expectedFeeVault) ||
+    !Number.isSafeInteger(policy.expectedProtocolVersion) ||
+    policy.expectedProtocolVersion <= 0 ||
+    discovery.protocolVersion !== policy.expectedProtocolVersion ||
+    !sameAddress(discovery.feeVault, policy.expectedFeeVault)
+  ) {
+    throw new TypeError("Public pool discovery violates verification policy");
+  }
+
+  let factoryCode: string;
+  let poolCode: string;
+  let factoryVersionValue: number | bigint;
+  let factoryRecognizesPool: boolean;
+  let canonicalPool: string;
+  let poolState: PublicPoolOnchainState;
+  try {
+    [
+      factoryCode,
+      poolCode,
+      factoryVersionValue,
+      factoryRecognizesPool,
+      canonicalPool,
+      poolState,
+    ] = await Promise.all([
+      adapter.getCode(policy.expectedFactory),
+      adapter.getCode(discovery.pool),
+      adapter.readFactoryProtocolVersion(policy.expectedFactory),
+      adapter.isFactoryPool(policy.expectedFactory, discovery.pool),
+      adapter.getCanonicalPool(policy.expectedFactory, discovery),
+      adapter.readPoolState(discovery.pool),
+    ]);
+  } catch (error) {
+    throw new TypeError("Unable to verify public pool provenance", { cause: error });
+  }
+
+  const factoryVersion = toSafeChainNumber(factoryVersionValue);
+  const poolVersion = toSafeChainNumber(poolState.protocolVersion);
+  const privacyMode = toSafeChainNumber(poolState.privacyMode);
+  const token0Decimals = toSafeChainNumber(poolState.token0Decimals);
+  const token1Decimals = toSafeChainNumber(poolState.token1Decimals);
+  const feeBps = toSafeChainNumber(poolState.feeBps);
+
+  if (
+    !hasDeployedCode(factoryCode) ||
+    !hasDeployedCode(poolCode) ||
+    !factoryRecognizesPool ||
+    factoryVersion !== policy.expectedProtocolVersion ||
+    poolVersion !== discovery.protocolVersion ||
+    privacyMode !== discovery.privacyMode ||
+    !sameAddress(canonicalPool, discovery.pool) ||
+    !sameAddress(poolState.token0, discovery.token0) ||
+    !sameAddress(poolState.token1, discovery.token1) ||
+    token0Decimals !== discovery.token0Decimals ||
+    token1Decimals !== discovery.token1Decimals ||
+    feeBps !== discovery.feeBps ||
+    !sameAddress(poolState.feeVault, discovery.feeVault) ||
+    !sameAddress(poolState.feeVault, policy.expectedFeeVault)
+  ) {
+    throw new TypeError("Public pool provenance verification failed");
+  }
+
+  const verified = Object.freeze({
+    disclosureSchemaVersion: discovery.disclosureSchemaVersion,
+    protocolVersion: discovery.protocolVersion,
+    factory: policy.expectedFactory,
+    pool: discovery.pool,
+    token0: discovery.token0,
+    token1: discovery.token1,
+    token0Decimals: discovery.token0Decimals,
+    token1Decimals: discovery.token1Decimals,
+    feeBps: discovery.feeBps,
+    feeVault: discovery.feeVault,
+    feePolicy: Object.freeze(getCipherDEXV1FeePolicy(discovery.feeBps)),
+    privacyMode: discovery.privacyMode,
+    poolKind: discovery.poolKind,
+  }) as VerifiedPublicPoolDiscovery;
+  verifiedPublicPoolDiscoveries.add(verified);
+  return verified;
 }
 
 export function isConfidentialLockDiscovery(

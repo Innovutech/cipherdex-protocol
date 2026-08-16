@@ -8,6 +8,20 @@ export const PRIVATE_ERC20_TESTNET_ABI = [
   `function balanceOf(address account) view returns (${CT_UINT256} balance)`,
   `function allowance(address owner,address spender) view returns ((${CT_UINT256} ciphertext,${CT_UINT256} ownerCiphertext,${CT_UINT256} spenderCiphertext) value)`,
   `function approve(address spender,${IT_UINT256} amount)`,
+  `function transfer(address to,${IT_UINT256} amount)`,
+] as const;
+
+export const CONFIDENTIAL_FACTORY_TESTNET_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function PRIVACY_MODE() view returns (uint8)",
+  "function feeVault() view returns (address)",
+  "function isApprovedPrivateTokenCodehash(bytes32 codehash) view returns (bool)",
+  "function isApprovedPrivateToken(address token) view returns (bool)",
+  "function approvedPrivateTokenCodehashesLength() view returns (uint256)",
+  "function approvedPrivateTokenCodehash(uint256 index) view returns (bytes32)",
+  "function isPool(address pool) view returns (bool)",
+  "function getPool(bytes32 key) view returns (address)",
+  "function poolKey(address token0,address token1,uint8 decimals0,uint8 decimals1,uint256 feeBps) pure returns (bytes32)",
 ] as const;
 
 export const CONFIDENTIAL_POOL_TESTNET_ABI = [
@@ -24,10 +38,15 @@ export const CONFIDENTIAL_POOL_TESTNET_ABI = [
   "error InputAlreadyConsumed()",
   "error DeadlineExpired()",
   "error Reentrancy()",
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function PRIVACY_MODE() view returns (uint8)",
   "function token0() view returns (address)",
   "function token1() view returns (address)",
+  "function token0Decimals() view returns (uint8)",
+  "function token1Decimals() view returns (uint8)",
   "function feeBps() view returns (uint256)",
   "function feeVault() view returns (address)",
+  "function bootstrapper() view returns (address)",
   "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)",
   "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)",
   "function protocolFeeSwapCount0() view returns (uint32)",
@@ -40,7 +59,7 @@ export const CONFIDENTIAL_POOL_TESTNET_ABI = [
   `function quoteExactInput(${IT_UINT256} amountIn,bool zeroForOne) returns (${CT_UINT256} amountOut)`,
   `function requestQuoteExactInput(${IT_UINT256} amountIn,bool zeroForOne,bytes32 requestId) returns (${CT_UINT256} result)`,
   `function swapExactInput(${IT_UINT256} amountIn,${IT_UINT256} minAmountOut,bool zeroForOne,uint64 deadline) returns (${CT_UINT256} amountOut)`,
-  `function addLiquidity(${IT_UINT256} amount0Desired,${IT_UINT256} amount1Desired,${IT_UINT256} minShares,uint64 deadline) returns (${CT_UINT256} mintedShares)`,
+  `function addLiquidity(${IT_UINT256} amount0Desired,${IT_UINT256} amount1Desired,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,bool expectedInitialized,uint64 deadline) returns (${CT_UINT256} mintedShares)`,
   `function removeLiquidity(${IT_UINT256} shares,${IT_UINT256} minAmount0,${IT_UINT256} minAmount1,uint64 deadline) returns (${CT_UINT256} amount0,${CT_UINT256} amount1)`,
   `function lockShares(${IT_UINT256} shares,uint64 unlockTime,bool permanent,uint64 deadline) returns (bytes32 lockId)`,
   "function unlockShares(bytes32 lockId)",

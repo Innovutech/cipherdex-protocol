@@ -57,6 +57,9 @@ traffic or an information-theoretic anonymity set.
 ## Trust assumptions
 
 The design relies on COTI's MPC precompile, consensus, operator/key-management
-model, official token implementation, client-side AES key handling and the COTI
-SDK's authenticated encrypted-input format. These are trust assumptions, not
-cryptographic proofs produced by this repository.
+model, reviewed token implementations admitted by the factory's immutable
+runtime-codehash policy, client-side AES key handling and the COTI SDK's
+authenticated encrypted-input format. Interface and exact-balance checks reduce
+integration mistakes but do not prove the behavior of an approved implementation.
+Mutable proxy and metamorphic implementations are unsupported. These are trust
+assumptions, not cryptographic proofs produced by this repository.

@@ -47,9 +47,13 @@ the invariant while the protocol share remains excluded from LP ownership and
 pricing.
 
 Total-fee rounding follows the pre-existing net-input floor. The protocol split
-rounds down, so any indivisible remainder favors LPs. A tiny valid trade can
-therefore pay a nonzero total fee while its protocol share is zero. Quotes and
-execution use the same arithmetic.
+rounds down, so any indivisible remainder favors LPs. Public pools may execute a
+tiny trade whose nonzero total fee rounds to a zero protocol share. Confidential
+pools reject that dust range in both quote and settlement math: otherwise an
+attacker could use zero-accrual swaps to satisfy the public eight-swap batch gate
+and isolate another user's encrypted fee in a collection window. The threshold
+is denomination-relative raw units and does not add another fee. Quotes and
+execution use the same arithmetic and validity rule for their pool mode.
 
 ## Public pools
 
@@ -61,18 +65,23 @@ only effective reserves.
 `collectProtocolFees(collectToken0, collectToken1)` is permissionless but can
 transfer only to the pool's immutable `CipherDEXFeeVault`. Each side is selected
 independently, so a reverting token cannot block collection of its paired asset.
-Collection clears the selected nominal counter and measures the vault's actual
-receipt; an outbound-tax token therefore reduces protocol revenue without
-changing LP accounting. The same nominal amount leaves the pool's raw balance,
-so effective reserves and price do not change. A full LP exit withdraws all
-effective reserves but leaves protocol-owned balances behind.
+Collection measures both the pool debit and vault credit and requires each to
+equal the selected claim exactly. A short-credit, taxed or otherwise
+non-conforming transfer reverts atomically without clearing the claim. A prior
+external token loss is reconciled conservatively against protocol-owned claims
+before effective reserves are used; LP-owned liquidity is never silently
+reclassified as a protocol fee. A successful collection removes the same nominal
+amount from raw balance and protocol claims, so effective reserves and price do
+not change. A full LP exit withdraws all effective reserves but leaves
+protocol-owned balances behind.
 
 ## Confidential pools
 
 `ConfidentialCPMM` keeps per-token protocol fees as encrypted MPC accumulators
 separate from its encrypted effective reserves. Neither accumulator has a public
 getter. A swap credits the effective reserve with `amountIn - protocolFee` and
-adds the encrypted protocol share to the accumulator for the input token.
+adds the encrypted protocol share to the accumulator for the input token. A swap
+whose rounded protocol share is zero reverts before transfer or batch accounting.
 
 Collection is aggregate rather than per-swap:
 
@@ -123,12 +132,11 @@ constructor-bound. There is no administrator setter. Changing those economics
 requires a new approved protocol version and new pool identity; an existing pool
 cannot be silently repriced.
 
-Manual factory creation and launchpad migration use separate deterministic
-namespaces but inherit exactly the same immutable fee policy and fee vault.
-Launchpad identity includes the creator to prevent pool-slot preemption. A future
-pool-creation anti-spam fee may be considered separately, but v1 has none. Such a
-fee would be a one-time native-COTI creation charge, never part of swap quote
-math.
+Manual creation and launchpad bootstrap resolve the same canonical pool key and
+inherit exactly the same immutable fee policy and fee vault. There is no
+creator-scoped parallel market namespace. A future pool-creation anti-spam fee
+may be considered separately, but v1 has none. Such a fee would be a one-time
+native-COTI creation charge, never part of swap quote math.
 
 ## Official references
 

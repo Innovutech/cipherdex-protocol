@@ -9,35 +9,47 @@ is no mainnet deployment script or mainnet network entry.
    deployment creates one immutable `CipherDEXFeeVault` and binds both factories
    to it. A production beneficiary should be a reviewed multisig; it cannot be
    changed for deployed pools.
-4. Keep the two official COTI PrivateERC20-compatible token addresses and public
-   decimals available for the separate scenario runner. The core deployment does
-   not require token addresses because pool creation is permissionless.
+4. Set `COTI_TOKEN0` and `COTI_TOKEN1` to reviewed deployed COTI
+   PrivateERC20-compatible implementations. The deployment derives their runtime
+   codehashes and installs those hashes as the confidential factory's immutable
+   token-implementation policy. `CIPHERDEX_PRIVATE_TOKEN_CODEHASHES` may add an
+   explicitly reviewed comma-separated set, but it must include both configured
+   token hashes. Do not approve mutable proxy or metamorphic implementations.
+   Supporting a new implementation requires a reviewed fresh factory deployment;
+   existing pools and factories are never mutated.
 5. Run `npm ci --ignore-scripts` after reviewing the lockfile.
 6. Run `npm run verify`.
 7. Run `npm run testnet:preflight`. The preflight intentionally skips contract
    compilation so missing configuration fails immediately. It verifies the configured chain, native
    testnet gas, token contract code/decimals, and caller-encrypted balance
-   read/decrypt paths for the primary LP, second LP and quote identity. It does
+   read/decrypt paths for the primary LP and second LP, plus the separate quote
+   probe identity. It does
    not print balances, ciphertexts, keys, or raw RPC payloads.
    `publicAmountsEnabled` is reported for awareness but is not a
    compatibility gate: the protocol uses COTI's encrypted token methods.
-8. Run `npm run deploy:testnet`. This deploys the fee vault, confidential permissionless
-   factory, its pool-bound LP-token deployer, the atomic encrypted launchpad
+8. Run `npm run deploy:testnet`. This deploys the fee vault, the stateless
+   pool-bound LP-token deployer, the confidential permissionless factory with its
+   immutable private-token runtime-codehash policy, the atomic encrypted launchpad
    migrator, binds that migrator as the factory's one-time bootstrap adapter,
    and deploys the public factory/quoter/router. It does not create a pool or
    move tokens. The factory bootstrap hooks remain disabled until that one-time
-   adapter binding succeeds.
+   adapter binding succeeds. The script fails before connecting or sending a
+   transaction unless the Git worktree is clean and `HEAD` is a full commit.
 9. Set `COTI_DEPLOYMENT_RECORD=deployments/coti-testnet-latest.json` to have the
    script write an ignored JSON record containing public addresses, deployment
    transaction hashes, gas values, compiler settings, source commit and explicit
-   limitations. The path is restricted to `deployments/*.json`. Do not commit
-   private keys or private ciphertexts.
+   limitations. Every deployed contract also records its observed runtime
+   codehash. The path is restricted to `deployments/*.json`. Do not commit
+   private keys or private ciphertexts. The public record includes the reviewed
+   token addresses and approved runtime codehashes so integrations can audit the
+   factory boundary.
 
 The deploy script prints only public contract configuration. It does not onboard
 accounts, handle AES keys, create a pool, or manufacture encrypted inputs. Use the
 official COTI SDK and the documented scenario/launchpad harness for those operations.
 
-The patched public and confidential pools/factories/periphery report protocol
-version 2; the patched launchpad migrator reports version 3. They are immutable
-redeployments, not upgrades to existing bytecode. Follow
-`docs/SECURITY_UPGRADE_V2.md` before changing an integration allowlist.
+The public and confidential pools, factories and periphery report protocol
+version 2; the launchpad migrator reports version 3. Integration allowlists must
+pin the deployed factory, fee vault, protocol version and canonical pool mapping.
+They should also verify that each confidential token's current runtime codehash
+is approved by that exact factory.

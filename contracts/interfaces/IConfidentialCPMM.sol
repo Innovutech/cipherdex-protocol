@@ -54,11 +54,15 @@ interface IConfidentialCPMM {
         itUint256 calldata amount0,
         itUint256 calldata amount1,
         itUint256 calldata minShares,
+        itUint256 calldata minPriceX18,
+        itUint256 calldata maxPriceX18,
+        bool expectedInitialized,
         uint64 deadline
     ) external returns (ctUint256 memory mintedShares);
 
     function bootstrapLiquidity(
         address provider,
+        address fundingSource,
         uint256 amount0,
         uint256 amount1,
         uint256 minShares,
@@ -68,6 +72,7 @@ interface IConfidentialCPMM {
 
     function bootstrapLiquidityWithDisposition(
         address provider,
+        address fundingSource,
         uint256 amount0,
         uint256 amount1,
         uint256 minShares,

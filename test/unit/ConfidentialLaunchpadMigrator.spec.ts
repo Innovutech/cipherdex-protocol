@@ -1,13 +1,11 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { deployFeeVault } from "../helpers/deployFeeVault";
+import { deployConfidentialFactory } from "../helpers/deployConfidentialFactory";
 
 describe("ConfidentialLaunchpadMigrator", function () {
-  it("keeps the factory binding immutable and rejects a zero factory", async function () {
-    const vault = await deployFeeVault();
-    const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory");
-    const factory = await factoryFactory.deploy(await vault.getAddress());
-    await factory.waitForDeployment();
+  it("keeps the factory binding immutable and requires a deployed factory", async function () {
+    const [, outsider] = await ethers.getSigners();
+    const { factory, vault } = await deployConfidentialFactory();
 
     const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
     const migrator = await migratorFactory.deploy(await factory.getAddress());
@@ -20,14 +18,13 @@ describe("ConfidentialLaunchpadMigrator", function () {
     expect(await factory.isApprovedFeeTier(25)).to.equal(false);
     await expect(migratorFactory.deploy(ethers.ZeroAddress))
       .to.be.revertedWithCustomError(migrator, "InvalidFactory");
+    await expect(migratorFactory.deploy(outsider.address))
+      .to.be.revertedWithCustomError(migrator, "InvalidFactory");
   });
 
   it("binds the creator, migration context and opaque MPC input commitments", async function () {
     const [creator, other] = await ethers.getSigners();
-    const vault = await deployFeeVault();
-    const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory");
-    const factory = await factoryFactory.deploy(await vault.getAddress());
-    await factory.waitForDeployment();
+    const { factory } = await deployConfidentialFactory();
     const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
     const migrator = await migratorFactory.deploy(await factory.getAddress());
     await migrator.waitForDeployment();
@@ -104,10 +101,7 @@ describe("ConfidentialLaunchpadMigrator", function () {
 
   it("rejects caller, domain, payload and disposition authorization mismatches before MPC", async function () {
     const [creator, other] = await ethers.getSigners();
-    const vault = await deployFeeVault();
-    const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory");
-    const factory = await factoryFactory.deploy(await vault.getAddress());
-    await factory.waitForDeployment();
+    const { factory, vault } = await deployConfidentialFactory();
     const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
     const migrator = await migratorFactory.deploy(await factory.getAddress());
     await migrator.waitForDeployment();

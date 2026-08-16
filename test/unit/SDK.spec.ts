@@ -23,8 +23,10 @@ import {
   isConfidentialPoolDiscovery,
   isLaunchpadMigrationMetadata,
   isPublicPoolDiscovery,
+  minimumCipherDEXV1ConfidentialInput,
   selectBestConfidentialPoolQuote,
   verifyConfidentialPoolDiscovery,
+  verifyPublicPoolDiscovery,
 } from "../../sdk/src/index";
 
 describe("stable SDK surface", function () {
@@ -43,6 +45,7 @@ describe("stable SDK surface", function () {
     expect(pool.getFunction("PRIVACY_MODE")).to.not.equal(null);
     expect(pool.getFunction("LP_DISPOSITION_PERMANENT_LOCK")).to.not.equal(null);
     expect(pool.getFunction("removeLiquidity")).to.not.equal(null);
+    expect(pool.getFunction("quoteExactInput")).to.not.equal(null);
     expect(pool.getFunction("requestQuoteExactInput")).to.not.equal(null);
     expect(pool.getEvent("ConfidentialQuoteResult")).to.not.equal(null);
     expect(pool.getFunction("collectProtocolFees")).to.not.equal(null);
@@ -54,18 +57,16 @@ describe("stable SDK surface", function () {
     expect(pool.getFunction("bootstrapLiquidity")).to.not.equal(null);
     expect(pool.getFunction("bootstrapLiquidityWithDisposition")).to.not.equal(null);
     expect(factory.getFunction("createPool")).to.not.equal(null);
-    expect(factory.getFunction("createLaunchpadPool")).to.not.equal(null);
-    expect(factory.getFunction("launchPoolKey")).to.not.equal(null);
-    expect(factory.getFunction("getLaunchPool")).to.not.equal(null);
+    expect(factory.getFunction("getOrCreatePoolForBootstrap")).to.not.equal(null);
     expect(factory.getFunction("createPoolWithPublisher")).to.equal(null);
     expect(factory.getFunction("PRIVACY_MODE")).to.not.equal(null);
     expect(factory.getFunction("setBootstrapAdapter")).to.not.equal(null);
     expect(factory.getFunction("bootstrapAdapter")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPool")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPoolWithDisposition")).to.not.equal(null);
+    expect(factory.getFunction("isApprovedPrivateToken")).to.not.equal(null);
     expect(factory.getEvent("PoolCreated")).to.not.equal(null);
     expect(factory.getEvent("PrivateLPTokenCreated")).to.not.equal(null);
-    expect(factory.getEvent("LaunchpadPoolCreated")).to.not.equal(null);
     expect(privateLpToken.getFunction("pool")).to.not.equal(null);
     expect(privateLpToken.getFunction("balanceOf")).to.not.equal(null);
     expect(launchpad.getFunction("migrate")).to.not.equal(null);
@@ -97,7 +98,7 @@ describe("stable SDK surface", function () {
     expect(
       isConfidentialPoolDiscovery({
         disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
-        protocolVersion: 1,
+        protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
         pool: "0x0000000000000000000000000000000000000001",
         token0: "0x0000000000000000000000000000000000000002",
         token1: "0x0000000000000000000000000000000000000003",
@@ -107,20 +108,29 @@ describe("stable SDK surface", function () {
         feeVault,
         feePolicy,
         privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-        poolKind: "private-erc20-cpmm-v1",
+        poolKind: "private-erc20-cpmm-v2",
         quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
       }),
     ).to.equal(true);
-    expect(
-      isConfidentialPoolDiscovery({
-        disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
-        poolKind: "private-erc20-cpmm-v1",
-      }),
-    ).to.equal(false);
+    expect(isConfidentialPoolDiscovery({
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      protocolVersion: 1,
+      pool: "0x0000000000000000000000000000000000000001",
+      token0: "0x0000000000000000000000000000000000000002",
+      token1: "0x0000000000000000000000000000000000000003",
+      token0Decimals: 18,
+      token1Decimals: 6,
+      feeBps: 30,
+      feeVault,
+      feePolicy,
+      privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
+      poolKind: "private-erc20-cpmm-v1",
+      quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
+    })).to.equal(false);
     expect(
       isPublicPoolDiscovery({
         disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
-        protocolVersion: 1,
+        protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
         pool: "0x0000000000000000000000000000000000000001",
         token0: "0x0000000000000000000000000000000000000002",
         token1: "0x0000000000000000000000000000000000000003",
@@ -130,7 +140,7 @@ describe("stable SDK surface", function () {
         feeVault,
         feePolicy,
         privacyMode: PRIVACY_MODE.TRANSPARENT,
-        poolKind: "public-erc20-cpmm-v1",
+        poolKind: "public-erc20-cpmm-v2",
       }),
     ).to.equal(true);
 
@@ -172,7 +182,7 @@ describe("stable SDK surface", function () {
     expect(
       isConfidentialPoolDiscovery({
         disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
-        protocolVersion: 1,
+        protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
         pool,
         token0: owner,
         token1: lockId.slice(0, 42),
@@ -182,7 +192,7 @@ describe("stable SDK surface", function () {
         feeVault,
         feePolicy,
         privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-        poolKind: "private-erc20-cpmm-v1",
+        poolKind: "private-erc20-cpmm-v2",
         quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
         totalShares: "private",
       }),
@@ -297,6 +307,7 @@ describe("stable SDK surface", function () {
     const adapter = (candidate: ReturnType<typeof discovery>, overrides: Record<string, unknown> = {}) => ({
       getCode: async () => "0x60006000",
       readFactoryProtocolVersion: async () => BigInt(CIPHERDEX_PROTOCOL_VERSION),
+      isFactoryPrivateTokenApproved: async () => true,
       isFactoryPool: async () => true,
       getCanonicalPool: async () => candidate.pool,
       readPoolState: async () => ({
@@ -345,12 +356,14 @@ describe("stable SDK surface", function () {
     const slow = {
       discovery: await verify(slowDiscovery),
       requestId: "request-1",
+      amountIn: 1_000n,
       zeroForOne: true,
       decryptedAmountOut: 100n,
     };
     const best = {
       discovery: await verify(bestDiscovery),
       requestId: "request-1",
+      amountIn: 1_000n,
       zeroForOne: true,
       decryptedAmountOut: 110n,
     };
@@ -360,16 +373,41 @@ describe("stable SDK surface", function () {
       slow,
       { ...best, requestId: "different-request" },
     ])).to.throw("Incomparable confidential quote evaluations");
+    expect(() => selectBestConfidentialPoolQuote([
+      slow,
+      { ...best, amountIn: best.amountIn + 1n },
+    ])).to.throw("Incomparable confidential quote evaluations");
     expect(() => selectBestConfidentialPoolQuote([slow, slow])).to.throw(
       "Incomparable confidential quote evaluations",
     );
-
     expect(() => selectBestConfidentialPoolQuote([{
       ...slow,
       discovery: slowDiscovery,
     }] as never)).to.throw("Invalid confidential quote evaluation");
 
+    const otherFactory = "0x0000000000000000000000000000000000000098";
+    const otherDomain = await verifyConfidentialPoolDiscovery(
+      discovery("0x0000000000000000000000000000000000000066", 5),
+      {
+        expectedFactory: otherFactory,
+        expectedFeeVault: feeVault,
+        expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      },
+      adapter(discovery("0x0000000000000000000000000000000000000066", 5)),
+    );
+    expect(() => selectBestConfidentialPoolQuote([
+      slow,
+      {
+        discovery: otherDomain,
+        requestId: slow.requestId,
+        amountIn: slow.amountIn,
+        zeroForOne: slow.zeroForOne,
+        decryptedAmountOut: 120n,
+      },
+    ])).to.throw("Incomparable confidential quote evaluations");
+
     for (const overrides of [
+      { isFactoryPrivateTokenApproved: async () => false },
       { isFactoryPool: async () => false },
       { getCanonicalPool: async () => "0x0000000000000000000000000000000000000077" },
       {
@@ -388,6 +426,69 @@ describe("stable SDK surface", function () {
       let rejected = false;
       try {
         await verify(slowDiscovery, overrides);
+      } catch (error) {
+        rejected = error instanceof TypeError;
+      }
+      expect(rejected).to.equal(true);
+    }
+  });
+
+  it("requires canonical factory provenance for public pool discovery", async function () {
+    const factory = "0x0000000000000000000000000000000000000099";
+    const feeVault = "0x0000000000000000000000000000000000000055";
+    const discovery = {
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      pool: "0x0000000000000000000000000000000000000033",
+      token0: "0x0000000000000000000000000000000000000011",
+      token1: "0x0000000000000000000000000000000000000022",
+      token0Decimals: 18,
+      token1Decimals: 6,
+      feeBps: 30,
+      feeVault,
+      feePolicy: getCipherDEXV1FeePolicy(30),
+      privacyMode: PRIVACY_MODE.TRANSPARENT,
+      poolKind: "public-erc20-cpmm-v2" as const,
+    };
+    const adapter = {
+      getCode: async () => "0x60006000",
+      readFactoryProtocolVersion: async () => BigInt(CIPHERDEX_PROTOCOL_VERSION),
+      isFactoryPool: async () => true,
+      getCanonicalPool: async () => discovery.pool,
+      readPoolState: async () => ({
+        protocolVersion: BigInt(CIPHERDEX_PROTOCOL_VERSION),
+        privacyMode: 0n,
+        token0: discovery.token0,
+        token1: discovery.token1,
+        token0Decimals: 18n,
+        token1Decimals: 6n,
+        feeBps: 30n,
+        feeVault,
+      }),
+    };
+    const policy = {
+      expectedFactory: factory,
+      expectedFeeVault: feeVault,
+      expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+    };
+
+    const verified = await verifyPublicPoolDiscovery(discovery, policy, adapter);
+    expect(verified.factory).to.equal(factory);
+    expect(Object.isFrozen(verified)).to.equal(true);
+
+    for (const overrides of [
+      { isFactoryPool: async () => false },
+      { getCanonicalPool: async () => "0x0000000000000000000000000000000000000077" },
+      {
+        readPoolState: async () => ({
+          ...(await adapter.readPoolState()),
+          privacyMode: 1n,
+        }),
+      },
+    ]) {
+      let rejected = false;
+      try {
+        await verifyPublicPoolDiscovery(discovery, policy, { ...adapter, ...overrides });
       } catch (error) {
         rejected = error instanceof TypeError;
       }
@@ -418,6 +519,14 @@ describe("stable SDK surface", function () {
       lpFee: 25n,
       protocolFee: 5n,
     });
+    expect(minimumCipherDEXV1ConfidentialInput(5)).to.equal(10_001n);
+    expect(minimumCipherDEXV1ConfidentialInput(30)).to.equal(1_667n);
+    expect(minimumCipherDEXV1ConfidentialInput(100)).to.equal(501n);
+    for (const feeBps of CIPHERDEX_V1_FEE_POLICY.approvedTotalFeeBps) {
+      const minimum = minimumCipherDEXV1ConfidentialInput(feeBps);
+      expect(calculateCipherDEXV1FeeBreakdown(minimum, feeBps).protocolFee).to.equal(1n);
+      expect(calculateCipherDEXV1FeeBreakdown(minimum - 1n, feeBps).protocolFee).to.equal(0n);
+    }
     expect(() => getCipherDEXV1FeePolicy(25)).to.throw("Unsupported CipherDEX v1 fee tier");
   });
 });

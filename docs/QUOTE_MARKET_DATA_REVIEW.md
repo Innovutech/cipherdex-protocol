@@ -4,182 +4,187 @@ Date: 2026-08-15
 
 ## Decision
 
-Keep permissionless encrypted exact-input quotes and remove all public
-reserve-derived market data from `ConfidentialCPMM`. The confidential core does
-not publish reserves, TVL, aggregate LP supply, spot price, TWAP, depth bands, or
-exact quotes. Any future public oracle is optional and separate from settlement.
+Keep confidential settlement, encrypted exact-input quotes and the absence of
+public reserve-derived state. On the current COTI testnet runtime, exact private
+quotes use an explicitly labelled encrypted transaction/event fallback because
+fresh MPC operations cannot execute under `eth_call`.
 
-Walletless integration remains possible through a dedicated, non-custodial COTI
-quote identity. It discovers canonical fee-tier candidates, creates fresh
-authenticated encrypted inputs for each pool, performs COTI-compatible quote
-requests, decrypts only its own results in memory, and selects the largest
-output. On the current COTI testnet this uses an on-chain request with a
-caller-encrypted result event because MPC precompiles are not executed under
-`eth_call`; the direct simulation function remains available for a compatible
-RPC. It never holds user funds or signs swaps. The user independently creates
-fresh authenticated amount/slippage inputs and executes the selected pool
-directly.
+The fallback is functional, not ideal UX. A non-custodial quote identity can
+discover factory-proven canonical fee-tier pools, create a fresh authenticated
+input for each candidate, submit each request, decrypt only its own result and
+select the largest output. It pays gas, waits for inclusion and creates public
+caller/pool/direction/timing history. The user independently creates fresh
+pool-bound inputs and swaps directly against the selected pool.
 
-This is a testnet-only design decision, not an audit or mainnet claim.
+No public reserve, TVL, spot-price, TWAP, depth ladder or quote state is added.
+This is a testnet feasibility boundary, not a mainnet-readiness claim.
 
-## Evidence from the current COTI primitives
+## Isolated runtime evidence
 
-The reviewed `@coti-io/coti-contracts@1.3.5` `MpcCore` implementation and official
-COTI documentation support:
+`MpcQuoteCallProbe` creates reusable ciphertext in a deployment transaction and
+then tests every relevant read stage independently:
 
-- `validateCiphertext` for signed `Inputtext` bound to sender, target contract,
-  selector, and encrypted value;
-- `setPublic256` to introduce a public integer into protected computation;
-- mixed protected arithmetic and comparisons, including checked multiplication,
-  division, min/max, and boolean predicates;
-- `offBoard` for network-key ciphertext storage;
-- `offBoardToUser` for a result encrypted to a selected user's AES key;
-- `decrypt` for intentional plaintext disclosure, with explicit official
-  warnings that it must not reveal user-specific secrets publicly.
+| Stage under `eth_call` | Result |
+| --- | --- |
+| Read ciphertext already encrypted for the caller | Supported |
+| `SetPublic` plus plaintext `Decrypt` | Rejected |
+| Raw `SetPublic` precompile call | Returns failure |
+| Raw stored-ciphertext `OnBoard` | Returns failure |
+| Stored `OnBoard` plus `OffBoardToUser` | Rejected |
+| `ValidateCiphertext` plus `OffBoardToUser` | Rejected |
+| Stored add plus user offboarding | Rejected |
+| Stored multiply/divide plus user offboarding | Rejected |
+| Stored comparison/mux plus user offboarding | Rejected |
+| Plaintext-input full CPMM quote | Rejected |
+| Plaintext-input full CPMM quote using deployment-time encrypted constants | Rejected |
+| Authenticated-input full CPMM quote | Rejected |
 
-Public inputs can therefore be evaluated against confidential reserves, and a
-derived result can technically be disclosed. Technical possibility does not make
-that disclosure privacy-neutral. A public exact quote or accepted price predicate
-is an oracle over the private curve and can be queried repeatedly.
+The same `SetPublic`/`Decrypt` control succeeds in a mined transaction. The raw
+precompile probe identifies `OnBoard` itself as the first failing operation under
+`eth_call`: it returns failure even for ciphertext created and stored during the
+probe deployment. Pre-creating encrypted zero, one, fee-denominator and net-fee
+constants removes `SetPublic` from the quote, but still cannot avoid onboarding
+the stored reserves and constants, so that complete path also reverts. This
+isolates the boundary to fresh MPC precompile execution during `eth_call`, not
+AES setup, authenticated input binding, CPMM arithmetic, gas limit or reserve
+initialization.
 
-## Current quote boundary
+Gasless private-token reads are consistent with this evidence.
+`PrivateERC20.balanceOf(address)` returns caller-encrypted ciphertext already
+stored by the token. It performs no `OnBoard`, arithmetic or new offboarding.
+CipherDEX must onboard confidential reserves and compute a new result.
 
-`quoteExactInput(itUint256,bool)` validates the caller's authenticated encrypted
-input, reads both protected accounting reserves, evaluates the CPMM, and returns
-only `offBoardToUser(output,msg.sender)`. It emits no quote event and does not
-persist quote state. It is deliberately non-view because COTI MPC
-onboarding/offboarding is not ordinary EVM-only computation.
+## Privacy properties
 
-The current COTI testnet RPC does not execute the required MPC precompiles under
-`eth_call`. `requestQuoteExactInput` therefore computes the same result in a
-transaction and emits it encrypted for the caller with an opaque request ID.
-This creates public caller/pool/direction/timing history, but never plaintext
-input or output. Integrations must prefer the non-transactional function when a
-future compatible RPC can execute it faithfully; they must not silently treat an
-MPC simulation failure as a zero quote.
+### Individual activity
 
-The encryption protects a specific request and result from passive public
-observation. It does not hide the caller, pool, token identities, direction,
-timing, or ciphertext metadata from the RPC endpoint. It also does not prevent
-the caller from decrypting and learning its own result.
+The authenticated quote input and caller-encrypted result keep the requested
+amount and output out of plaintext calldata, events, storage and errors. Swap,
+liquidity, LP-share and slippage amounts remain confidential. Participant
+addresses, pool, token pair, direction, timing, gas and success remain public
+under the standard COTI PrivateERC20/EVM boundary.
 
-## Active probing analysis
+### Aggregate pool state
 
-For known fee and decimals, the public formula is:
+Exact reserves, TVL and aggregate private LP supply remain ciphertext and are not
+reencrypted to a privileged API. Protocol fee balances are separate encrypted
+accounting and remain excluded from effective reserves.
+
+### Active probing
+
+For known fee and decimals:
 
 `netIn = floor(amountIn * (10000 - feeBps) / 10000)`
 
-`retainedOut = ceil(reserveIn * reserveOut / (reserveIn + netIn))`
+`newReserveIn = reserveIn + netIn`
+
+`retainedOut = ceil(reserveIn * reserveOut / newReserveIn)`
 
 `amountOut = reserveOut - retainedOut`
 
-A small quote estimates the marginal reserve ratio after fees. Multiple quote
-sizes reveal curvature and therefore an effective depth range. Integer rounding,
-concurrent state changes, and unknown exact reserves create uncertainty, but do
-not provide a durable curve-confidentiality guarantee. A permissionless caller
-that can generate and decrypt valid quotes can probe repeatedly without creating
-normal transaction/event history.
+A caller that obtains exact results for chosen inputs can estimate marginal
+price from small probes and curve depth from varied probes. Multiple observations
+can substantially constrain or recover effective reserves despite integer
+rounding and concurrent state changes. Encryption protects each payload from
+passive observers; it does not make a deterministic CPMM curve unknowable to the
+party receiving exact quotes.
 
-Therefore:
-
-- encrypted quoting meaningfully protects individual payload confidentiality;
-- it does not make price or depth unknowable to an active quote participant;
-- publishing a public spot/TWAP would widen disclosure from active participants
-  to every passive observer and create a persistent historical feed;
-- reserve confidentiality still matters because exact reserve/TVL state and LP
-  exposure are not directly available, even if the curve can be approximated.
+That weakness does not justify public reserves. Publishing every reserve update
+would let all passive observers compare state transitions and infer individual
+swap or liquidity deltas. Permissionless exact quoting and strong curve secrecy
+are fundamentally in tension; the protocol documents that limitation rather than
+claiming otherwise.
 
 ## Required answers
 
-### 1. Why is the current confidential quote input/output encrypted?
+### 1. Why is quote input/output encrypted?
 
-To keep the requested amount and returned output out of plaintext calldata,
-public RPC responses, events, errors, and storage. The pool can compute against
-private reserves and re-encrypt the result for the authenticated caller.
+To compute against confidential reserves without publishing the caller's chosen
+amount or result. The transaction fallback emits only a result encrypted for the
+requesting identity.
 
-### 2. Which privacy guarantees does that actually provide?
+### 2. Which guarantees does that provide?
 
-It protects a caller's specific quote amount/result from passive chain readers
-and unrelated callers. A compatible RPC simulation avoids quote transaction
-history; the current testnet transaction transport publicly reveals caller,
-pool, direction, and timing. Neither transport stops the caller/RPC from
-observing and analyzing requested results.
+It protects the numeric request and output from passive chain readers and
+unrelated callers. It does not hide public transaction metadata, the request from
+the chosen RPC operator, or the output from its intended recipient.
 
-### 3. Can repeated permissionless private quotes infer price or depth?
+### 3. Can repeated quotes infer price or depth?
 
-Yes. Small probes estimate marginal price; varied sizes estimate curvature and
-effective depth. Exact reserve recovery may remain uncertain due to integer
-rounding and moving state, but strong curve secrecy is not a valid claim.
+Yes. Exact chosen-input access reveals marginal price and curvature. Strong
+reserve secrecy against an active funded quote operator is not a valid claim.
 
-### 4. Can a walletless backend/API obtain a quote?
+### 4. Can a walletless backend quote?
 
-Not as an unauthenticated plaintext caller. It can operate a dedicated onboarded
-COTI EOA and AES key, create authenticated inputs, and decrypt its own output.
-Today it also needs enough native testnet COTI to submit transactional quote
-requests; on a compatible RPC it can use `eth_call` instead. That identity is
-non-custodial and must not sign user swaps.
+Yes, by operating a dedicated onboarded COTI EOA/AES quote identity and paying
+for the encrypted request transactions. It cannot obtain a fresh MPC quote with
+a gas-free `eth_call` on the tested runtime. The identity is non-custodial and
+must never receive user funds or sign user swaps.
 
-### 5. Can COTI MPC safely support public/selective derived data?
+### 5. Can COTI MPC selectively disclose derived data?
 
-It can technically combine public operands with confidential reserves and can
-intentionally decrypt or re-encrypt a derived result. Safety depends on the
-disclosure policy, not just the primitive. Releasing spot, TWAP, exact quotes, or
-comparison outcomes creates an oracle that can weaken reserve-ratio/depth
-confidentiality. The v1 core therefore does not expose one.
+Yes in transaction execution: public or authenticated values can participate in
+MPC and a derived result can be reencrypted or deliberately decrypted. The
+current testnet node refuses those fresh MPC operations under `eth_call`.
+Disclosure safety remains a policy question, not merely a primitive capability.
 
-### 6. What can be public without materially weakening user privacy?
+### 6. What can be public without materially weakening amount privacy?
 
-Pool address, ordered token identities, public decimals, fee tier, privacy mode,
-protocol version, initialization state, participant addresses already exposed by
-PrivateERC20, swap direction, lock owner/timing/disposition, transaction timing,
-gas, and success/failure. Exact reserves, TVL, aggregate shares, individual LP
-amounts, quote outputs, swaps, slippage, and liquidity amounts remain private.
+Canonical pool address, ordered token identities, decimals, approved fee tier,
+privacy mode, protocol version, initialization status, factory provenance,
+participant addresses already exposed by token interfaces, direction, timing and
+public lock metadata. Reserves, TVL, aggregate shares, LP amounts, swap amounts,
+outputs, slippage and liquidity amounts stay private.
 
-### 7. What do integrations need to quote and route pools?
+### 7. What do integrations need?
 
-Discover candidates from factory events/registry getters; keep only matching pair,
-privacy mode, protocol version, and supported fee tiers; use a dedicated quote
-identity to request and decrypt one quote per candidate; compare only results for
-the same opaque request ID and direction; return the selected pool and a bounded
-user-facing quote; have the user create fresh pool-bound encrypted inputs and call
-the pool directly. Never aggregate LP positions as separately quoted routes.
+Public pools need only factory discovery and read-only quoting. Confidential
+integrations need:
 
-### 8. Keep, extend, or redesign?
+1. a pinned factory, fee vault, protocol version and approved fee tiers;
+2. factory and canonical-key verification for every candidate;
+3. a separate protected quote EOA/AES key with minimal gas funds;
+4. one fresh target/selector-bound input and transaction per candidate;
+5. strict event correlation by caller, request ID and direction;
+6. in-memory decryption and deterministic best-output selection;
+7. fresh user-bound input and nonzero minimum output for direct pool execution;
+8. no plaintext amount, result, ciphertext or key logging.
 
-Keep the encrypted direct-to-pool execution boundary, remove the embedded public
-spot/TWAP extension, and extend only the SDK/reference integration flow for
-service-local candidate selection. Do not add public reserve getters, a public
-exact-quoter, or a generic confidential router. Revisit a separate oracle only
-after an explicit leakage budget, manipulation model, and independent review.
+### 8. Keep, extend or redesign?
 
-## Alternative summary
+Keep the settlement privacy boundary and extend the integration surface with the
+evidence-backed transaction fallback. Do not add public reserve-derived state or
+a forwarding private router. Re-test gasless encrypted and plaintext-input paths
+when the COTI runtime changes; if full MPC `eth_call` succeeds, replace only the
+quote transport after parity and security review.
 
-| Model | Useful property | Privacy consequence | v1 decision |
+## Alternatives
+
+| Model | Benefit | Cost or privacy consequence | Decision |
 | --- | --- | --- | --- |
-| Encrypted caller quote | Exact executable estimate for one authenticated identity | Active caller can probe curve | Keep |
-| Public exact quote | Simple aggregator integration | Universal exact curve oracle | Reject |
-| Public reserves/TVL | Simple analytics and deterministic routing | Removes aggregate reserve confidentiality | Reject |
-| Core spot/TWAP | Walletless persistent market history | Permanently reveals ratio/history to passive observers | Remove |
-| Coarse depth buckets | Approximate route filtering | Leaks bounded reserve/depth information | Defer |
-| Dedicated quote identity | Walletless integration without custody | Service learns requested outputs and needs protected key operations | Reference flow |
-| Separate optional oracle | Explicit opt-in analytics policy | Depends on its own leakage/manipulation design | Future review |
+| MPC `eth_call` | Exact, gasless, no quote transaction history | Unsupported by tested runtime | Preferred future transport |
+| Encrypted quote transaction | Exact and amount-confidential | Gas, latency, public metadata | Current explicit fallback |
+| Public exact reserves | Simple universal routing | Reveals aggregate state and per-change deltas | Rejected |
+| Public exact quote | Simple universal routing | Public active oracle over curve | Rejected |
+| Public spot/TWAP | Analytics and rough routing | Persistent ratio/history disclosure; insufficient for slippage | Not embedded |
+| Reencrypt reserves to one API | Cheap exact backend quotes | API learns reserves/deltas; centralized confidentiality trust | Rejected |
+| Coarse or delayed snapshots | Lower-cost route filtering | Staleness, manipulation and explicit leakage budget | Future separate review |
+| Generic confidential router | One execution surface | Breaks authenticated sender/target/selector binding | Rejected without official delegation |
 
-## Operational requirements for a quote identity
+## Operational boundary
 
-- separate EOA/AES key from treasury, deployer, and user wallets;
-- no funds beyond minimal gas if the RPC implementation unexpectedly requires it;
-- no ability to sign or relay user swaps;
-- no plaintext amount/output/ciphertext/AES-key logging;
-- short request retention, bounded concurrency, rate limits, and RPC isolation;
-- fresh authenticated input per pool because COTI input signatures bind target
-  contract and selector;
-- fail closed when a result cannot be decrypted or candidate identity differs;
-- user execution must use fresh inputs and its own minimum-output policy.
+- Use a quote identity distinct from deployer, treasury, LPs and users.
+- Fund it only for bounded testnet quote gas.
+- Rate-limit and serialize request handling; never reuse signed ciphertext.
+- Keep decrypted outputs in memory only and use opaque correlation IDs.
+- Do not retry an uncertain transaction blindly.
+- Show cost and pending status honestly to any testnet client.
+- Re-run `npm run testnet:quote-call-probe` against every target RPC/runtime.
+- Treat any changed failure or newly successful primitive as a review trigger.
 
 ## Official references
 
+- https://docs.coti.io/coti-documentation/how-coti-works/advanced-topics/precompiles
 - https://docs.coti.io/coti-documentation/build-on-coti/tools/contracts-library/mpc-core
 - https://docs.coti.io/coti-documentation/build-on-coti/guides/best-practices/careful-decrypting
-- https://docs.coti.io/coti-documentation/how-coti-works/advanced-topics/aes-keys
-- https://docs.coti.io/coti-documentation/build-on-coti/core-concepts/secure-data-types
-- https://docs.coti.io/coti-documentation/build-on-coti/core-concepts/secure-operations-and-gas
+- https://docs.coti.io/coti-documentation/build-on-coti/tools/contracts-library/tokens/private-erc20

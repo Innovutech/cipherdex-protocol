@@ -115,6 +115,29 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     ).to.be.revertedWithCustomError(factory, "InvalidDecimals");
   });
 
+  it("rejects ordinary ERC-20 contracts that do not advertise the private-token interface", async function () {
+    const publicToken = await (
+      await ethers.getContractFactory("MockERC20")
+    ).deploy("Public Token", "PUB", 18);
+    const privateMetadata = await (
+      await ethers.getContractFactory("MockTokenMetadata")
+    ).deploy(18);
+    await Promise.all([publicToken.waitForDeployment(), privateMetadata.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const poolFactory = await ethers.getContractFactory("ConfidentialCPMM");
+
+    await expect(
+      poolFactory.deploy(
+        await publicToken.getAddress(),
+        await privateMetadata.getAddress(),
+        18,
+        18,
+        30,
+        await vault.getAddress(),
+      ),
+    ).to.be.revertedWithCustomError(poolFactory, "UnsupportedPrivateToken");
+  });
+
   it("rejects a zero or identical token pair", async function () {
     const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
     const token0 = await metadataFactory.deploy(18);
@@ -167,6 +190,7 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     await expect(
       pool.bootstrapLiquidityWithDisposition(
         await (await ethers.getSigners())[0].getAddress(),
+        await (await ethers.getSigners())[0].getAddress(),
         1n,
         1n,
         1n,
@@ -178,6 +202,7 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     ).to.be.revertedWithCustomError(pool, "InvalidLPDisposition");
     await expect(
       pool.bootstrapLiquidityWithDisposition(
+        await (await ethers.getSigners())[0].getAddress(),
         await (await ethers.getSigners())[0].getAddress(),
         1n,
         1n,

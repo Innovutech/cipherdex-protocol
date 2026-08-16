@@ -17,10 +17,11 @@ addresses, so this phase does not claim anonymous or hidden-recipient execution.
 
 `ConfidentialLaunchpadMigrator` is the first atomic integration boundary. A creator
 signs inputs for the migrator, grants it explicit encrypted allowances, and can
-create/select and seed a creator-scoped empty factory pool in one transaction.
-Manual pools and other creators cannot occupy that launch slot. Encrypted price
-bounds let a launchpad preserve a bonding-curve final price without exposing the
-ratio. The migrator is permissionless and has no withdrawal authority.
+resolve or create and seed the one canonical pair/fee/privacy/version pool in one
+transaction. An existing empty canonical pool is reused; an initialized pool is
+rejected before MPC validation or token movement, and no creator-specific parallel
+market is created. Encrypted price bounds preserve a bonding-curve final price
+without exposing the ratio. The migrator has no withdrawal authority.
 
 `PublicCPMM` and `PublicCPMMFactory` are a separate public/public mode. Their
 public amount events and share accounting are not reused by the confidential
@@ -38,31 +39,31 @@ time/count-batched aggregates. See
 Factory-created confidential pools bind a dedicated `PrivateLPToken` to the pool.
 Its balances and transfers use the official encrypted `PrivateERC20` paths; only
 the pool can mint or burn shares when liquidity is added, removed, or locked.
-Directly deployed pools keep the original internal share ledger for compatibility.
-The launchpad migrator preserves creator-held shares by default and also exposes
-an atomic timed-lock or permanent-lock disposition.
+Directly deployed pools retain the internal share ledger only for isolated local
+test-harness use; canonical discovery always uses factory-created LP tokens. The
+launchpad migrator preserves creator-held shares by default and also exposes an
+atomic timed-lock or permanent-lock disposition.
 
 Public pools additionally expose a factory-gated exact-input router and quoter.
 Confidential pools are called directly because their encrypted input signatures
 bind the caller and target pool.
 
-The security-remediated execution contracts use protocol version 2 and the
-launchpad migrator uses version 3. Existing version-1 deployments are immutable;
-see [docs/SECURITY_UPGRADE_V2.md](docs/SECURITY_UPGRADE_V2.md) for discovery,
-redeployment and user-mediated liquidity migration requirements.
+The current testnet execution contracts use protocol version 2 and the launchpad
+migrator uses version 3. Previous testnet artifacts are disposable and are not a
+supported discovery or liquidity-migration surface.
 
 PoD assets are not accepted by this synchronous pool. PoD transfer and approval
 operations are asynchronous cross-chain callback workflows and require a separate
 adapter/state machine; treating them as ordinary ERC-20 calls would be incorrect.
 
 Confidential pools deliberately expose no public reserve-derived market data:
-no reserves, TVL, aggregate LP supply, spot price, TWAP, or exact quote. A
-dedicated non-custodial COTI quote identity may discover canonical candidate
-pools, simulate encrypted quotes, decrypt only its own results, and choose the
-best pool off-chain. On the current COTI testnet the same encrypted computation
-uses a transaction/result event because MPC `eth_call` is unavailable. The user
-then creates fresh authenticated inputs and calls
-that pool directly. Read
+no reserves, TVL, aggregate LP supply, spot price or TWAP. The current COTI
+testnet RPC permits ciphertext-only storage reads but rejects `OnBoard` and every
+tested fresh MPC path under `eth_call`. Confidential pools therefore provide an
+exact encrypted transaction/event quote fallback. It preserves amount secrecy
+and supports deterministic fee-tier selection, but costs gas, waits for inclusion
+and publicly reveals caller, pool, direction and timing. This is a testnet
+feasibility boundary, not normal gasless DEX quote UX. Read
 [docs/QUOTE_MARKET_DATA_REVIEW.md](docs/QUOTE_MARKET_DATA_REVIEW.md),
 [docs/FEE_ECONOMICS.md](docs/FEE_ECONOMICS.md),
 [docs/FEASIBILITY_GATE.md](docs/FEASIBILITY_GATE.md) and
@@ -79,7 +80,7 @@ npm run deploy:testnet
 ```
 
 `testnet:preflight` requires explicit local `.env` values for two funded,
-already-onboarded COTI testnet LP wallets, a separate onboarded quote identity,
+already-onboarded COTI testnet LP wallets, a separate MPC-call probe identity,
 their AES keys, and two official PrivateERC20-compatible token addresses. It
 validates isolated private balance access without printing balances,
 ciphertexts, keys or raw RPC payloads.

@@ -90,7 +90,9 @@ async function main(): Promise<void> {
       role: "quote service",
       privateKey: quotePrivateKey,
       aesKey: quoteAesKey,
-      requiresGas: false,
+      // Current COTI testnet rejects fresh MPC execution under eth_call, so the
+      // supported encrypted quote fallback is a transaction and needs gas.
+      requiresGas: true,
       requiresTokenBalances: false,
     },
   ];
