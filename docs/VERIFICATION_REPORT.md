@@ -255,16 +255,33 @@ limit.
 
 ## Authoritative COTI testnet deployment
 
-No deployment record in this pre-deployment worktree is authoritative for the
-new best-execution implementation. Historical addresses above are disposable
-feasibility and regression evidence only. After this reviewed source is committed,
-the deployment runner must create a fresh immutable
-`deployments/coti-testnet-<source-commit>.json` record on COTI testnet (`7082400`),
-bound to the exact clean source commit, current compiler input, runtime
-codehashes, immutable bindings and every mined transaction. Final addresses and
-transactions belong here only after that record and the funded end-to-end run
-both pass. The configured immutable fee-vault beneficiary is
-`0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff`.
+The clean source commit
+`bd26f22690960bd02387a8a6d3f8bf4b36a5f5e4` was deployed to COTI testnet
+(`7082400`). The complete public manifest is
+`deployments/coti-testnet-bd26f22690960bd02387a8a6d3f8bf4b36a5f5e4.json`.
+It records 12 unique successful deployment and one-time binding transactions,
+their receipts and gas use, exact constructor or binding inputs, compiler
+settings, runtime codehashes and the resulting immutable relationships.
+
+| Component | Address |
+| --- | --- |
+| CipherDEX fee vault | `0x107324aF301238e67aA5550C9f5c133D34A5A117` |
+| Confidential LP-token factory | `0x659102F19d0CA7CDF17e5573BBD99922fFa16dff` |
+| Confidential CPMM factory | `0x56e237f25Fe150100C41844b49023f50769658a4` |
+| Confidential best-execution router | `0x17134E20f8180262B10cFc5fb984E491fCc5d276` |
+| Confidential launchpad migrator | `0x33B015dF5583617Fa7AD2AaA30C3203eFFCa1C43` |
+| Public CPMM factory | `0xDDF99d2A78d53998786ceaD3596981517beC03F6` |
+| Public CPMM quoter | `0xe4dE7C1f63FF53fd6D81Dfff583C270ad3FD3E5a` |
+| Public CPMM router | `0x9b489e2c8828632cd169CB43CB4DcDA7c0478979` |
+
+Post-deployment checks confirmed the confidential and public factory bindings
+to the fixed fee vault, the confidential factory binding to the best-execution
+router and launchpad migrator, and every deployed runtime against the fresh
+reviewed artifact. The immutable fee-vault beneficiary is
+`0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff`. Historical addresses elsewhere in
+this report remain disposable feasibility or regression evidence. The funded
+end-to-end suite is recorded separately after this deployment manifest and
+report are committed as evidence-only changes.
 
 ## Residual assumptions and remaining gates
 
