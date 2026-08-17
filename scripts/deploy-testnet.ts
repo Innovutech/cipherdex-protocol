@@ -25,7 +25,7 @@ import { trustedGitExecutable } from "./trusted-git";
 const execFileAsync = promisify(execFile);
 
 const TESTNET_DEPLOY_GAS_LIMITS = {
-  feeVault: 1_000_000n,
+  feeVault: 2_500_000n,
   privateLpTokenFactory: 8_000_000n,
   confidentialFactory: 8_000_000n,
   confidentialBestExecutionRouter: 3_000_000n,
