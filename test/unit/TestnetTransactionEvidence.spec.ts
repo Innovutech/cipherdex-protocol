@@ -332,6 +332,28 @@ describe("funded testnet transaction evidence", function () {
     expect(publicTransactionHashSuffix({ transactionHash: "secret" })).to.equal("");
   });
 
+  it("does not journal an uncorroborated generic hash from an operation error", async function () {
+    const journaled: string[] = [];
+    let captured: unknown;
+    try {
+      await requireMinedSuccess(
+        "funded action",
+        async () => { throw { cause: { receipt: { hash } } }; },
+        async () => null,
+        (transactionHash) => {
+          journaled.push(transactionHash);
+        },
+      );
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).to.be.instanceOf(UnknownBroadcastOutcomeError);
+    expect((captured as UnknownBroadcastOutcomeError).transactionHash).to.equal(undefined);
+    expect(transactionHashFromError({ cause: { receipt: { hash } } })).to.equal(undefined);
+    expect(journaled).to.deep.equal([]);
+  });
+
   it("redacts external payloads while preserving a known transaction hash", function () {
     const error: Record<string, unknown> = {
       name: "CALL_EXCEPTION",

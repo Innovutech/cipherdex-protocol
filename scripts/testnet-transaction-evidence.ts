@@ -70,7 +70,7 @@ export function transactionHashFromError(error: unknown): string | undefined {
       if (!descriptor || !("value" in descriptor)) continue;
       const value = descriptor.value as unknown;
       if (
-        (key === "transactionHash" || key === "hash") &&
+        key === "transactionHash" &&
         typeof value === "string" &&
         TRANSACTION_HASH.test(value)
       ) return value;

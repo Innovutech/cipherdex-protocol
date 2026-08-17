@@ -361,6 +361,35 @@ if (/transfer(?:From)?GT|approveGT/.test(bestQuoteBody)) {
 const deploymentRawSource = await readFile("scripts/deploy-testnet.ts", "utf8");
 const deploymentSource = maskSourceCommentsAndLiterals(deploymentRawSource);
 const deploymentAst = parseTypeScript(deploymentRawSource, "scripts/deploy-testnet.ts");
+const transactionEvidenceSource = await readFile(
+  "scripts/testnet-transaction-evidence.ts",
+  "utf8",
+);
+const transactionEvidenceAst = parseTypeScript(
+  transactionEvidenceSource,
+  "scripts/testnet-transaction-evidence.ts",
+);
+let acceptsExplicitTransactionHash = false;
+let acceptsGenericHash = false;
+const inspectTransactionHashKeys = (node) => {
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
+    ts.isIdentifier(node.left) &&
+    node.left.text === "key" &&
+    ts.isStringLiteral(node.right)
+  ) {
+    if (node.right.text === "transactionHash") acceptsExplicitTransactionHash = true;
+    if (node.right.text === "hash") acceptsGenericHash = true;
+  }
+  ts.forEachChild(node, inspectTransactionHashKeys);
+};
+inspectTransactionHashKeys(transactionEvidenceAst);
+if (!acceptsExplicitTransactionHash || acceptsGenericHash) {
+  throw new Error(
+    "Funded transaction recovery accepts an uncorroborated generic hash from provider errors",
+  );
+}
 const packageManifest = JSON.parse(await readFile("package.json", "utf8"));
 const freshRunnerSource = await readFile("scripts/run-fresh-hardhat.mjs", "utf8");
 const freshHardhatScripts = new Map([
