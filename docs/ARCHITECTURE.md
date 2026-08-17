@@ -24,6 +24,9 @@
   pools.
 - `contracts/PublicCPMMRouter.sol`: factory-gated exact-input routing for
   public pools only.
+- `contracts/ConfidentialBestExecutionRouter.sol`: factory-bound, single-hop
+  encrypted best quote and atomic best execution across the canonical v1 fee
+  tiers. Callers cannot provide candidate pools.
 - `contracts/ConfidentialLaunchpadMigrator.sol`: atomic creator-signed pool
   creation/selection, encrypted allowance pulls and price-bounded bootstrap.
 - `contracts/interfaces/`: stable ABI surface for clients and future factory/router
@@ -90,12 +93,16 @@ collection never changes effective reserves or price. See `FEE_ECONOMICS.md`.
 
 The core pool exposes no public reserve, TVL, spot-price or TWAP getter. Current
 COTI testnet nodes allow ciphertext-only state reads but reject fresh MPC
-precompile work in `eth_call`, including stored ciphertext onboarding. The pool
-therefore retains an exact encrypted transaction/event quote fallback. A
-dedicated non-custodial quote identity can compare canonical fee-tier candidates,
-but pays gas and exposes request metadata. Public market data would be an
-intentional disclosure and belongs, if ever added, in a separately reviewed
-oracle or batch design rather than being inferred from settlement state.
+precompile work in `eth_call`, including stored ciphertext onboarding. The
+factory-bound router in this version therefore performs exact best quoting in one paid
+transaction. It validates one caller-bound encrypted input, reuses its GT value
+across initialized canonical pools, selects the largest valid output in MPC and
+offboards only the winner. The recorded pre-router deployment still relies on
+the paid per-pool quote as its primary working path; that path becomes a
+compatibility fallback only after the router is finalized and freshly deployed.
+Public market data would be an intentional disclosure and belongs, if
+ever added, in a separately reviewed oracle or batch design rather than being
+inferred from settlement state.
 
 Pool construction also verifies each token's public `decimals()` response and
 rejects non-contract or incompatible metadata before storing normalization
@@ -150,21 +157,34 @@ ERC-20 pools. It temporarily holds the caller's public input, calls the pool,
 and forwards the public output; it has no admin withdrawal or token rescue path.
 The public quoter applies the same factory gate.
 
-Confidential pools are still called directly. COTI authenticated `itUint256`
-inputs bind the sender, target contract and function selector. A generic router
-that simply forwards an input would change `msg.sender` at the pool and
-invalidate the signature; a router that accepts the original user as an
-unchecked parameter would weaken that binding. Private routing therefore needs
-an official, reviewed delegation primitive, not a forwarding wrapper.
+Confidential direct pool execution remains available. For best execution, COTI
+authenticated `itUint256` inputs bind the user to the router and exact quote or
+swap selector. The router validates them once. Pools never accept forwarded
+`itUint256` or an unchecked original-sender parameter; instead they accept raw
+transaction-scoped GT values only from the one router configured by their
+canonical factory. This preserves COTI authentication while permitting safe
+cross-contract GT reuse.
 
-Public pools use ordinary read-only quote calls. Confidential candidate selection
-uses the explicit encrypted transaction/event fallback on the current runtime;
-it is never silently presented as gasless. The service verifies canonical pool
-provenance, creates one fresh input per pool, decrypts only its own outputs and
-selects a single pool. The user then creates fresh inputs and calls that pool
-directly. A future runtime may replace only the quote transport by supporting MPC
-precompiles in `eth_call`; any oracle or snapshot alternative requires a separate
-leakage and manipulation review.
+Candidate identity is not caller controlled. The router derives the ordered
+pair, decimals and 5/30/100 bps keys from its immutable factory, verifies every
+present pool against the canonical mapping and immutable pool metadata, skips
+absent or uninitialized tiers, and resolves equal outputs to the lower fee tier.
+The quote path changes only router replay state and emits one caller-encrypted
+winner. It does not move funds or mutate any pool.
+
+Atomic execution privately repeats selection, pulls the exact input into router
+escrow, grants an exact allowance only to the selected pool and settles directly
+to the user. The pool independently recomputes fee/quote/slippage, updates
+effective reserves and protocol fees, and enforces exact private-token deltas.
+Success requires quote/settlement parity, starting router balances restored and
+all candidate allowances zero. Any failure reverts selection state, escrow,
+allowance and pool accounting together.
+
+Public pools use ordinary read-only quote calls. Confidential exact best quotes
+are explicitly paid transactions on the tested runtime, not gasless calls. A
+future runtime may replace only the quote transport after parity and privacy
+review; any oracle or snapshot alternative requires a separate leakage and
+manipulation review.
 
 ## Launchpad migration boundary
 

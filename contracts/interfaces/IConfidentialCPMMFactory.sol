@@ -14,12 +14,15 @@ interface IConfidentialCPMMFactory {
     );
     event PrivateLPTokenCreated(address indexed pool, address indexed token);
     event BootstrapAdapterConfigured(address indexed adapter);
+    event BestExecutionRouterConfigured(address indexed router);
 
     function PROTOCOL_VERSION() external view returns (uint256);
+    function PRIVACY_MODE() external view returns (uint8);
     function feeVault() external view returns (address);
     function lpTokenFactory() external view returns (address);
     function bootstrapConfigurator() external view returns (address);
     function bootstrapAdapter() external view returns (address);
+    function bestExecutionRouter() external view returns (address);
     function getPool(bytes32 key) external view returns (address);
     function isPool(address pool) external view returns (bool);
     function isApprovedPrivateTokenCodehash(bytes32 codehash) external view returns (bool);
@@ -41,6 +44,7 @@ interface IConfidentialCPMMFactory {
         uint256 feeBps
     ) external returns (address pool);
     function setBootstrapAdapter(address adapter) external;
+    function setBestExecutionRouter(address router) external;
     function poolKey(
         address token0,
         address token1,

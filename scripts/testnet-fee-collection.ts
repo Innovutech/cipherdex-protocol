@@ -1,16 +1,34 @@
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { Contract } from "ethers";
-import { ethers } from "hardhat";
+import hre, { ethers } from "hardhat";
 import {
   CONFIDENTIAL_FACTORY_TESTNET_ABI,
   CONFIDENTIAL_POOL_TESTNET_ABI,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
+import { requireFeeCollectionMature } from "./testnet-fee-collection-readiness";
+import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
+import {
+  requiredTestnetDeploymentRecordPath,
+  verifyConfiguredTestnetDeployment,
+} from "./testnet-deployment-provenance";
+import {
+  confidentialLiquidityBounds,
+  minimumWithSlippage,
+} from "./testnet-slippage";
+import {
+  requireMinedSuccess,
+  safeTestnetErrorSummary,
+} from "./testnet-transaction-evidence";
 
 const TARGET_SWAP_COUNT = 8n;
 const COLLECTION_DELAY_SECONDS = 3_600n;
-const TX_GAS_LIMIT = BigInt(process.env.COTI_TESTNET_GAS_LIMIT ?? "30000000");
+const gasLimitText = process.env.COTI_TESTNET_GAS_LIMIT?.trim() ?? "30000000";
+if (!/^\d+$/.test(gasLimitText) || BigInt(gasLimitText) === 0n) {
+  throw new Error("COTI_TESTNET_GAS_LIMIT must be a positive integer");
+}
+const TX_GAS_LIMIT = BigInt(gasLimitText);
 const TX_OVERRIDES = { gasLimit: TX_GAS_LIMIT } as const;
 
 let stage = "configuration";
@@ -40,38 +58,36 @@ function optionalRawAmount(name: string, fallback: bigint): bigint {
   return parsed;
 }
 
-function safeErrorSummary(error: unknown): string {
-  if (!error || typeof error !== "object") return "code=unknown";
-  const record = error as {
-    name?: unknown;
-    message?: unknown;
-    code?: unknown;
-    shortMessage?: unknown;
-    info?: { error?: { message?: unknown } };
-  };
-  const name = typeof record.name === "string" ? record.name : "Error";
-  const code = typeof record.code === "string" ? record.code : "unknown";
-  const detail = [record.shortMessage, record.info?.error?.message, record.message]
-    .find((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
-  if (!detail) return `name=${name} code=${code}`;
-  return `name=${name} code=${code} detail=${detail
-    .replace(/0x[0-9a-fA-F]{16,}/g, "[redacted-hex]")
-    .replace(/\s+/g, " ")
-    .slice(0, 240)}`;
+function requiredPositiveRawAmount(name: string): bigint {
+  const value = required(name);
+  if (!/^\d+$/.test(value)) throw new Error(`invalid ${name}`);
+  const parsed = BigInt(value);
+  if (parsed === 0n) throw new Error(`${name} must be positive`);
+  return parsed;
+}
+
+function minimumFromQuote(quote: bigint): bigint {
+  if (quote <= 0n) throw new Error("paid encrypted quote returned zero");
+  return minimumWithSlippage(quote);
 }
 
 async function submit(
   label: string,
   transaction: Promise<{ hash: string; wait(): Promise<any> }>,
-): Promise<void> {
+): Promise<any> {
   stage = label;
   const started = Date.now();
-  const response = await transaction;
-  const receipt = await response.wait();
+  const evidence = await requireMinedSuccess(
+    label,
+    () => transaction,
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
+  const receipt = evidence.receipt;
   console.log(
-    `${label}: tx=${response.hash} gas=${receipt?.gasUsed?.toString() ?? "unknown"} ` +
+    `${label}: tx=${evidence.transactionHash} gas=${receipt.gasUsed.toString()} ` +
       `latencyMs=${Date.now() - started}`,
   );
+  return receipt;
 }
 
 async function privateBalance(token: Contract, owner: string, wallet: CotiWallet): Promise<bigint> {
@@ -95,7 +111,57 @@ async function setPrivateAllowance(
   await submit(`${label} approval`, token.approve(poolAddress, value, TX_OVERRIDES));
 }
 
+async function requestPrivateQuote(
+  pool: Contract,
+  poolAddress: string,
+  wallet: CotiWallet,
+  amountIn: bigint,
+  zeroForOne: boolean,
+  label: string,
+): Promise<bigint> {
+  const selector = pool.interface.getFunction("requestQuoteExactInput")?.selector;
+  if (!selector) throw new Error("transactional quote selector unavailable");
+  const encryptedInput = await wallet.encryptValue256(amountIn, poolAddress, selector);
+  const requestId = ethers.keccak256(ethers.randomBytes(32));
+  const caller = await wallet.getAddress();
+  const receipt = await submit(
+    label,
+    pool.requestQuoteExactInput(
+      encryptedInput,
+      zeroForOne,
+      requestId,
+      TX_OVERRIDES,
+    ),
+  );
+  const matches: Array<{
+    ciphertextHigh: bigint | number | string;
+    ciphertextLow: bigint | number | string;
+  }> = [];
+  for (const log of receipt?.logs ?? []) {
+    if (log.address.toLowerCase() !== poolAddress.toLowerCase()) continue;
+    try {
+      const parsed = pool.interface.parseLog({ topics: log.topics, data: log.data });
+      if (
+        parsed?.name === "ConfidentialQuoteResult" &&
+        String(parsed.args.caller).toLowerCase() === caller.toLowerCase() &&
+        String(parsed.args.requestId).toLowerCase() === requestId.toLowerCase() &&
+        parsed.args.zeroForOne === zeroForOne
+      ) {
+        matches.push(parsed.args.result);
+      }
+    } catch {
+      // Ignore token and unrelated contract logs.
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error("encrypted quote result event is missing or ambiguous");
+  }
+  return decryptPrivateValue256(wallet, matches[0]);
+}
+
 async function main(): Promise<void> {
+  await hre.run("clean");
+  await hre.run("compile");
   const poolAddress = requiredAddress("COTI_FEE_COLLECTION_POOL");
   const factoryAddress = requiredAddress("COTI_FACTORY");
   const expectedFeeVault = requiredAddress("COTI_FEE_VAULT");
@@ -104,6 +170,29 @@ async function main(): Promise<void> {
   if (!/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
     throw new Error("invalid COTI_TESTNET_PRIVATE_KEY");
   }
+
+  stage = "network and reviewed deployment provenance";
+  const network = await ethers.provider.getNetwork();
+  if (network.chainId !== 7_082_400n) {
+    throw new Error(`expected COTI testnet 7082400, received ${network.chainId}`);
+  }
+  const deploymentRecord = await verifyConfiguredTestnetDeployment(
+    requiredTestnetDeploymentRecordPath(),
+    ethers.provider,
+    [
+      {
+        recordKey: "confidentialFactory",
+        contractName: "ConfidentialCPMMFactory",
+        address: factoryAddress,
+      },
+      {
+        recordKey: "feeVault",
+        contractName: "CipherDEXFeeVault",
+        address: expectedFeeVault,
+      },
+    ],
+  );
+  await verifyDeployedRuntimeArtifact("ConfidentialCPMM", poolAddress);
 
   const wallet = new CotiWallet(privateKey, ethers.provider, { aesKey });
   wallet.setAesKey(aesKey);
@@ -125,6 +214,16 @@ async function main(): Promise<void> {
   }
   const token0Address = String(await pool.token0());
   const token1Address = String(await pool.token1());
+  const reviewedTokens = deploymentRecord.contracts.confidentialFactory.reviewedPrivateTokens;
+  if (
+    !Array.isArray(reviewedTokens) ||
+    ![token0Address, token1Address].every((token) => reviewedTokens.some(
+      (candidate) => typeof candidate === "string" &&
+        candidate.toLowerCase() === token.toLowerCase(),
+    ))
+  ) {
+    throw new Error("fee-collection tokens are absent from the reviewed deployment record");
+  }
   const [token0Code, token1Code] = await Promise.all([
     ethers.provider.getCode(token0Address),
     ethers.provider.getCode(token1Address),
@@ -219,11 +318,26 @@ async function main(): Promise<void> {
     if (liquidityRequired) {
       const selector = pool.interface.getFunction("addLiquidity")?.selector;
       if (!selector) throw new Error("add-liquidity selector unavailable");
+      const bounds = confidentialLiquidityBounds(
+        liquidity0,
+        decimals0,
+        liquidity1,
+        decimals1,
+        false,
+      );
       const input0 = await wallet.encryptValue256(liquidity0, poolAddress, selector);
       const input1 = await wallet.encryptValue256(liquidity1, poolAddress, selector);
-      const minimum = await wallet.encryptValue256(0n, poolAddress, selector);
-      const minimumPrice = await wallet.encryptValue256(0n, poolAddress, selector);
-      const maximumPrice = await wallet.encryptValue256(ethers.MaxUint256, poolAddress, selector);
+      const minimum = await wallet.encryptValue256(bounds.minShares, poolAddress, selector);
+      const minimumPrice = await wallet.encryptValue256(
+        bounds.minPriceX18,
+        poolAddress,
+        selector,
+      );
+      const maximumPrice = await wallet.encryptValue256(
+        bounds.maxPriceX18,
+        poolAddress,
+        selector,
+      );
       await submit(
         "fee test liquidity initialization",
         pool.addLiquidity(
@@ -244,8 +358,20 @@ async function main(): Promise<void> {
     const rounds = Number(needed0 > needed1 ? needed0 : needed1);
     for (let index = 0; index < rounds; index += 1) {
       if (BigInt(index) < needed0) {
+        const quote = await requestPrivateQuote(
+          pool,
+          poolAddress,
+          wallet,
+          swap0,
+          true,
+          `fee test token0 quote ${index + 1}/${needed0}`,
+        );
         const input = await wallet.encryptValue256(swap0, poolAddress, swapSelector);
-        const minimum = await wallet.encryptValue256(0n, poolAddress, swapSelector);
+        const minimum = await wallet.encryptValue256(
+          minimumFromQuote(quote),
+          poolAddress,
+          swapSelector,
+        );
         await submit(
           `fee test token0 swap ${index + 1}/${needed0}`,
           pool.swapExactInput(
@@ -258,8 +384,20 @@ async function main(): Promise<void> {
         );
       }
       if (BigInt(index) < needed1) {
+        const quote = await requestPrivateQuote(
+          pool,
+          poolAddress,
+          wallet,
+          swap1,
+          false,
+          `fee test token1 quote ${index + 1}/${needed1}`,
+        );
         const input = await wallet.encryptValue256(swap1, poolAddress, swapSelector);
-        const minimum = await wallet.encryptValue256(0n, poolAddress, swapSelector);
+        const minimum = await wallet.encryptValue256(
+          minimumFromQuote(quote),
+          poolAddress,
+          swapSelector,
+        );
         await submit(
           `fee test token1 swap ${index + 1}/${needed1}`,
           pool.swapExactInput(
@@ -286,10 +424,8 @@ async function main(): Promise<void> {
   const latestBlock = await ethers.provider.getBlock("latest");
   if (!latestBlock) throw new Error("latest block unavailable");
   console.log(`confidential fee batch readyAt=${readyAt} count0=${count0} count1=${count1}`);
-  if (BigInt(latestBlock.timestamp) < readyAt) {
-    console.log("confidential fee batch prepared; rerun after readyAt to collect");
-    return;
-  }
+  stage = "fee collection maturity gate";
+  requireFeeCollectionMature(BigInt(latestBlock.timestamp), readyAt);
 
   if (await pool.initialized()) {
     const encryptedShares = await pool.myShares.staticCall();
@@ -298,8 +434,16 @@ async function main(): Promise<void> {
       const selector = pool.interface.getFunction("removeLiquidity")?.selector;
       if (!selector) throw new Error("remove-liquidity selector unavailable");
       const shareInput = await wallet.encryptValue256(shares, poolAddress, selector);
-      const minimum0 = await wallet.encryptValue256(0n, poolAddress, selector);
-      const minimum1 = await wallet.encryptValue256(0n, poolAddress, selector);
+      const minimum0 = await wallet.encryptValue256(
+        requiredPositiveRawAmount("COTI_FEE_TEST_REMOVE_MIN0"),
+        poolAddress,
+        selector,
+      );
+      const minimum1 = await wallet.encryptValue256(
+        requiredPositiveRawAmount("COTI_FEE_TEST_REMOVE_MIN1"),
+        poolAddress,
+        selector,
+      );
       await submit(
         "full LP exit before protocol fee collection",
         pool.removeLiquidity(
@@ -329,7 +473,7 @@ async function main(): Promise<void> {
 
 void main().catch((error: unknown) => {
   console.error(
-    `COTI fee-collection test failed during ${stage}; ${safeErrorSummary(error)}; ` +
+    `COTI fee-collection test failed during ${stage}; ${safeTestnetErrorSummary(error)}; ` +
       "private payloads were suppressed.",
   );
   process.exitCode = 1;

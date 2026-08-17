@@ -1,5 +1,5 @@
 import { BaseContract, ContractFactory } from "ethers";
-import { ethers } from "hardhat";
+import hre, { ethers } from "hardhat";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 
 async function deployAndMeasure(
@@ -17,6 +17,8 @@ async function deployAndMeasure(
 }
 
 async function main(): Promise<void> {
+  await hre.run("clean");
+  await hre.run("compile");
   const [beneficiary] = await ethers.getSigners();
   const feeVault = await deployAndMeasure(
     "CipherDEXFeeVault",
@@ -47,6 +49,25 @@ async function main(): Promise<void> {
     await feeVault.getAddress(),
     await privateLpTokenFactory.getAddress(),
     privateTokenCodehashes,
+  );
+  const confidentialBestExecutionRouter = await deployAndMeasure(
+    "ConfidentialBestExecutionRouter",
+    await ethers.getContractFactory("ConfidentialBestExecutionRouter"),
+    await confidentialFactory.getAddress(),
+  );
+  const bindRouterTransaction = await (
+    confidentialFactory as BaseContract & {
+      setBestExecutionRouter(
+        router: string,
+      ): Promise<{ wait(): Promise<{ gasUsed: bigint } | null> }>;
+    }
+  ).setBestExecutionRouter(await confidentialBestExecutionRouter.getAddress());
+  const bindRouterReceipt = await bindRouterTransaction.wait();
+  if (!bindRouterReceipt) {
+    throw new Error("ConfidentialCPMMFactory.setBestExecutionRouter receipt missing");
+  }
+  console.log(
+    `ConfidentialCPMMFactory.setBestExecutionRouter: gas=${bindRouterReceipt.gasUsed}`,
   );
   const createPoolTransaction = await (
     confidentialFactory as BaseContract & {

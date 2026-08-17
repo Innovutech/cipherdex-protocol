@@ -1,5 +1,10 @@
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
+import { TransactionReceipt } from "ethers";
 import { ethers } from "hardhat";
+import {
+  requireMinedSuccess,
+  safeTestnetErrorSummary,
+} from "./testnet-transaction-evidence";
 
 const RESERVE0 = 1_000_000n;
 const RESERVE1 = 2_000_000n;
@@ -30,35 +35,19 @@ function requiredAesKey(name: string): string {
   return value;
 }
 
-function redactSecrets(value: string): string {
-  let redacted = value;
-  for (const name of ["COTI_QUOTE_PRIVATE_KEY", "COTI_QUOTE_AES_KEY"]) {
-    const secret = process.env[name]?.trim();
-    if (secret) redacted = redacted.split(secret).join("[redacted-secret]");
-  }
-  return redacted;
-}
-
-function errorSummary(error: unknown): string {
-  if (!error || typeof error !== "object") return String(error);
-  const record = error as {
-    code?: unknown;
-    action?: unknown;
-    shortMessage?: unknown;
-    message?: unknown;
-    info?: { error?: { message?: unknown } };
-  };
-  const reason = redactSecrets(String(
-    record.shortMessage ?? record.info?.error?.message ?? record.message ?? "unavailable",
-  ))
-    .replace(/0x[0-9a-fA-F]{16,}/g, "[redacted-hex]")
-    .replace(/\s+/g, " ")
-    .slice(0, 200);
-  return [
-    `code=${String(record.code ?? "unknown")}`,
-    `action=${String(record.action ?? "unknown")}`,
-    `reason=${reason}`,
-  ].join(" ");
+async function submit(
+  label: string,
+  operation: () => Promise<{
+    hash: string;
+    wait(): Promise<TransactionReceipt | null>;
+  }>,
+): Promise<Readonly<{ transactionHash: string; receipt: TransactionReceipt }>> {
+  stage = label;
+  return requireMinedSuccess(
+    label,
+    operation,
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
 }
 
 async function main(): Promise<void> {
@@ -71,22 +60,30 @@ async function main(): Promise<void> {
 
   stage = "probe deployment";
   const factory = await ethers.getContractFactory("MpcQuoteCallProbe");
-  const probe = await factory.deploy(RESERVE0, RESERVE1, quoteAddress, {
-    gasLimit: 10_000_000n,
+  let probe: any;
+  await submit("probe deployment", async () => {
+    probe = await factory.deploy(RESERVE0, RESERVE1, quoteAddress, {
+      gasLimit: 10_000_000n,
+    });
+    const transaction = probe.deploymentTransaction();
+    if (!transaction) throw new Error("probe deployment transaction unavailable");
+    return transaction;
   });
-  await probe.waitForDeployment();
+  if (!probe) {
+    throw new Error("probe deployment mined without a contract handle; do not retry automatically");
+  }
   const probeAddress = await probe.getAddress();
   const quoteProbe = probe.connect(quoteWallet);
   console.log(`MPC quote-call probe deployed: ${probeAddress}`);
 
   stage = "transactional MPC control";
-  const control = await probe.publicDecryptRoundTrip(7n, {
-    gasLimit: CALL_GAS_LIMIT,
-  });
-  const controlReceipt = await control.wait();
+  const controlEvidence = await submit(
+    "transactional MPC control",
+    () => probe.publicDecryptRoundTrip(7n, { gasLimit: CALL_GAS_LIMIT }),
+  );
   console.log(
-    `SetPublic + Decrypt transaction control: supported tx=${control.hash} ` +
-      `gas=${controlReceipt?.gasUsed?.toString() ?? "unknown"}`,
+    `SetPublic + Decrypt transaction control: supported tx=${controlEvidence.transactionHash} ` +
+      `gas=${controlEvidence.receipt.gasUsed.toString()}`,
   );
 
   const results: ProbeResult[] = [];
@@ -101,7 +98,7 @@ async function main(): Promise<void> {
       console.log(`${name}: supported`);
       return true;
     } catch (error: unknown) {
-      const reason = errorSummary(error);
+      const reason = safeTestnetErrorSummary(error);
       results.push({ name, supported: false, reason });
       console.log(`${name}: unavailable (${reason})`);
       return false;
@@ -260,7 +257,8 @@ async function main(): Promise<void> {
 
 void main().catch((error: unknown) => {
   console.error(
-    `COTI testnet MPC eth_call quote probe failed: stage=${stage} ${errorSummary(error)}`,
+    `COTI testnet MPC eth_call quote probe failed: stage=${stage} ` +
+      safeTestnetErrorSummary(error),
   );
   process.exitCode = 1;
 });

@@ -6,6 +6,9 @@ logic. The current public CPMM quoter and router are Solidity contracts under
 the protocol. This directory is the integration boundary for future
 periphery-only SDK, routing and adapter documentation.
 
-The current confidential pool is called directly. COTI authenticated inputs
-bind the sender, target and selector, so a forwarding router must not be added
-until an official delegation primitive preserves that binding.
+Confidential pools retain direct calls and also accept narrow raw-GT quote and
+settlement calls only from the one `ConfidentialBestExecutionRouter` configured
+by their canonical factory. User inputs bind to the router and exact selector;
+the router validates once and reuses the transaction-scoped GT value. This is
+not generic forwarding: callers cannot supply pools or original-sender data, and
+each selected pool remains authoritative for fees, slippage and settlement.

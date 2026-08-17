@@ -10,6 +10,8 @@
 - amounts held in timed/permanent LP locks;
 - amounts in the pool's own events and errors.
 - per-token accrued confidential protocol-fee amounts.
+- losing fee-tier quote outputs and their relative ordering.
+- amounts held temporarily in best-execution router escrow and allowances.
 
 Factory-created LP shares are represented by the pool-bound `PrivateLPToken`.
 Its standard transfer and approval events still reveal participant addresses, but
@@ -26,6 +28,8 @@ discoverable by design.
 - participant addresses in the underlying standard PrivateERC20 `Transfer` event.
 - confidential protocol-fee collection token, destination, aggregate swap count,
   and collection-window timing (but not the accumulated amount).
+- best-quote/best-swap caller, request ID, selected canonical pool and fee tier,
+  direction, transaction timing, gas and success/failure.
 
 The core confidential pool exposes no public reserve-derived market data. Pool
 identity, token metadata, fee tier, protocol version and privacy mode are public;
@@ -43,9 +47,10 @@ logs, custom errors or deployment output.
 Repeated private quotes can still allow an active caller to estimate price and
 depth from the public CPMM formula. Encrypted quotes protect a particular
 request/result from passive public disclosure; they are not an
-information-theoretic curve-hiding mechanism. A dedicated quote service learns
-the outputs it requests and must not persist or publish them as protocol market
-data.
+information-theoretic curve-hiding mechanism. The best-quote router improves
+cross-tier privacy by offboarding only the winner, but the caller learns that
+winner and its exact output and can probe repeatedly. A dedicated quote service
+must not persist or publish those outputs as protocol market data.
 
 Confidential protocol-fee collection has a related but narrower inference
 boundary. Pool-side count/time batching and a delayed vault sweep prevent routine

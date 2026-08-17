@@ -126,6 +126,20 @@ const config: HardhatUserConfig = {
           },
         },
       },
+      "contracts/ConfidentialBestExecutionRouter.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 211,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
       "contracts/PrivateLPToken.sol": {
         version: "0.8.28",
         settings: {
@@ -274,6 +288,34 @@ const config: HardhatUserConfig = {
           optimizer: {
             enabled: true,
             runs: 208,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/mocks/MpcBestExecutionPoolProbe.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 209,
+          },
+          metadata: {
+            bytecodeHash: "none",
+          },
+        },
+      },
+      "contracts/mocks/MpcBestExecutionRouterProbe.sol": {
+        version: "0.8.28",
+        settings: {
+          evmVersion: "paris",
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 210,
           },
           metadata: {
             bytecodeHash: "none",

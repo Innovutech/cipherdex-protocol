@@ -8,6 +8,7 @@
 
 export const DISCLOSURE_SCHEMA_VERSION = 5 as const;
 export const CIPHERDEX_PROTOCOL_VERSION = 2 as const;
+export const CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION = 1 as const;
 
 export const CIPHERDEX_V1_FEE_POLICY = {
   approvedTotalFeeBps: [5, 30, 100] as const,
@@ -99,11 +100,13 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function isApprovedFeeTier(uint256) pure returns (bool)",
   "function bootstrapConfigurator() view returns (address)",
   "function bootstrapAdapter() view returns (address)",
+  "function bestExecutionRouter() view returns (address)",
   "function getPool(bytes32) view returns (address)",
   "function isPool(address) view returns (bool)",
   "function createPool(address,address,uint8,uint8,uint256) returns (address)",
   "function getOrCreatePoolForBootstrap(address,address,uint8,uint8,uint256) returns (address)",
   "function setBootstrapAdapter(address)",
+  "function setBestExecutionRouter(address)",
   "function poolKey(address,address,uint8,uint8,uint256) pure returns (bytes32)",
   "function allPoolsLength() view returns (uint256)",
   "function allPools(uint256) view returns (address)",
@@ -112,6 +115,22 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
   "event PrivateLPTokenCreated(address indexed pool,address indexed token)",
   "event BootstrapAdapterConfigured(address indexed adapter)",
+  "event BestExecutionRouterConfigured(address indexed router)",
+] as const;
+
+export const CONFIDENTIAL_BEST_EXECUTION_POOL_ABI = [
+  "function quoteExactInputForRouter(uint256,bool) returns (uint256,uint256)",
+  "function settleExactInputForRouter(address,uint256,uint256,bool,uint64) returns (uint256)",
+] as const;
+
+export const CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function factory() view returns (address)",
+  "function usedRequestIds(address,bytes4,bytes32) view returns (bool)",
+  "function requestBestQuoteExactInput(address,address,((uint256,uint256),bytes),bytes32,uint64) returns ((uint256,uint256))",
+  "function swapBestExactInput(address,address,((uint256,uint256),bytes),((uint256,uint256),bytes),bytes32,uint64) returns ((uint256,uint256))",
+  "event ConfidentialBestQuoteResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,bool zeroForOne,(uint256,uint256) result)",
+  "event ConfidentialBestSwapResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,bool zeroForOne,(uint256,uint256) result)",
 ] as const;
 
 export const PRIVATE_LP_TOKEN_ABI = [
@@ -327,6 +346,321 @@ export type InputText256 = {
   signature: string | Uint8Array;
 };
 
+export const CONFIDENTIAL_BEST_QUOTE_FUNCTION =
+  "requestBestQuoteExactInput" as const;
+export const CONFIDENTIAL_BEST_SWAP_FUNCTION = "swapBestExactInput" as const;
+export const CONFIDENTIAL_BEST_QUOTE_SELECTOR = "0x440bde4a" as const;
+export const CONFIDENTIAL_BEST_SWAP_SELECTOR = "0x310481d3" as const;
+export const CONFIDENTIAL_BEST_QUOTE_RESULT_TOPIC =
+  "0x5c289a46e21a67737901d6a15bb309376e8c623675d023c7d4a2789962201c31" as const;
+export const CONFIDENTIAL_BEST_SWAP_RESULT_TOPIC =
+  "0x2bb2c35b28364f890e39aff97bd348ac8f50d11748c8e0b8f0c86c43088ff8a7" as const;
+
+export type ConfidentialBestQuoteCall = Readonly<{
+  functionName: typeof CONFIDENTIAL_BEST_QUOTE_FUNCTION;
+  args: readonly [string, string, InputText256, string, bigint];
+}>;
+
+export type ConfidentialBestSwapCall = Readonly<{
+  functionName: typeof CONFIDENTIAL_BEST_SWAP_FUNCTION;
+  args: readonly [string, string, InputText256, InputText256, string, bigint];
+}>;
+
+export type ConfidentialBestExecutionRouterVerificationPolicy = Readonly<{
+  expectedChainId: number;
+  expectedFactory: string;
+  expectedFactoryRuntimeCodehash: string;
+  expectedRouter: string;
+  expectedRouterRuntimeCodehash: string;
+  expectedFactoryProtocolVersion: number;
+  expectedRouterProtocolVersion: number;
+}>;
+
+export interface ConfidentialBestExecutionRouterVerificationAdapter {
+  readChainId(): Promise<number | bigint>;
+  getCode(address: string): Promise<string>;
+  hashRuntimeCode(code: string): string;
+  readFactoryProtocolVersion(factory: string): Promise<number | bigint>;
+  readFactoryBestExecutionRouter(factory: string): Promise<string>;
+  readRouterProtocolVersion(router: string): Promise<number | bigint>;
+  readRouterFactory(router: string): Promise<string>;
+}
+
+const VERIFIED_CONFIDENTIAL_BEST_EXECUTION_ROUTER: unique symbol = Symbol(
+  "CipherDEX.VerifiedConfidentialBestExecutionRouter",
+);
+const verifiedConfidentialBestExecutionRouters = new WeakSet<object>();
+
+export type VerifiedConfidentialBestExecutionRouter = Readonly<{
+  chainId: number;
+  router: string;
+  routerRuntimeCodehash: string;
+  factory: string;
+  factoryRuntimeCodehash: string;
+  factoryProtocolVersion: number;
+  routerProtocolVersion: number;
+  readonly [VERIFIED_CONFIDENTIAL_BEST_EXECUTION_ROUTER]: true;
+}>;
+
+export type ConfidentialBestQuoteTransaction = ConfidentialBestQuoteCall &
+  Readonly<{ chainId: number; to: string }>;
+export type ConfidentialBestSwapTransaction = ConfidentialBestSwapCall &
+  Readonly<{ chainId: number; to: string }>;
+
+export type ConfidentialBestExecutionEncryptionBinding = Readonly<{
+  chainId: number;
+  contractAddress: string;
+  functionName:
+    | typeof CONFIDENTIAL_BEST_QUOTE_FUNCTION
+    | typeof CONFIDENTIAL_BEST_SWAP_FUNCTION;
+  functionSelector:
+    | typeof CONFIDENTIAL_BEST_QUOTE_SELECTOR
+    | typeof CONFIDENTIAL_BEST_SWAP_SELECTOR;
+}>;
+
+export type ConfidentialBestExecutionOperation = "quote" | "swap";
+
+export type ConfidentialBestExecutionResultExpectation = Readonly<{
+  operation: ConfidentialBestExecutionOperation;
+  caller: string;
+  requestId: string;
+  tokenIn: string;
+  tokenOut: string;
+  transactionHash: string;
+  transactionData: string;
+}>;
+
+export type ConfidentialBestExecutionTransactionEvidence = Readonly<{
+  chainId: number | bigint;
+  hash: string;
+  from: string;
+  to: string;
+  data: string;
+}>;
+
+export type ConfidentialBestExecutionLogEvidence = Readonly<{
+  address: string;
+  topics: readonly string[];
+  data: string;
+}>;
+
+export type ConfidentialBestExecutionReceiptEvidence = Readonly<{
+  transactionHash: string;
+  status: number | bigint;
+  logs: readonly ConfidentialBestExecutionLogEvidence[];
+}>;
+
+export interface ConfidentialBestExecutionDecryptionAdapter {
+  readChainId(): Promise<number | bigint>;
+  getTransaction(
+    transactionHash: string,
+  ): Promise<ConfidentialBestExecutionTransactionEvidence | null>;
+  getTransactionReceipt(
+    transactionHash: string,
+  ): Promise<ConfidentialBestExecutionReceiptEvidence | null>;
+  getCanonicalPool(
+    factory: string,
+    tokenIn: string,
+    tokenOut: string,
+    feeBps: number,
+  ): Promise<string>;
+  decryptValue256(value: Ciphertext256): Promise<bigint>;
+}
+
+const UINT64_MAX = (1n << 64n) - 1n;
+const UINT256_MAX = (1n << 256n) - 1n;
+
+function assertConfidentialBestExecutionEnvelope(
+  tokenIn: string,
+  tokenOut: string,
+  requestId: string,
+  deadline: bigint,
+): void {
+  if (
+    !isAddressLike(tokenIn) ||
+    !isAddressLike(tokenOut) ||
+    tokenIn.toLowerCase() === tokenOut.toLowerCase()
+  ) {
+    throw new TypeError("Invalid confidential best-execution token pair");
+  }
+  if (!isBytes32(requestId) || /^0x0{64}$/i.test(requestId)) {
+    throw new TypeError("Invalid confidential best-execution request ID");
+  }
+  if (typeof deadline !== "bigint" || deadline <= 0n || deadline > UINT64_MAX) {
+    throw new TypeError("Invalid confidential best-execution deadline");
+  }
+}
+
+function assertInputText256(value: InputText256): void {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !value.ciphertext ||
+    typeof value.ciphertext.ciphertextHigh !== "bigint" ||
+    typeof value.ciphertext.ciphertextLow !== "bigint" ||
+    value.ciphertext.ciphertextHigh < 0n ||
+    value.ciphertext.ciphertextHigh > UINT256_MAX ||
+    value.ciphertext.ciphertextLow < 0n ||
+    value.ciphertext.ciphertextLow > UINT256_MAX ||
+    !(
+      (typeof value.signature === "string" && /^0x(?:[0-9a-fA-F]{2})+$/.test(value.signature)) ||
+      (value.signature instanceof Uint8Array && value.signature.byteLength > 0)
+    )
+  ) {
+    throw new TypeError("Invalid caller-bound encrypted uint256 input");
+  }
+}
+
+function snapshotInputText256(value: InputText256): InputText256 {
+  assertInputText256(value);
+  const signature = typeof value.signature === "string"
+    ? value.signature
+    : `0x${Array.from(value.signature, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return Object.freeze({
+    ciphertext: Object.freeze({
+      ciphertextHigh: value.ciphertext.ciphertextHigh,
+      ciphertextLow: value.ciphertext.ciphertextLow,
+    }),
+    signature,
+  });
+}
+
+function assertCiphertext256(value: Ciphertext256): void {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof value.ciphertextHigh !== "bigint" ||
+    typeof value.ciphertextLow !== "bigint" ||
+    value.ciphertextHigh < 0n ||
+    value.ciphertextHigh > UINT256_MAX ||
+    value.ciphertextLow < 0n ||
+    value.ciphertextLow > UINT256_MAX
+  ) {
+    throw new TypeError("Invalid encrypted uint256 result");
+  }
+}
+
+/**
+ * Builds the canonical paid best-quote call after the caller encrypts amountIn
+ * for the router address and this function's selector with the COTI SDK.
+ */
+export function buildConfidentialBestQuoteCall(
+  tokenIn: string,
+  tokenOut: string,
+  amountIn: InputText256,
+  requestId: string,
+  deadline: bigint,
+): ConfidentialBestQuoteCall {
+  assertConfidentialBestExecutionEnvelope(tokenIn, tokenOut, requestId, deadline);
+  const immutableAmountIn = snapshotInputText256(amountIn);
+  return Object.freeze({
+    functionName: CONFIDENTIAL_BEST_QUOTE_FUNCTION,
+    args: Object.freeze([
+      tokenIn,
+      tokenOut,
+      immutableAmountIn,
+      requestId,
+      deadline,
+    ] as const),
+  });
+}
+
+/**
+ * Builds the atomic best-execution call after amountIn and minimumOut are each
+ * freshly encrypted for the router address and this function's selector.
+ */
+export function buildConfidentialBestSwapCall(
+  tokenIn: string,
+  tokenOut: string,
+  amountIn: InputText256,
+  minimumOut: InputText256,
+  requestId: string,
+  deadline: bigint,
+): ConfidentialBestSwapCall {
+  assertConfidentialBestExecutionEnvelope(tokenIn, tokenOut, requestId, deadline);
+  const immutableAmountIn = snapshotInputText256(amountIn);
+  const immutableMinimumOut = snapshotInputText256(minimumOut);
+  return Object.freeze({
+    functionName: CONFIDENTIAL_BEST_SWAP_FUNCTION,
+    args: Object.freeze([
+      tokenIn,
+      tokenOut,
+      immutableAmountIn,
+      immutableMinimumOut,
+      requestId,
+      deadline,
+    ] as const),
+  });
+}
+
+/**
+ * Returns the exact router/function binding required by COTI encryptValue256.
+ * Quote inputs and swap inputs are not interchangeable because the function
+ * selector is part of authenticated ciphertext validation.
+ */
+export function getConfidentialBestExecutionEncryptionBinding(
+  router: VerifiedConfidentialBestExecutionRouter,
+  operation: "quote" | "swap",
+): ConfidentialBestExecutionEncryptionBinding {
+  if (!verifiedConfidentialBestExecutionRouters.has(router)) {
+    throw new TypeError("Unverified confidential best-execution router");
+  }
+  return Object.freeze({
+    chainId: router.chainId,
+    contractAddress: router.router,
+    functionName: operation === "quote"
+      ? CONFIDENTIAL_BEST_QUOTE_FUNCTION
+      : CONFIDENTIAL_BEST_SWAP_FUNCTION,
+    functionSelector: operation === "quote"
+      ? CONFIDENTIAL_BEST_QUOTE_SELECTOR
+      : CONFIDENTIAL_BEST_SWAP_SELECTOR,
+  });
+}
+
+export function buildVerifiedConfidentialBestQuoteTransaction(
+  router: VerifiedConfidentialBestExecutionRouter,
+  tokenIn: string,
+  tokenOut: string,
+  amountIn: InputText256,
+  requestId: string,
+  deadline: bigint,
+): ConfidentialBestQuoteTransaction {
+  if (!verifiedConfidentialBestExecutionRouters.has(router)) {
+    throw new TypeError("Unverified confidential best-execution router");
+  }
+  return Object.freeze({
+    chainId: router.chainId,
+    to: router.router,
+    ...buildConfidentialBestQuoteCall(tokenIn, tokenOut, amountIn, requestId, deadline),
+  });
+}
+
+export function buildVerifiedConfidentialBestSwapTransaction(
+  router: VerifiedConfidentialBestExecutionRouter,
+  tokenIn: string,
+  tokenOut: string,
+  amountIn: InputText256,
+  minimumOut: InputText256,
+  requestId: string,
+  deadline: bigint,
+): ConfidentialBestSwapTransaction {
+  if (!verifiedConfidentialBestExecutionRouters.has(router)) {
+    throw new TypeError("Unverified confidential best-execution router");
+  }
+  return Object.freeze({
+    chainId: router.chainId,
+    to: router.router,
+    ...buildConfidentialBestSwapCall(
+      tokenIn,
+      tokenOut,
+      amountIn,
+      minimumOut,
+      requestId,
+      deadline,
+    ),
+  });
+}
+
 export type CipherDEXV1FeePolicy = {
   totalFeeBps: number;
   protocolFeeShareNumerator: typeof CIPHERDEX_V1_FEE_POLICY.protocolFeeShareNumerator;
@@ -419,23 +753,11 @@ const verifiedConfidentialPoolDiscoveries = new WeakSet<object>();
 
 export type VerifiedConfidentialPoolDiscovery = Readonly<
   ConfidentialPoolDiscovery & {
+    chainId: number;
     factory: string;
     readonly [VERIFIED_CONFIDENTIAL_POOL_DISCOVERY]: true;
   }
 >;
-
-/**
- * A decrypted result held only inside a quote service process. The current
- * COTI testnet transport is a paid encrypted result transaction; callers must
- * not persist or publish these values as market data.
- */
-export type ConfidentialQuoteEvaluation = {
-  discovery: VerifiedConfidentialPoolDiscovery;
-  requestId: string;
-  amountIn: bigint;
-  zeroForOne: boolean;
-  decryptedAmountOut: bigint;
-};
 
 export type ConfidentialPoolOnchainState = {
   protocolVersion: number | bigint;
@@ -454,6 +776,7 @@ export type ConfidentialPoolOnchainState = {
  * or another reviewed client.
  */
 export interface ConfidentialPoolVerificationAdapter {
+  readChainId(): Promise<number | bigint>;
   getCode(address: string): Promise<string>;
   readFactoryProtocolVersion(factory: string): Promise<number | bigint>;
   isFactoryPrivateTokenApproved(factory: string, token: string): Promise<boolean>;
@@ -466,6 +789,7 @@ export interface ConfidentialPoolVerificationAdapter {
 }
 
 export type ConfidentialPoolVerificationPolicy = {
+  expectedChainId: number;
   expectedFactory: string;
   expectedFeeVault: string;
   expectedProtocolVersion: number;
@@ -493,6 +817,7 @@ const verifiedPublicPoolDiscoveries = new WeakSet<object>();
 
 export type VerifiedPublicPoolDiscovery = Readonly<
   PublicPoolDiscovery & {
+    chainId: number;
     factory: string;
     readonly [VERIFIED_PUBLIC_POOL_DISCOVERY]: true;
   }
@@ -501,6 +826,7 @@ export type VerifiedPublicPoolDiscovery = Readonly<
 export type PublicPoolOnchainState = ConfidentialPoolOnchainState;
 
 export interface PublicPoolVerificationAdapter {
+  readChainId(): Promise<number | bigint>;
   getCode(address: string): Promise<string>;
   readFactoryProtocolVersion(factory: string): Promise<number | bigint>;
   isFactoryPool(factory: string, pool: string): Promise<boolean>;
@@ -693,6 +1019,321 @@ const sameAddress = (left: string, right: string): boolean =>
 const hasDeployedCode = (code: string): boolean =>
   /^0x[0-9a-fA-F]+$/.test(code) && !/^0x0*$/.test(code);
 
+const isTransactionHash = (value: unknown): value is string =>
+  isBytes32(value) && !/^0x0{64}$/i.test(value);
+
+const abiWord = (hexWithoutPrefix: string, index: number): string | undefined => {
+  const start = index * 64;
+  const word = hexWithoutPrefix.slice(start, start + 64);
+  return word.length === 64 ? word : undefined;
+};
+
+const addressFromAbiWord = (word: string | undefined): string | undefined => {
+  if (!word || !/^0{24}[0-9a-fA-F]{40}$/.test(word)) return undefined;
+  return `0x${word.slice(24)}`;
+};
+
+const quantityFromAbiWord = (word: string | undefined): bigint | undefined => {
+  if (!word || !/^[0-9a-fA-F]{64}$/.test(word)) return undefined;
+  return BigInt(`0x${word}`);
+};
+
+type DecodedConfidentialBestExecutionResult = Readonly<{
+  selectedPool: string;
+  selectedFeeBps: number;
+  zeroForOne: boolean;
+  result: Ciphertext256;
+}>;
+
+function decodeConfidentialBestExecutionResultEvidence(
+  router: VerifiedConfidentialBestExecutionRouter,
+  expectation: ConfidentialBestExecutionResultExpectation,
+  transaction: ConfidentialBestExecutionTransactionEvidence,
+  receipt: ConfidentialBestExecutionReceiptEvidence,
+): DecodedConfidentialBestExecutionResult {
+  if (
+    !isAddressLike(expectation.caller) ||
+    !isBytes32(expectation.requestId) ||
+    !isAddressLike(expectation.tokenIn) ||
+    !isAddressLike(expectation.tokenOut) ||
+    sameAddress(expectation.tokenIn, expectation.tokenOut) ||
+    !isTransactionHash(expectation.transactionHash) ||
+    typeof expectation.transactionData !== "string" ||
+    !/^0x[0-9a-fA-F]+$/.test(expectation.transactionData) ||
+    expectation.transactionData.length % 2 !== 0 ||
+    (expectation.operation !== "quote" && expectation.operation !== "swap") ||
+    !transaction ||
+    !receipt ||
+    !isTransactionHash(transaction.hash) ||
+    !isTransactionHash(receipt.transactionHash) ||
+    transaction.hash.toLowerCase() !== expectation.transactionHash.toLowerCase() ||
+    receipt.transactionHash.toLowerCase() !== expectation.transactionHash.toLowerCase() ||
+    !sameAddress(transaction.from, expectation.caller) ||
+    !sameAddress(transaction.to, router.router) ||
+    !Array.isArray(receipt.logs) ||
+    !(
+      (typeof receipt.status === "number" && receipt.status === 1) ||
+      (typeof receipt.status === "bigint" && receipt.status === 1n)
+    )
+  ) {
+    throw new TypeError("Invalid confidential best-execution transaction evidence");
+  }
+
+  const transactionChainId = toSafeChainNumber(transaction.chainId);
+  const expectedSelector = expectation.operation === "quote"
+    ? CONFIDENTIAL_BEST_QUOTE_SELECTOR
+    : CONFIDENTIAL_BEST_SWAP_SELECTOR;
+  const requestWordIndex = expectation.operation === "quote" ? 3 : 4;
+  if (
+    transactionChainId !== router.chainId ||
+    typeof transaction.data !== "string" ||
+    !/^0x[0-9a-fA-F]+$/.test(transaction.data) ||
+    transaction.data.length % 2 !== 0 ||
+    transaction.data.slice(0, 10).toLowerCase() !== expectedSelector ||
+    transaction.data.toLowerCase() !== expectation.transactionData.toLowerCase()
+  ) {
+    throw new TypeError("Invalid confidential best-execution transaction binding");
+  }
+
+  const callWords = transaction.data.slice(10);
+  const transactionTokenIn = addressFromAbiWord(abiWord(callWords, 0));
+  const transactionTokenOut = addressFromAbiWord(abiWord(callWords, 1));
+  const transactionRequestIdWord = abiWord(callWords, requestWordIndex);
+  if (
+    !transactionTokenIn ||
+    !transactionTokenOut ||
+    !sameAddress(transactionTokenIn, expectation.tokenIn) ||
+    !sameAddress(transactionTokenOut, expectation.tokenOut) ||
+    !transactionRequestIdWord ||
+    `0x${transactionRequestIdWord}`.toLowerCase() !== expectation.requestId.toLowerCase()
+  ) {
+    throw new TypeError("Invalid confidential best-execution calldata binding");
+  }
+
+  const expectedTopic = expectation.operation === "quote"
+    ? CONFIDENTIAL_BEST_QUOTE_RESULT_TOPIC
+    : CONFIDENTIAL_BEST_SWAP_RESULT_TOPIC;
+  const matchingLogs = receipt.logs.filter((log) =>
+    log &&
+    sameAddress(log.address, router.router) &&
+    Array.isArray(log.topics) &&
+    log.topics.length === 4 &&
+    typeof log.topics[0] === "string" &&
+    log.topics[0].toLowerCase() === expectedTopic,
+  );
+  if (matchingLogs.length !== 1) {
+    throw new TypeError("Confidential best-execution result log is missing or ambiguous");
+  }
+
+  const log = matchingLogs[0]!;
+  const indexedCaller = addressFromAbiWord(log.topics[1]?.slice(2));
+  const indexedRequestId = log.topics[2];
+  const selectedPool = addressFromAbiWord(log.topics[3]?.slice(2));
+  if (
+    !indexedCaller ||
+    !selectedPool ||
+    !sameAddress(indexedCaller, expectation.caller) ||
+    !isBytes32(indexedRequestId) ||
+    indexedRequestId.toLowerCase() !== expectation.requestId.toLowerCase() ||
+    typeof log.data !== "string" ||
+    !/^0x[0-9a-fA-F]{256}$/.test(log.data)
+  ) {
+    throw new TypeError("Invalid confidential best-execution result log");
+  }
+
+  const eventWords = log.data.slice(2);
+  const feeBpsValue = quantityFromAbiWord(abiWord(eventWords, 0));
+  const zeroForOneValue = quantityFromAbiWord(abiWord(eventWords, 1));
+  const ciphertextHigh = quantityFromAbiWord(abiWord(eventWords, 2));
+  const ciphertextLow = quantityFromAbiWord(abiWord(eventWords, 3));
+  if (
+    feeBpsValue === undefined ||
+    feeBpsValue > BigInt(Number.MAX_SAFE_INTEGER) ||
+    (zeroForOneValue !== 0n && zeroForOneValue !== 1n) ||
+    ciphertextHigh === undefined ||
+    ciphertextLow === undefined
+  ) {
+    throw new TypeError("Invalid confidential best-execution result encoding");
+  }
+
+  const selectedFeeBps = Number(feeBpsValue);
+  const zeroForOne = zeroForOneValue === 1n;
+  const expectedDirection = expectation.tokenIn.toLowerCase() < expectation.tokenOut.toLowerCase();
+  if (
+    !(CIPHERDEX_V1_FEE_POLICY.approvedTotalFeeBps as readonly number[]).includes(
+      selectedFeeBps,
+    ) ||
+    zeroForOne !== expectedDirection
+  ) {
+    throw new TypeError("Invalid confidential best-execution result selection");
+  }
+
+  const result = { ciphertextHigh, ciphertextLow };
+  assertCiphertext256(result);
+  return Object.freeze({ selectedPool, selectedFeeBps, zeroForOne, result });
+}
+
+/**
+ * Binds a router address to deployed code, the expected protocol versions and
+ * the confidential factory's one-time canonical router configuration.
+ */
+export async function verifyConfidentialBestExecutionRouter(
+  router: string,
+  policy: ConfidentialBestExecutionRouterVerificationPolicy,
+  adapter: ConfidentialBestExecutionRouterVerificationAdapter,
+): Promise<VerifiedConfidentialBestExecutionRouter> {
+  if (
+    !isAddressLike(router) ||
+    !Number.isSafeInteger(policy.expectedChainId) ||
+    policy.expectedChainId <= 0 ||
+    !isAddressLike(policy.expectedFactory) ||
+    !isBytes32(policy.expectedFactoryRuntimeCodehash) ||
+    !isAddressLike(policy.expectedRouter) ||
+    !sameAddress(router, policy.expectedRouter) ||
+    !isBytes32(policy.expectedRouterRuntimeCodehash) ||
+    !Number.isSafeInteger(policy.expectedFactoryProtocolVersion) ||
+    policy.expectedFactoryProtocolVersion <= 0 ||
+    !Number.isSafeInteger(policy.expectedRouterProtocolVersion) ||
+    policy.expectedRouterProtocolVersion <= 0
+  ) {
+    throw new TypeError("Invalid confidential best-execution verification policy");
+  }
+
+  let chainIdValue: number | bigint;
+  let routerCode: string;
+  let factoryCode: string;
+  let factoryProtocolVersionValue: number | bigint;
+  let configuredRouter: string;
+  let routerProtocolVersionValue: number | bigint;
+  let routerFactory: string;
+  let routerRuntimeCodehash: string;
+  let factoryRuntimeCodehash: string;
+  try {
+    [
+      chainIdValue,
+      routerCode,
+      factoryCode,
+      factoryProtocolVersionValue,
+      configuredRouter,
+      routerProtocolVersionValue,
+      routerFactory,
+    ] = await Promise.all([
+      adapter.readChainId(),
+      adapter.getCode(router),
+      adapter.getCode(policy.expectedFactory),
+      adapter.readFactoryProtocolVersion(policy.expectedFactory),
+      adapter.readFactoryBestExecutionRouter(policy.expectedFactory),
+      adapter.readRouterProtocolVersion(router),
+      adapter.readRouterFactory(router),
+    ]);
+    routerRuntimeCodehash = adapter.hashRuntimeCode(routerCode);
+    factoryRuntimeCodehash = adapter.hashRuntimeCode(factoryCode);
+  } catch (error) {
+    throw new TypeError("Unable to verify confidential best-execution router", {
+      cause: error,
+    });
+  }
+
+  const chainId = toSafeChainNumber(chainIdValue);
+  const factoryProtocolVersion = toSafeChainNumber(factoryProtocolVersionValue);
+  const routerProtocolVersion = toSafeChainNumber(routerProtocolVersionValue);
+  if (
+    chainId !== policy.expectedChainId ||
+    !hasDeployedCode(routerCode) ||
+    !hasDeployedCode(factoryCode) ||
+    !isBytes32(routerRuntimeCodehash) ||
+    !isBytes32(factoryRuntimeCodehash) ||
+    routerRuntimeCodehash.toLowerCase() !==
+      policy.expectedRouterRuntimeCodehash.toLowerCase() ||
+    factoryRuntimeCodehash.toLowerCase() !==
+      policy.expectedFactoryRuntimeCodehash.toLowerCase() ||
+    factoryProtocolVersion !== policy.expectedFactoryProtocolVersion ||
+    routerProtocolVersion !== policy.expectedRouterProtocolVersion ||
+    !sameAddress(configuredRouter, router) ||
+    !sameAddress(routerFactory, policy.expectedFactory)
+  ) {
+    throw new TypeError("Confidential best-execution router verification failed");
+  }
+
+  const verified = Object.freeze({
+    chainId,
+    router,
+    routerRuntimeCodehash,
+    factory: policy.expectedFactory,
+    factoryRuntimeCodehash,
+    factoryProtocolVersion,
+    routerProtocolVersion,
+  }) as VerifiedConfidentialBestExecutionRouter;
+  verifiedConfidentialBestExecutionRouters.add(verified);
+  return verified;
+}
+
+/**
+ * Decrypts one caller-encrypted result only after authenticating the submitted
+ * transaction, successful receipt, exact router event and canonical pool.
+ */
+export async function decryptConfidentialBestExecutionResult(
+  router: VerifiedConfidentialBestExecutionRouter,
+  expectation: ConfidentialBestExecutionResultExpectation,
+  adapter: ConfidentialBestExecutionDecryptionAdapter,
+): Promise<bigint> {
+  if (!verifiedConfidentialBestExecutionRouters.has(router)) {
+    throw new TypeError("Unverified confidential best-execution router");
+  }
+
+  let transaction: ConfidentialBestExecutionTransactionEvidence | null;
+  let receipt: ConfidentialBestExecutionReceiptEvidence | null;
+  try {
+    [transaction, receipt] = await Promise.all([
+      adapter.getTransaction(expectation.transactionHash),
+      adapter.getTransactionReceipt(expectation.transactionHash),
+    ]);
+  } catch (error) {
+    throw new TypeError("Unable to fetch confidential best-execution transaction evidence", {
+      cause: error,
+    });
+  }
+  if (!transaction || !receipt) {
+    throw new TypeError("Confidential best-execution transaction evidence is unavailable");
+  }
+  const decoded = decodeConfidentialBestExecutionResultEvidence(
+    router,
+    expectation,
+    transaction,
+    receipt,
+  );
+
+  let activeChainIdValue: number | bigint;
+  let canonicalPool: string;
+  try {
+    [activeChainIdValue, canonicalPool] = await Promise.all([
+      adapter.readChainId(),
+      adapter.getCanonicalPool(
+        router.factory,
+        expectation.tokenIn,
+        expectation.tokenOut,
+        decoded.selectedFeeBps,
+      ),
+    ]);
+  } catch (error) {
+    throw new TypeError("Unable to verify confidential best-execution result provenance", {
+      cause: error,
+    });
+  }
+  if (
+    toSafeChainNumber(activeChainIdValue) !== router.chainId ||
+    !sameAddress(canonicalPool, decoded.selectedPool)
+  ) {
+    throw new TypeError("Confidential best-execution result provenance verification failed");
+  }
+
+  const amountOut = await adapter.decryptValue256(decoded.result);
+  if (typeof amountOut !== "bigint" || amountOut <= 0n) {
+    throw new TypeError("Invalid decrypted confidential best-execution result");
+  }
+  return amountOut;
+}
+
 /**
  * Converts untrusted discovery metadata into a process-local verified value.
  * Verification binds the candidate to an expected deployed factory, its
@@ -712,6 +1353,8 @@ export async function verifyConfidentialPoolDiscovery(
   }
   const discovery = discoverySnapshot;
   if (
+    !Number.isSafeInteger(policy.expectedChainId) ||
+    policy.expectedChainId <= 0 ||
     !isAddressLike(policy.expectedFactory) ||
     !isAddressLike(policy.expectedFeeVault) ||
     !Number.isSafeInteger(policy.expectedProtocolVersion) ||
@@ -722,6 +1365,7 @@ export async function verifyConfidentialPoolDiscovery(
     throw new TypeError("Confidential pool discovery violates verification policy");
   }
 
+  let chainIdValue: number | bigint;
   let factoryCode: string;
   let poolCode: string;
   let factoryVersionValue: number | bigint;
@@ -732,6 +1376,7 @@ export async function verifyConfidentialPoolDiscovery(
   let poolState: ConfidentialPoolOnchainState;
   try {
     [
+      chainIdValue,
       factoryCode,
       poolCode,
       factoryVersionValue,
@@ -741,6 +1386,7 @@ export async function verifyConfidentialPoolDiscovery(
       canonicalPool,
       poolState,
     ] = await Promise.all([
+      adapter.readChainId(),
       adapter.getCode(policy.expectedFactory),
       adapter.getCode(discovery.pool),
       adapter.readFactoryProtocolVersion(policy.expectedFactory),
@@ -754,6 +1400,7 @@ export async function verifyConfidentialPoolDiscovery(
     throw new TypeError("Unable to verify confidential pool provenance", { cause: error });
   }
 
+  const chainId = toSafeChainNumber(chainIdValue);
   const factoryVersion = toSafeChainNumber(factoryVersionValue);
   const poolVersion = toSafeChainNumber(poolState.protocolVersion);
   const privacyMode = toSafeChainNumber(poolState.privacyMode);
@@ -762,6 +1409,7 @@ export async function verifyConfidentialPoolDiscovery(
   const feeBps = toSafeChainNumber(poolState.feeBps);
 
   if (
+    chainId !== policy.expectedChainId ||
     !hasDeployedCode(factoryCode) ||
     !hasDeployedCode(poolCode) ||
     !token0Approved ||
@@ -783,6 +1431,7 @@ export async function verifyConfidentialPoolDiscovery(
   }
 
   const verified = Object.freeze({
+    chainId,
     disclosureSchemaVersion: discovery.disclosureSchemaVersion,
     protocolVersion: discovery.protocolVersion,
     factory: policy.expectedFactory,
@@ -800,68 +1449,6 @@ export async function verifyConfidentialPoolDiscovery(
   }) as VerifiedConfidentialPoolDiscovery;
   verifiedConfidentialPoolDiscoveries.add(verified);
   return verified;
-}
-
-/**
- * Selects the largest output among factory-proven canonical fee-tier pools.
- * Each evaluation must represent the same logical request and direction. The
- * service creates a fresh pool-bound encrypted input for every transaction.
- */
-export function selectBestConfidentialPoolQuote(
-  evaluations: readonly ConfidentialQuoteEvaluation[],
-): ConfidentialQuoteEvaluation | undefined {
-  if (evaluations.length === 0) return undefined;
-
-  const first = evaluations[0];
-  if (
-    first.requestId.length === 0 ||
-    first.amountIn <= 0n ||
-    first.decryptedAmountOut <= 0n ||
-    !verifiedConfidentialPoolDiscoveries.has(first.discovery)
-  ) {
-    throw new TypeError("Invalid confidential quote evaluation");
-  }
-
-  const token0 = first.discovery.token0.toLowerCase();
-  const token1 = first.discovery.token1.toLowerCase();
-  const factory = first.discovery.factory.toLowerCase();
-  const feeVault = first.discovery.feeVault.toLowerCase();
-  const seenPools = new Set<string>();
-  let best = first;
-
-  for (const evaluation of evaluations) {
-    const pool = evaluation.discovery.pool.toLowerCase();
-    if (
-      evaluation.requestId !== first.requestId ||
-      evaluation.amountIn !== first.amountIn ||
-      evaluation.zeroForOne !== first.zeroForOne ||
-      evaluation.decryptedAmountOut <= 0n ||
-      !verifiedConfidentialPoolDiscoveries.has(evaluation.discovery) ||
-      evaluation.discovery.token0.toLowerCase() !== token0 ||
-      evaluation.discovery.token1.toLowerCase() !== token1 ||
-      evaluation.discovery.factory.toLowerCase() !== factory ||
-      evaluation.discovery.feeVault.toLowerCase() !== feeVault ||
-      evaluation.discovery.protocolVersion !== first.discovery.protocolVersion ||
-      evaluation.discovery.privacyMode !== first.discovery.privacyMode ||
-      evaluation.discovery.poolKind !== first.discovery.poolKind ||
-      seenPools.has(pool)
-    ) {
-      throw new TypeError("Incomparable confidential quote evaluations");
-    }
-    seenPools.add(pool);
-
-    if (
-      evaluation.decryptedAmountOut > best.decryptedAmountOut ||
-      (evaluation.decryptedAmountOut === best.decryptedAmountOut &&
-        (evaluation.discovery.feeBps < best.discovery.feeBps ||
-          (evaluation.discovery.feeBps === best.discovery.feeBps &&
-            pool < best.discovery.pool.toLowerCase())))
-    ) {
-      best = evaluation;
-    }
-  }
-
-  return best;
 }
 
 export function isPublicPoolDiscovery(value: unknown): value is PublicPoolDiscovery {
@@ -913,6 +1500,8 @@ export async function verifyPublicPoolDiscovery(
   }
   const discovery = discoverySnapshot;
   if (
+    !Number.isSafeInteger(policy.expectedChainId) ||
+    policy.expectedChainId <= 0 ||
     !isAddressLike(policy.expectedFactory) ||
     !isAddressLike(policy.expectedFeeVault) ||
     !Number.isSafeInteger(policy.expectedProtocolVersion) ||
@@ -923,6 +1512,7 @@ export async function verifyPublicPoolDiscovery(
     throw new TypeError("Public pool discovery violates verification policy");
   }
 
+  let chainIdValue: number | bigint;
   let factoryCode: string;
   let poolCode: string;
   let factoryVersionValue: number | bigint;
@@ -931,6 +1521,7 @@ export async function verifyPublicPoolDiscovery(
   let poolState: PublicPoolOnchainState;
   try {
     [
+      chainIdValue,
       factoryCode,
       poolCode,
       factoryVersionValue,
@@ -938,6 +1529,7 @@ export async function verifyPublicPoolDiscovery(
       canonicalPool,
       poolState,
     ] = await Promise.all([
+      adapter.readChainId(),
       adapter.getCode(policy.expectedFactory),
       adapter.getCode(discovery.pool),
       adapter.readFactoryProtocolVersion(policy.expectedFactory),
@@ -949,6 +1541,7 @@ export async function verifyPublicPoolDiscovery(
     throw new TypeError("Unable to verify public pool provenance", { cause: error });
   }
 
+  const chainId = toSafeChainNumber(chainIdValue);
   const factoryVersion = toSafeChainNumber(factoryVersionValue);
   const poolVersion = toSafeChainNumber(poolState.protocolVersion);
   const privacyMode = toSafeChainNumber(poolState.privacyMode);
@@ -957,6 +1550,7 @@ export async function verifyPublicPoolDiscovery(
   const feeBps = toSafeChainNumber(poolState.feeBps);
 
   if (
+    chainId !== policy.expectedChainId ||
     !hasDeployedCode(factoryCode) ||
     !hasDeployedCode(poolCode) ||
     !factoryRecognizesPool ||
@@ -976,6 +1570,7 @@ export async function verifyPublicPoolDiscovery(
   }
 
   const verified = Object.freeze({
+    chainId,
     disclosureSchemaVersion: discovery.disclosureSchemaVersion,
     protocolVersion: discovery.protocolVersion,
     factory: policy.expectedFactory,

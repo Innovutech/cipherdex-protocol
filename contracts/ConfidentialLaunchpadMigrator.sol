@@ -215,17 +215,19 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
         token.transferFromGT(from, address(this), amount);
         (gtBool overflow, gtUint256 expectedBalance) =
             MpcCore.checkedAddWithOverflowBit(beforeBalance, amount);
-        if (
-            MpcCore.decrypt(overflow) ||
-            !MpcCore.decrypt(MpcCore.eq(token.balanceOf(), expectedBalance))
-        ) revert PrivateTransferAmountMismatch();
+        if (MpcCore.decrypt(overflow)) revert PrivateTransferAmountMismatch();
+        gtUint256 actualBalance = token.balanceOf();
+        if (!MpcCore.decrypt(MpcCore.eq(actualBalance, expectedBalance))) {
+            revert PrivateTransferAmountMismatch();
+        }
     }
 
     function _requirePrivateBalance(
         IPrivateERC20 token,
         gtUint256 expectedBalance
     ) internal {
-        if (!MpcCore.decrypt(MpcCore.eq(token.balanceOf(), expectedBalance))) {
+        gtUint256 actualBalance = token.balanceOf();
+        if (!MpcCore.decrypt(MpcCore.eq(actualBalance, expectedBalance))) {
             revert PrivateTransferAmountMismatch();
         }
     }

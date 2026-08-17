@@ -90,6 +90,71 @@ describe("PublicCPMM periphery", function () {
       .to.be.revertedWithCustomError(router, "InvalidPool");
   });
 
+  it("cannot quote or route donated balances in an uninitialized canonical pool", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const tokenA = await tokenFactory.deploy("Token A", "TKA", 18);
+    const tokenB = await tokenFactory.deploy("Token B", "TKB", 6);
+    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
+      await vault.getAddress(),
+    );
+    await factory.waitForDeployment();
+    await factory.createPool(
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      6,
+      30,
+    );
+    const key = await factory.poolKey(
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      6,
+      30,
+    );
+    const pool = await ethers.getContractAt("PublicCPMM", await factory.getPool(key));
+    const poolAddress = await pool.getAddress();
+    const token0IsA = (await pool.token0()).toLowerCase() ===
+      (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const input = token0IsA ? ethers.parseEther("1") : 1_000_000n;
+    const donated0 = input * 2n;
+    const donated1 = token0IsA ? 2_000_000n : ethers.parseEther("2");
+    await token0.mint(owner.address, donated0);
+    await token1.mint(owner.address, donated1);
+    await token0.mint(trader.address, input);
+    await token0.transfer(poolAddress, donated0);
+    await token1.transfer(poolAddress, donated1);
+
+    const quoter = await (await ethers.getContractFactory("PublicCPMMQuoter")).deploy(
+      await factory.getAddress(),
+    );
+    const router = await (await ethers.getContractFactory("PublicCPMMRouter")).deploy(
+      await factory.getAddress(),
+    );
+    await Promise.all([quoter.waitForDeployment(), router.waitForDeployment()]);
+    const routerAddress = await router.getAddress();
+    await token0.connect(trader).approve(routerAddress, input);
+    const traderBalanceBefore = await token0.balanceOf(trader.address);
+
+    await expect(quoter.quoteExactInput(poolAddress, input, true))
+      .to.be.revertedWithCustomError(pool, "PoolNotInitialized");
+    await expect(
+      router.connect(trader).swapExactInput(poolAddress, input, 0n, true, 0xffffffff),
+    ).to.be.revertedWithCustomError(pool, "PoolNotInitialized");
+
+    expect(await token0.balanceOf(trader.address)).to.equal(traderBalanceBefore);
+    expect(await token0.balanceOf(routerAddress)).to.equal(0n);
+    expect(await token1.balanceOf(routerAddress)).to.equal(0n);
+    expect(await token0.allowance(routerAddress, poolAddress)).to.equal(0n);
+    expect(await token0.balanceOf(poolAddress)).to.equal(donated0);
+    expect(await token1.balanceOf(poolAddress)).to.equal(donated1);
+  });
+
   it("enforces the final trader receipt for taxed routed output", async function () {
     const [owner, trader] = await ethers.getSigners();
     const normal = await (await ethers.getContractFactory("MockERC20")).deploy(
@@ -151,5 +216,61 @@ describe("PublicCPMM periphery", function () {
       0xffffffff,
     );
     expect(await taxed.balanceOf(trader.address)).to.be.greaterThan(outputBefore);
+  });
+
+  it("rejects a short-credited routed input without consuming prefunded router tokens", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const taxed = await (await ethers.getContractFactory("FeeOnTransferERC20")).deploy(
+      "Taxed Token",
+      "TAX",
+      100,
+    );
+    const paired = await (await ethers.getContractFactory("MockERC20")).deploy(
+      "Paired Token",
+      "PAIR",
+      18,
+    );
+    await Promise.all([taxed.waitForDeployment(), paired.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
+      await vault.getAddress(),
+    );
+    await factory.waitForDeployment();
+    await factory.createPool(await taxed.getAddress(), await paired.getAddress(), 18, 18, 30);
+    const key = await factory.poolKey(await taxed.getAddress(), await paired.getAddress(), 18, 18, 30);
+    const pool = await ethers.getContractAt("PublicCPMM", await factory.getPool(key));
+    const poolAddress = await pool.getAddress();
+    const token0IsTaxed = (await pool.token0()).toLowerCase() ===
+      (await taxed.getAddress()).toLowerCase();
+
+    await taxed.mint(owner.address, 20_000n);
+    await paired.mint(owner.address, 20_000n);
+    await taxed.approve(poolAddress, 10_000n);
+    await paired.approve(poolAddress, 10_000n);
+    await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, 0xffffffff);
+
+    const router = await (await ethers.getContractFactory("PublicCPMMRouter")).deploy(
+      await factory.getAddress(),
+    );
+    await router.waitForDeployment();
+    const routerAddress = await router.getAddress();
+    await taxed.transfer(routerAddress, 10n);
+    await taxed.setTaxedSender(trader.address);
+    await taxed.mint(trader.address, 100n);
+    await taxed.connect(trader).approve(routerAddress, 100n);
+
+    await expect(
+      router.connect(trader).swapExactInput(
+        poolAddress,
+        100n,
+        0n,
+        token0IsTaxed,
+        0xffffffff,
+      ),
+    ).to.be.revertedWithCustomError(router, "TransferAmountMismatch");
+
+    expect(await taxed.balanceOf(routerAddress)).to.equal(10n);
+    expect(await taxed.balanceOf(trader.address)).to.equal(100n);
+    expect(await taxed.allowance(routerAddress, poolAddress)).to.equal(0n);
   });
 });

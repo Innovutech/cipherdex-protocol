@@ -1,6 +1,6 @@
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import { Contract } from "ethers";
-import { ethers } from "hardhat";
+import { Contract, TransactionReceipt } from "ethers";
+import hre, { ethers } from "hardhat";
 import {
   CONFIDENTIAL_QUOTE_TRANSPORT,
   CIPHERDEX_PROTOCOL_VERSION,
@@ -8,11 +8,9 @@ import {
   PRIVACY_MODE,
   calculateCipherDEXV1FeeBreakdown,
   getCipherDEXV1FeePolicy,
-  minimumCipherDEXV1ConfidentialInput,
-  selectBestConfidentialPoolQuote,
   verifyConfidentialPoolDiscovery,
   type ConfidentialPoolDiscovery,
-  type ConfidentialQuoteEvaluation,
+  type VerifiedConfidentialPoolDiscovery,
 } from "../sdk/src";
 import {
   CONFIDENTIAL_POOL_TESTNET_ABI,
@@ -20,6 +18,20 @@ import {
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
+import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
+import {
+  requiredTestnetDeploymentRecordPath,
+  verifyConfiguredTestnetDeployment,
+} from "./testnet-deployment-provenance";
+import {
+  confidentialLiquidityBounds,
+  minimumWithSlippage,
+} from "./testnet-slippage";
+import {
+  requireMinedFailure,
+  requireMinedSuccess,
+  safeTestnetErrorSummary,
+} from "./testnet-transaction-evidence";
 
 const requiredAddress = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -41,6 +53,12 @@ const requiredBigInt = (name: string): bigint => {
   return BigInt(value);
 };
 
+const requiredPositiveBigInt = (name: string): bigint => {
+  const value = requiredBigInt(name);
+  if (value === 0n) throw new Error(`${name} must be positive`);
+  return value;
+};
+
 const requiredUInt = (name: string, fallback?: number): number => {
   const value = process.env[name]?.trim();
   if (!value && fallback !== undefined) return fallback;
@@ -55,49 +73,24 @@ const ceilDiv = (numerator: bigint, denominator: bigint): bigint =>
   numerator / denominator + (numerator % denominator === 0n ? 0n : 1n);
 
 const requireConfidentialFeeAccrual = (
-  name: string,
   amountIn: bigint,
   feeBps: number,
 ): void => {
   if (calculateCipherDEXV1FeeBreakdown(amountIn, feeBps).protocolFee > 0n) return;
-  throw new Error(
-    `${name}=${amountIn} is below the ${minimumCipherDEXV1ConfidentialInput(feeBps)} raw-unit ` +
-      `minimum for confidential fee tier ${feeBps}; the protocol share would round to zero`,
-  );
+  throw new Error("configured confidential input is below the fee-accrual minimum");
 };
 
 const CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const CONFIDENTIAL_POOL_CREATE_GAS_LIMIT = 6_500_000n;
 const FEE_VAULT_DEPLOY_GAS_LIMIT = 1_000_000n;
-const COTI_TESTNET_TX_OVERRIDES = {
-  gasLimit: BigInt(process.env.COTI_TESTNET_GAS_LIMIT ?? "30000000"),
-} as const;
+const gasLimitText = process.env.COTI_TESTNET_GAS_LIMIT?.trim() ?? "30000000";
+if (!/^\d+$/.test(gasLimitText) || BigInt(gasLimitText) === 0n) {
+  throw new Error("COTI_TESTNET_GAS_LIMIT must be a positive integer");
+}
+const COTI_TESTNET_TX_OVERRIDES = { gasLimit: BigInt(gasLimitText) } as const;
 
 let stage = "configuration";
-
-function safeErrorSummary(error: unknown): string {
-  if (!error || typeof error !== "object") return "code=unknown";
-  const record = error as {
-    name?: unknown;
-    message?: unknown;
-    code?: unknown;
-    shortMessage?: unknown;
-    info?: { error?: { message?: unknown } };
-  };
-  const code = typeof record.code === "string" ? record.code : "unknown";
-  const name = typeof record.name === "string" ? record.name : "Error";
-  const detailCandidates = [record.shortMessage, record.info?.error?.message, record.message];
-  const detail = detailCandidates.find(
-    (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
-  );
-  if (!detail) return `name=${name} code=${code}`;
-  const redacted = detail
-    .replace(/0x[0-9a-fA-F]{16,}/g, "[redacted-hex]")
-    .replace(/\s+/g, " ")
-    .slice(0, 240);
-  return `name=${name} code=${code} detail=${redacted}`;
-}
 
 type PoolContext = {
   address: string;
@@ -106,8 +99,18 @@ type PoolContext = {
   token1Address: string;
   token0: Contract;
   token1: Contract;
+  token0Decimals: number;
+  token1Decimals: number;
   feeBps: number;
   feeVault: string;
+};
+
+type LocallyVerifiedQuote = {
+  discovery: VerifiedConfidentialPoolDiscovery;
+  requestId: string;
+  amountIn: bigint;
+  zeroForOne: boolean;
+  decryptedAmountOut: bigint;
 };
 
 async function submit(
@@ -116,17 +119,54 @@ async function submit(
 ): Promise<any> {
   stage = label;
   const started = Date.now();
-  const tx = await transaction;
-  let receipt: any;
-  try {
-    receipt = await tx.wait();
-  } catch (error) {
-    console.log(`${label}: tx=${tx.hash} failed latencyMs=${Date.now() - started}`);
-    throw error;
-  }
+  const evidence = await requireMinedSuccess(
+    label,
+    () => transaction,
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
+  const receipt = evidence.receipt;
   const gasUsed = receipt?.gasUsed?.toString() ?? "unknown";
-  console.log(`${label}: tx=${tx.hash} gas=${gasUsed} latencyMs=${Date.now() - started}`);
+  console.log(
+    `${label}: tx=${evidence.transactionHash} gas=${gasUsed} ` +
+      `latencyMs=${Date.now() - started}`,
+  );
   return receipt;
+}
+
+async function deployFunded(
+  label: string,
+  operation: () => Promise<any>,
+): Promise<any> {
+  let contract: any;
+  await submit(
+    label,
+    (async () => {
+      contract = await operation();
+      const transaction = contract.deploymentTransaction();
+      if (!transaction) throw new Error(`${label} transaction unavailable`);
+      return transaction;
+    })(),
+  );
+  if (!contract) {
+    throw new Error(`${label} mined without a contract handle; do not retry automatically`);
+  }
+  return contract;
+}
+
+async function expectMinedFailure(
+  label: string,
+  operation: () => Promise<{
+    hash: string;
+    wait(): Promise<TransactionReceipt | null>;
+  }>,
+): Promise<void> {
+  stage = label;
+  const evidence = await requireMinedFailure(
+    label,
+    operation,
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
+  console.log(`${label}: rejected onchain tx=${evidence.transactionHash}`);
 }
 
 async function readPrivateBalance(
@@ -152,8 +192,15 @@ async function readPrivateShares(pool: Contract, wallet: CotiWallet): Promise<bi
 
 async function loadPoolContext(address: string, wallet: CotiWallet): Promise<PoolContext> {
   const pool = new Contract(address, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
-  const token0Address = String(await pool.token0());
-  const token1Address = String(await pool.token1());
+  const [token0AddressValue, token1AddressValue, token0DecimalsValue, token1DecimalsValue] =
+    await Promise.all([
+      pool.token0(),
+      pool.token1(),
+      pool.token0Decimals(),
+      pool.token1Decimals(),
+    ]);
+  const token0Address = String(token0AddressValue);
+  const token1Address = String(token1AddressValue);
   return {
     address,
     pool,
@@ -161,6 +208,8 @@ async function loadPoolContext(address: string, wallet: CotiWallet): Promise<Poo
     token1Address,
     token0: new Contract(token0Address, PRIVATE_ERC20_TESTNET_ABI, wallet),
     token1: new Contract(token1Address, PRIVATE_ERC20_TESTNET_ABI, wallet),
+    token0Decimals: Number(token0DecimalsValue),
+    token1Decimals: Number(token1DecimalsValue),
     feeBps: Number(await pool.feeBps()),
     feeVault: String(await pool.feeVault()),
   };
@@ -223,10 +272,25 @@ async function addPrivateLiquidity(
   if (!selector) throw new Error("add-liquidity selector unavailable");
   const encrypted0 = await wallet.encryptValue256(amount0, context.address, selector);
   const encrypted1 = await wallet.encryptValue256(amount1, context.address, selector);
-  const minimum = await wallet.encryptValue256(0n, context.address, selector);
-  const minimumPrice = await wallet.encryptValue256(0n, context.address, selector);
-  const maximumPrice = await wallet.encryptValue256(ethers.MaxUint256, context.address, selector);
   const expectedInitialized = await context.pool.initialized();
+  const bounds = confidentialLiquidityBounds(
+    amount0,
+    context.token0Decimals,
+    amount1,
+    context.token1Decimals,
+    expectedInitialized,
+  );
+  const minimum = await wallet.encryptValue256(bounds.minShares, context.address, selector);
+  const minimumPrice = await wallet.encryptValue256(
+    bounds.minPriceX18,
+    context.address,
+    selector,
+  );
+  const maximumPrice = await wallet.encryptValue256(
+    bounds.maxPriceX18,
+    context.address,
+    selector,
+  );
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
   await submit(
     label,
@@ -264,7 +328,10 @@ function encryptedQuoteFromReceipt(
   requestId: string,
   zeroForOne: boolean,
 ): unknown {
+  const poolAddress = String(pool.target).toLowerCase();
+  const matches: unknown[] = [];
   for (const log of receipt?.logs ?? []) {
+    if (String(log.address).toLowerCase() !== poolAddress) continue;
     try {
       const parsed = pool.interface.parseLog({ topics: log.topics, data: log.data });
       if (
@@ -273,13 +340,16 @@ function encryptedQuoteFromReceipt(
         String(parsed.args.requestId).toLowerCase() === requestId.toLowerCase() &&
         parsed.args.zeroForOne === zeroForOne
       ) {
-        return parsed.args.result;
+        matches.push(parsed.args.result);
       }
     } catch {
       // Ignore logs emitted by token contracts.
     }
   }
-  throw new Error("encrypted quote result event missing");
+  if (matches.length !== 1) {
+    throw new Error("encrypted quote result event is missing or ambiguous");
+  }
+  return matches[0];
 }
 
 async function requestPrivateQuote(
@@ -315,7 +385,13 @@ async function requestPrivateQuote(
 }
 
 async function main(): Promise<void> {
+  await hre.run("clean");
+  await hre.run("compile");
   stage = "configuration";
+  const network = await ethers.provider.getNetwork();
+  if (network.chainId !== 7_082_400n) {
+    throw new Error(`expected COTI testnet 7082400, received ${network.chainId}`);
+  }
   const privateKey = requiredPrivateKey("COTI_TESTNET_PRIVATE_KEY");
   const aesKey = process.env.COTI_AES_KEY?.trim();
   if (!aesKey) throw new Error("missing COTI_AES_KEY");
@@ -335,10 +411,16 @@ async function main(): Promise<void> {
   const secondLiquidityAmount1 = requiredBigInt("COTI_SECOND_LP_AMOUNT1");
   const swapAmount0 = requiredBigInt("COTI_SWAP_AMOUNT0");
   const swapAmount1 = requiredBigInt("COTI_SWAP_AMOUNT1");
+  const secondLpRemoveMin0 = requiredPositiveBigInt("COTI_SECOND_LP_REMOVE_MIN0");
+  const secondLpRemoveMin1 = requiredPositiveBigInt("COTI_SECOND_LP_REMOVE_MIN1");
+  const personalRemoveMin0 = requiredPositiveBigInt("COTI_PERSONAL_REMOVE_MIN0");
+  const personalRemoveMin1 = requiredPositiveBigInt("COTI_PERSONAL_REMOVE_MIN1");
+  const fullExitMin0 = requiredPositiveBigInt("COTI_FULL_EXIT_MIN0");
+  const fullExitMin1 = requiredPositiveBigInt("COTI_FULL_EXIT_MIN1");
   const lockSeconds = requiredUInt("COTI_TEST_LOCK_SECONDS", 10);
-  requireConfidentialFeeAccrual("COTI_SWAP_AMOUNT0", swapAmount0, feeBps);
-  requireConfidentialFeeAccrual("COTI_SWAP_AMOUNT0", swapAmount0, quoteFeeBps);
-  requireConfidentialFeeAccrual("COTI_SWAP_AMOUNT1", swapAmount1, feeBps);
+  requireConfidentialFeeAccrual(swapAmount0, feeBps);
+  requireConfidentialFeeAccrual(swapAmount0, quoteFeeBps);
+  requireConfidentialFeeAccrual(swapAmount1, feeBps);
   const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
     ethers.provider,
     [tokenAddressA, tokenAddressB],
@@ -378,32 +460,36 @@ async function main(): Promise<void> {
   let trustedFeeVaultAddress = process.env.COTI_FEE_VAULT?.trim();
   let createdPrimaryPool = false;
   let createdQuotePool = false;
+  const usesConfiguredDeployment = Boolean(poolAddress);
   if (!poolAddress) {
     stage = "fee vault deployment";
     const feeVaultFactory = await ethers.getContractFactory("CipherDEXFeeVault", wallet);
-    const feeVault = await feeVaultFactory.deploy(walletAddress, {
-      gasLimit: FEE_VAULT_DEPLOY_GAS_LIMIT,
-    });
-    await feeVault.waitForDeployment();
+    const feeVault = await deployFunded(
+      "fee vault deployment",
+      () => feeVaultFactory.deploy(walletAddress, { gasLimit: FEE_VAULT_DEPLOY_GAS_LIMIT }),
+    );
     const feeVaultAddress = await feeVault.getAddress();
     trustedFeeVaultAddress = feeVaultAddress;
     console.log(`fee vault deployed: ${feeVaultAddress}`);
     stage = "private LP token factory deployment";
-    const lpTokenFactory = await (
-      await ethers.getContractFactory("PrivateLPTokenFactory", wallet)
-    ).deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT });
-    await lpTokenFactory.waitForDeployment();
+    const privateLpFactory = await ethers.getContractFactory("PrivateLPTokenFactory", wallet);
+    const lpTokenFactory = await deployFunded(
+      "private LP token factory deployment",
+      () => privateLpFactory.deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT }),
+    );
     const lpTokenFactoryAddress = await lpTokenFactory.getAddress();
     console.log(`private LP token factory deployed: ${lpTokenFactoryAddress}`);
     stage = "confidential factory deployment";
     const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory", wallet);
-    const factory = await factoryFactory.deploy(
-      feeVaultAddress,
-      lpTokenFactoryAddress,
-      privateTokenCodehashes,
-      { gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT },
+    const factory = await deployFunded(
+      "confidential factory deployment",
+      () => factoryFactory.deploy(
+        feeVaultAddress,
+        lpTokenFactoryAddress,
+        privateTokenCodehashes,
+        { gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT },
+      ),
     );
-    await factory.waitForDeployment();
     const factoryAddress = await factory.getAddress();
     trustedFactoryAddress = factoryAddress;
     console.log(`factory deployed: ${factoryAddress}`);
@@ -470,6 +556,37 @@ async function main(): Promise<void> {
   }
   if (quotePoolAddress.toLowerCase() === poolAddress.toLowerCase()) {
     throw new Error("COTI_POOL and COTI_QUOTE_POOL must be different fee-tier pools");
+  }
+  if (usesConfiguredDeployment) {
+    stage = "reviewed deployment provenance";
+    const deploymentRecord = await verifyConfiguredTestnetDeployment(
+      requiredTestnetDeploymentRecordPath(),
+      ethers.provider,
+      [
+        {
+          recordKey: "confidentialFactory",
+          contractName: "ConfidentialCPMMFactory",
+          address: trustedFactoryAddress,
+        },
+        {
+          recordKey: "feeVault",
+          contractName: "CipherDEXFeeVault",
+          address: trustedFeeVaultAddress,
+        },
+      ],
+    );
+    await verifyDeployedRuntimeArtifact("ConfidentialCPMM", poolAddress);
+    await verifyDeployedRuntimeArtifact("ConfidentialCPMM", quotePoolAddress);
+    const reviewedTokens = deploymentRecord.contracts.confidentialFactory.reviewedPrivateTokens;
+    if (
+      !Array.isArray(reviewedTokens) ||
+      ![tokenAddressA, tokenAddressB].every((token) => reviewedTokens.some(
+        (candidate) => typeof candidate === "string" &&
+          candidate.toLowerCase() === token.toLowerCase(),
+      ))
+    ) {
+      throw new Error("configured private tokens are absent from the reviewed deployment record");
+    }
   }
   console.log(`pool: ${poolAddress}`);
   console.log(`quote candidate pool: ${quotePoolAddress}`);
@@ -700,7 +817,7 @@ async function main(): Promise<void> {
       [quoteWalletAddress, poolAddress, quotePoolAddress, await ethers.provider.getBlockNumber()],
     ),
   );
-  const quoteEvaluations: ConfidentialQuoteEvaluation[] = [];
+  const quoteEvaluations: LocallyVerifiedQuote[] = [];
   const quoteStarted = Date.now();
   for (const candidateAddress of [poolAddress, quotePoolAddress]) {
     const candidate = await loadPoolContext(candidateAddress, quoteWallet);
@@ -744,11 +861,13 @@ async function main(): Promise<void> {
     const verifiedDiscovery = await verifyConfidentialPoolDiscovery(
       discovery,
       {
+        expectedChainId: 7_082_400,
         expectedFactory: discoveryFactoryAddress,
         expectedFeeVault: trustedFeeVaultAddress,
         expectedProtocolVersion: discoveryProtocolVersion,
       },
       {
+        readChainId: async () => (await ethers.provider.getNetwork()).chainId,
         getCode: (address) => ethers.provider.getCode(address),
         readFactoryProtocolVersion: async () => discoveryFactory.PROTOCOL_VERSION(),
         isFactoryPrivateTokenApproved: async (_factoryAddress, token) =>
@@ -805,14 +924,25 @@ async function main(): Promise<void> {
     );
     quoteEvaluations.push({
       discovery: verifiedDiscovery,
-      requestId: logicalRequestId,
+      requestId: candidateRequestId,
       amountIn: swapAmount0,
       zeroForOne: true,
       decryptedAmountOut: decryptedOutput,
     });
   }
-  const selectedQuote = selectBestConfidentialPoolQuote(quoteEvaluations);
-  if (!selectedQuote) throw new Error("no confidential quote candidate selected");
+  const selectedQuote = quoteEvaluations.reduce<LocallyVerifiedQuote | undefined>(
+    (best, candidate) => {
+      if (!best) return candidate;
+      if (candidate.decryptedAmountOut > best.decryptedAmountOut) return candidate;
+      if (
+        candidate.decryptedAmountOut === best.decryptedAmountOut &&
+        candidate.discovery.feeBps < best.discovery.feeBps
+      ) return candidate;
+      return best;
+    },
+    undefined,
+  );
+  if (!selectedQuote) throw new Error("no locally verified quote candidate selected");
   const selectedContext = await loadPoolContext(selectedQuote.discovery.pool, wallet);
   const selectedPool = selectedContext.pool;
   const protocolFeeCount0Before = BigInt(await selectedPool.protocolFeeSwapCount0());
@@ -827,7 +957,7 @@ async function main(): Promise<void> {
   );
 
   const swapMinimum = await wallet.encryptValue256(
-    (localQuote * 99n) / 100n,
+    minimumWithSlippage(localQuote),
     selectedContext.address,
     selectedSwapSelector,
   );
@@ -837,22 +967,15 @@ async function main(): Promise<void> {
     selectedSwapSelector,
   );
   const expiredSwapDeadline0 = BigInt(Math.floor(Date.now() / 1000) - 1);
-  let expiredSwapRejected = false;
-  try {
-    await submit(
-      "expired swap check",
-      selectedPool.swapExactInput(
-        swapInput0,
-        swapMinimum,
-        true,
-        expiredSwapDeadline0,
-        COTI_TESTNET_TX_OVERRIDES,
-      ),
-    );
-  } catch {
-    expiredSwapRejected = true;
-  }
-  if (!expiredSwapRejected) throw new Error("expired private swap was accepted");
+  await expectMinedFailure("expired swap check", () =>
+    selectedPool.swapExactInput(
+      swapInput0,
+      swapMinimum,
+      true,
+      expiredSwapDeadline0,
+      COTI_TESTNET_TX_OVERRIDES,
+    ),
+  );
 
   const beforeSwap0 = await readPrivateBalance(token0, walletAddress, wallet);
   const beforeSwap1 = await readPrivateBalance(token1, walletAddress, wallet);
@@ -862,22 +985,15 @@ async function main(): Promise<void> {
     selectedContext.address,
     selectedSwapSelector,
   );
-  let slippageRejected = false;
-  try {
-    await submit(
-      "failed slippage check",
-      selectedPool.swapExactInput(
-        swapInput0,
-        deliberatelyHighMinimum,
-        true,
-        BigInt(Math.floor(Date.now() / 1000) + 600),
-        COTI_TESTNET_TX_OVERRIDES,
-      ),
-    );
-  } catch {
-    slippageRejected = true;
-  }
-  if (!slippageRejected) throw new Error("private swap accepted an excessive minimum output");
+  await expectMinedFailure("failed slippage check", () =>
+    selectedPool.swapExactInput(
+      swapInput0,
+      deliberatelyHighMinimum,
+      true,
+      BigInt(Math.floor(Date.now() / 1000) + 600),
+      COTI_TESTNET_TX_OVERRIDES,
+    ),
+  );
   const afterFailedSlippage0 = await readPrivateBalance(token0, walletAddress, wallet);
   const afterFailedSlippage1 = await readPrivateBalance(token1, walletAddress, wallet);
   if (afterFailedSlippage0 !== beforeSwap0 || afterFailedSlippage1 !== beforeSwap1) {
@@ -906,22 +1022,15 @@ async function main(): Promise<void> {
     throw new Error("token0 protocol-fee batch did not record exactly one successful swap");
   }
 
-  let replayRejected = false;
-  try {
-    await submit(
-      "replayed encrypted input check",
-      selectedPool.swapExactInput(
-        swapInput0,
-        swapMinimum,
-        true,
-        BigInt(Math.floor(Date.now() / 1000) + 600),
-        COTI_TESTNET_TX_OVERRIDES,
-      ),
-    );
-  } catch {
-    replayRejected = true;
-  }
-  if (!replayRejected) throw new Error("replayed encrypted swap input was accepted");
+  await expectMinedFailure("replayed encrypted input check", () =>
+    selectedPool.swapExactInput(
+      swapInput0,
+      swapMinimum,
+      true,
+      BigInt(Math.floor(Date.now() / 1000) + 600),
+      COTI_TESTNET_TX_OVERRIDES,
+    ),
+  );
 
   const reverseQuoteContext = await loadPoolContext(selectedContext.address, quoteWallet);
   const reverseQuoteRequestId = ethers.keccak256(
@@ -941,7 +1050,7 @@ async function main(): Promise<void> {
     selectedSwapSelector,
   );
   const swapMinimum1 = await wallet.encryptValue256(
-    (reverseQuote * 99n) / 100n,
+    minimumWithSlippage(reverseQuote),
     selectedContext.address,
     selectedSwapSelector,
   );
@@ -969,18 +1078,9 @@ async function main(): Promise<void> {
   if (BigInt(await selectedPool.protocolFeeSwapCount1()) !== protocolFeeCount1Before + 1n) {
     throw new Error("token1 protocol-fee batch did not record exactly one successful swap");
   }
-  let earlyCollectionRejected = false;
-  try {
-    await submit(
-      "premature confidential fee collection check",
-      selectedPool.collectProtocolFees(true, true, COTI_TESTNET_TX_OVERRIDES),
-    );
-  } catch {
-    earlyCollectionRejected = true;
-  }
-  if (!earlyCollectionRejected) {
-    throw new Error("confidential protocol fees were collectible before the batch threshold");
-  }
+  await expectMinedFailure("premature confidential fee collection check", () =>
+    selectedPool.collectProtocolFees(true, true, COTI_TESTNET_TX_OVERRIDES),
+  );
 
   const secondRemoveSelector = secondContext.pool.interface.getFunction("removeLiquidity")?.selector;
   if (!secondRemoveSelector) throw new Error("second LP remove selector unavailable");
@@ -1000,12 +1100,12 @@ async function main(): Promise<void> {
     secondRemoveSelector,
   );
   const secondRemoveMinimum0 = await secondWallet.encryptValue256(
-    0n,
+    secondLpRemoveMin0,
     poolAddress,
     secondRemoveSelector,
   );
   const secondRemoveMinimum1 = await secondWallet.encryptValue256(
-    0n,
+    secondLpRemoveMin1,
     poolAddress,
     secondRemoveSelector,
   );
@@ -1078,8 +1178,16 @@ async function main(): Promise<void> {
   const beforePersonalExit0 = await readPrivateBalance(token0, walletAddress, wallet);
   const beforePersonalExit1 = await readPrivateBalance(token1, walletAddress, wallet);
   const removeInput = await wallet.encryptValue256(remainingShares, poolAddress, removeSelector);
-  const removeMinimum0 = await wallet.encryptValue256(0n, poolAddress, removeSelector);
-  const removeMinimum1 = await wallet.encryptValue256(0n, poolAddress, removeSelector);
+  const removeMinimum0 = await wallet.encryptValue256(
+    personalRemoveMin0,
+    poolAddress,
+    removeSelector,
+  );
+  const removeMinimum1 = await wallet.encryptValue256(
+    personalRemoveMin1,
+    poolAddress,
+    removeSelector,
+  );
   await submit(
     "remaining personal liquidity removal",
     pool.removeLiquidity(
@@ -1118,12 +1226,12 @@ async function main(): Promise<void> {
     quoteRemoveSelector,
   );
   const quoteRemoveMinimum0 = await wallet.encryptValue256(
-    0n,
+    fullExitMin0,
     quotePoolAddress,
     quoteRemoveSelector,
   );
   const quoteRemoveMinimum1 = await wallet.encryptValue256(
-    0n,
+    fullExitMin1,
     quotePoolAddress,
     quoteRemoveSelector,
   );
@@ -1154,7 +1262,7 @@ async function main(): Promise<void> {
 void main().catch((error: unknown) => {
   console.error(
     `COTI testnet scenario failed during ${stage}; ` +
-      `${safeErrorSummary(error)}; ` +
+      `${safeTestnetErrorSummary(error)}; ` +
       "private payloads were suppressed.",
   );
   process.exitCode = 1;

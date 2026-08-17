@@ -6,15 +6,20 @@ Date: 2026-08-15
 
 Keep confidential settlement, encrypted exact-input quotes and the absence of
 public reserve-derived state. On the current COTI testnet runtime, exact private
-quotes use an explicitly labelled encrypted transaction/event fallback because
-fresh MPC operations cannot execute under `eth_call`.
+quotes require paid transactions because fresh MPC operations cannot execute
+under `eth_call`.
 
-The fallback is functional, not ideal UX. A non-custodial quote identity can
-discover factory-proven canonical fee-tier pools, create a fresh authenticated
-input for each candidate, submit each request, decrypt only its own result and
-select the largest output. It pays gas, waits for inclusion and creates public
-caller/pool/direction/timing history. The user independently creates fresh
-pool-bound inputs and swaps directly against the selected pool.
+The currently recorded v2 deployment exposes only the paid per-pool quote, so
+that is its primary working quote mechanism. The target transport for this
+version is one factory-bound
+`ConfidentialBestExecutionRouter.requestBestQuoteExactInput` transaction. The
+caller creates one router/selector-bound encrypted input. The router reuses the
+validated GT value across all initialized canonical v1 fee-tier pools, privately
+selects the largest valid output and offboards only the winner. It pays gas,
+waits for inclusion and creates public caller/winning-pool/tier/direction/timing
+history, but does not reveal losing outputs or move funds. Only after the router
+passes final verification and is freshly deployed does the paid per-pool quote
+become a direct compatibility path.
 
 No public reserve, TVL, spot-price, TWAP, depth ladder or quote state is added.
 This is a testnet feasibility boundary, not a mainnet-readiness claim.
@@ -100,8 +105,8 @@ claiming otherwise.
 ### 1. Why is quote input/output encrypted?
 
 To compute against confidential reserves without publishing the caller's chosen
-amount or result. The transaction fallback emits only a result encrypted for the
-requesting identity.
+amount or result. The paid best-quote transaction emits only the selected result
+encrypted for the requesting identity; losing outputs remain inside MPC.
 
 ### 2. Which guarantees does that provide?
 
@@ -117,9 +122,9 @@ reserve secrecy against an active funded quote operator is not a valid claim.
 ### 4. Can a walletless backend quote?
 
 Yes, by operating a dedicated onboarded COTI EOA/AES quote identity and paying
-for the encrypted request transactions. It cannot obtain a fresh MPC quote with
-a gas-free `eth_call` on the tested runtime. The identity is non-custodial and
-must never receive user funds or sign user swaps.
+for one best-quote transaction per logical request. It cannot obtain a fresh MPC
+quote with a gas-free `eth_call` on the tested runtime. The identity is
+non-custodial and must never receive user funds or sign user swaps.
 
 ### 5. Can COTI MPC selectively disclose derived data?
 
@@ -143,42 +148,52 @@ integrations need:
 
 1. a pinned factory, fee vault, protocol version and approved fee tiers;
 2. factory and canonical-key verification for every candidate;
-3. a separate protected quote EOA/AES key with minimal gas funds;
-4. one fresh target/selector-bound input and transaction per candidate;
-5. strict event correlation by caller, request ID and direction;
-6. in-memory decryption and deterministic best-output selection;
-7. fresh user-bound input and nonzero minimum output for direct pool execution;
-8. no plaintext amount, result, ciphertext or key logging.
+3. the factory's one-time configured, code/version-verified best-execution router;
+4. a protected caller EOA/AES key with gas for one paid best-quote transaction;
+5. one fresh router/quote-selector-bound input and strict event correlation by
+   emitter, caller and request ID;
+6. in-memory decryption of only the selected output;
+7. fresh router/swap-selector-bound input and nonzero encrypted minimum output
+   for atomic best execution, or fresh pool-bound inputs for optional direct
+   execution;
+8. exact encrypted router allowance for execution and no plaintext amount,
+   result, ciphertext or key logging.
 
 ### 8. Keep, extend or redesign?
 
-Keep the settlement privacy boundary and extend the integration surface with the
-evidence-backed transaction fallback. Do not add public reserve-derived state or
-a forwarding private router. Re-test gasless encrypted and plaintext-input paths
-when the COTI runtime changes; if full MPC `eth_call` succeeds, replace only the
-quote transport after parity and security review.
+Keep the settlement privacy boundary and use the evidence-backed paid canonical
+best-quote/best-execution router. It is not an unchecked forwarding router: user
+ciphertexts bind to the router, pools accept raw GT values only from the one
+router bound by their factory, and each pool remains authoritative for
+settlement. Do not add public reserve-derived state. Re-test gasless encrypted
+and plaintext-input paths when the COTI runtime changes; if full MPC `eth_call`
+succeeds, replace only the quote transport after parity and security review.
 
 ## Alternatives
 
 | Model | Benefit | Cost or privacy consequence | Decision |
 | --- | --- | --- | --- |
 | MPC `eth_call` | Exact, gasless, no quote transaction history | Unsupported by tested runtime | Preferred future transport |
-| Encrypted quote transaction | Exact and amount-confidential | Gas, latency, public metadata | Current explicit fallback |
+| Paid canonical best quote | Exact, one transaction, losing outputs stay private | Gas, latency, winning route metadata | Target primary after final deployment |
+| Paid per-pool quote | Exact and currently proven | One transaction per candidate and caller learns every output | Current primary; compatibility fallback after router deployment |
 | Public exact reserves | Simple universal routing | Reveals aggregate state and per-change deltas | Rejected |
 | Public exact quote | Simple universal routing | Public active oracle over curve | Rejected |
 | Public spot/TWAP | Analytics and rough routing | Persistent ratio/history disclosure; insufficient for slippage | Not embedded |
 | Reencrypt reserves to one API | Cheap exact backend quotes | API learns reserves/deltas; centralized confidentiality trust | Rejected |
 | Coarse or delayed snapshots | Lower-cost route filtering | Staleness, manipulation and explicit leakage budget | Future separate review |
-| Generic confidential router | One execution surface | Breaks authenticated sender/target/selector binding | Rejected without official delegation |
+| Unchecked forwarding router | One execution surface | Breaks authenticated sender/target/selector binding | Rejected |
+| Factory-bound GT router | One quote/execution surface with authenticated router inputs | Paid MPC work and selected-route metadata | Implemented for single-hop v1 tiers |
 
 ## Operational boundary
 
-- Use a quote identity distinct from deployer, treasury, LPs and users.
-- Fund it only for bounded testnet quote gas.
+- A walletless service should use a quote identity distinct from deployer,
+  treasury and LPs and fund it only for bounded testnet quote gas.
 - Rate-limit and serialize request handling; never reuse signed ciphertext.
 - Keep decrypted outputs in memory only and use opaque correlation IDs.
 - Do not retry an uncertain transaction blindly.
 - Show cost and pending status honestly to any testnet client.
+- Verify router code, protocol version, immutable factory and the factory's
+  `bestExecutionRouter()` binding before encrypting or submitting.
 - Re-run `npm run testnet:quote-call-probe` against every target RPC/runtime.
 - Treat any changed failure or newly successful primitive as a review trigger.
 

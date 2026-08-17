@@ -1,10 +1,25 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
-import { relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { BaseContract, ContractFactory, ContractTransactionResponse } from "ethers";
-import { ethers } from "hardhat";
+import hre, { ethers } from "hardhat";
+import {
+  DeploymentRecordWriter,
+  type DeploymentJournalTransaction,
+  type MinedDeploymentEvidence,
+  upsertMinedDeploymentTransaction,
+} from "./deployment-record";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
+import {
+  verifyDeployedRuntimeArtifactWithProvenance,
+  type RuntimeArtifactProvenance,
+} from "./runtime-artifact";
+import {
+  MinedTransactionStatusError,
+  requireMinedSuccess,
+  safeTestnetErrorSummary,
+  transactionHashFromError,
+  UnknownBroadcastOutcomeError,
+} from "./testnet-transaction-evidence";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,11 +27,13 @@ const TESTNET_DEPLOY_GAS_LIMITS = {
   feeVault: 1_000_000n,
   privateLpTokenFactory: 8_000_000n,
   confidentialFactory: 8_000_000n,
+  confidentialBestExecutionRouter: 3_000_000n,
   launchpadMigrator: 2_500_000n,
   publicFactory: 3_000_000n,
   publicQuoter: 400_000n,
   publicRouter: 800_000n,
   adapterBinding: 250_000n,
+  routerBinding: 250_000n,
 } as const;
 
 type DeploymentResult<T extends BaseContract = BaseContract> = {
@@ -24,16 +41,34 @@ type DeploymentResult<T extends BaseContract = BaseContract> = {
   address: string;
   deploymentTx: string | null;
   gasUsed: string | null;
+  artifact: RuntimeArtifactProvenance;
 };
+
+class PostMinedDeploymentError extends Error {
+  readonly transactionHash: string;
+
+  constructor(label: string, transactionHash: string, cause: unknown) {
+    super(`${label} post-mined verification failed; transactionHash=${transactionHash}`, {
+      cause,
+    });
+    this.name = "PostMinedDeploymentError";
+    this.transactionHash = transactionHash;
+  }
+}
 
 type ConfidentialFactoryHandle = BaseContract & {
   setBootstrapAdapter(
     address: string,
     overrides?: { gasLimit: bigint },
   ): Promise<ContractTransactionResponse>;
+  setBestExecutionRouter(
+    address: string,
+    overrides?: { gasLimit: bigint },
+  ): Promise<ContractTransactionResponse>;
   lpTokenFactory(): Promise<string>;
   feeVault(): Promise<string>;
   bootstrapAdapter(): Promise<string>;
+  bestExecutionRouter(): Promise<string>;
 };
 
 type FeeVaultHandle = BaseContract & {
@@ -44,6 +79,10 @@ type FactoryBoundHandle = BaseContract & {
   factory(): Promise<string>;
 };
 
+type VersionedFactoryBoundHandle = FactoryBoundHandle & {
+  PROTOCOL_VERSION(): Promise<bigint>;
+};
+
 type PublicFactoryHandle = BaseContract & {
   feeVault(): Promise<string>;
 };
@@ -51,24 +90,72 @@ type PublicFactoryHandle = BaseContract & {
 async function deployAndReport<T extends BaseContract>(
   label: string,
   factory: ContractFactory,
+  onMined: (evidence: MinedDeploymentEvidence) => Promise<void>,
   ...args: unknown[]
 ): Promise<DeploymentResult<T>> {
-  const contract = await factory.deploy(...args) as T;
-  await contract.waitForDeployment();
-  const deploymentTransaction = contract.deploymentTransaction();
-  const receipt = deploymentTransaction ? await deploymentTransaction.wait() : null;
-  const address = await contract.getAddress();
-  console.log(
-    `${label} deployed at ${address} ` +
-      `tx=${deploymentTransaction?.hash ?? "unknown"} ` +
-      `gas=${receipt?.gasUsed?.toString() ?? "unknown"}`,
+  let contract: T | undefined;
+  const evidence = await requireMinedSuccess(
+    `${label} deployment`,
+    async () => {
+      contract = await factory.deploy(...args) as T;
+      const transaction = contract.deploymentTransaction();
+      if (!transaction) throw new Error(`${label} deployment transaction unavailable`);
+      return transaction;
+    },
+    (hash) => ethers.provider.getTransactionReceipt(hash),
   );
-  return {
-    contract,
-    address,
-    deploymentTx: deploymentTransaction?.hash ?? null,
-    gasUsed: receipt?.gasUsed?.toString() ?? null,
-  };
+  const receipt = evidence.receipt;
+  try {
+    await onMined({
+      label: `${label} deployment`,
+      transactionHash: evidence.transactionHash,
+      gasUsed: receipt?.gasUsed?.toString() ?? null,
+    });
+  } catch (error) {
+    if (error instanceof PostMinedDeploymentError) throw error;
+    throw new PostMinedDeploymentError(label, evidence.transactionHash, error);
+  }
+
+  try {
+    const receiptAddress = receipt.contractAddress ?? undefined;
+    if (receiptAddress && !ethers.isAddress(receiptAddress)) {
+      throw new Error(`${label} deployment receipt returned an invalid contract address`);
+    }
+    if (!contract && receiptAddress) {
+      contract = factory.attach(receiptAddress) as T;
+    }
+    if (!contract) {
+      throw new Error(
+        `${label} deployment mined without a recoverable contract handle; do not retry automatically`,
+      );
+    }
+    const address = await contract.getAddress();
+    if (receiptAddress && address.toLowerCase() !== receiptAddress.toLowerCase()) {
+      throw new Error(`${label} recovered contract handle does not match the mined receipt`);
+    }
+    await onMined({
+      label: `${label} deployment`,
+      address,
+      transactionHash: evidence.transactionHash,
+      gasUsed: receipt.gasUsed?.toString() ?? null,
+    });
+    const artifact = await verifyDeployedRuntimeArtifactWithProvenance(label, address);
+    console.log(
+      `${label} deployed at ${address} ` +
+        `tx=${evidence.transactionHash} ` +
+        `gas=${receipt.gasUsed?.toString() ?? "unknown"}`,
+    );
+    return {
+      contract,
+      address,
+      deploymentTx: evidence.transactionHash,
+      gasUsed: receipt.gasUsed?.toString() ?? null,
+      artifact,
+    };
+  } catch (error) {
+    if (error instanceof PostMinedDeploymentError) throw error;
+    throw new PostMinedDeploymentError(label, evidence.transactionHash, error);
+  }
 }
 
 async function requireCleanSourceCommit(): Promise<string> {
@@ -86,48 +173,94 @@ async function requireCleanSourceCommit(): Promise<string> {
   return commit;
 }
 
-async function runtimeCodehash(address: string): Promise<string> {
-  const code = await ethers.provider.getCode(address);
-  if (code === "0x") throw new Error(`deployed contract has no runtime code: ${address}`);
-  return ethers.keccak256(code);
-}
-
-async function writeDeploymentRecord(record: Record<string, unknown>): Promise<void> {
+function requiredDeploymentRecordPath(): string {
   const outputPath = process.env.COTI_DEPLOYMENT_RECORD?.trim();
-  if (!outputPath) {
-    console.log("deployment record not written; set COTI_DEPLOYMENT_RECORD to persist it");
-    return;
-  }
-  const normalizedPath = outputPath.replaceAll("\\", "/");
-  if (!normalizedPath.startsWith("deployments/") || !normalizedPath.endsWith(".json")) {
-    throw new Error("COTI_DEPLOYMENT_RECORD must stay under deployments/");
-  }
-  const deploymentRoot = resolve("deployments");
-  const resolvedOutput = resolve(outputPath);
-  const relativeOutput = relative(deploymentRoot, resolvedOutput);
-  if (
-    relativeOutput === "" ||
-    relativeOutput.startsWith("..") ||
-    relativeOutput.includes(":") ||
-    resolve(deploymentRoot, relativeOutput) !== resolvedOutput
-  ) {
-    throw new Error("COTI_DEPLOYMENT_RECORD must resolve inside deployments/");
-  }
-  await mkdir("deployments", { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(record, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  console.log(`deployment record: ${outputPath}`);
+  if (!outputPath) throw new Error("COTI_DEPLOYMENT_RECORD is required");
+  return outputPath;
 }
 
 async function main(): Promise<void> {
+  await hre.run("clean");
+  await hre.run("compile");
+  const deploymentRecordPath = requiredDeploymentRecordPath();
   const deployedSourceCommit = await requireCleanSourceCommit();
+  const createdAt = new Date().toISOString();
+  const journalTransactions: DeploymentJournalTransaction[] = [];
+  const journalContracts: Record<string, unknown> = {};
+  const journalCompiler: Record<string, RuntimeArtifactProvenance> = {};
+  let stage = "deployment record reservation";
+  const deploymentRecord = await DeploymentRecordWriter.reserve(
+    deploymentRecordPath,
+    deployedSourceCommit,
+    {
+      schemaVersion: 2,
+      network: "cotiTestnet",
+      chainId: "7082400",
+      sourceCommit: deployedSourceCommit,
+      createdAt,
+      stage,
+    },
+  );
+
+  const writeJournal = async (
+    status: "in-progress" | "complete" | "failed" | "outcome-unknown",
+    extra: Record<string, unknown> = {},
+  ): Promise<void> => {
+    await deploymentRecord.write({
+      schemaVersion: 2,
+      status,
+      network: "cotiTestnet",
+      chainId: "7082400",
+      sourceCommit: deployedSourceCommit,
+      createdAt,
+      updatedAt: new Date().toISOString(),
+      stage,
+      compiler: journalCompiler,
+      contracts: journalContracts,
+      transactions: journalTransactions,
+      ...extra,
+    });
+  };
+
+  const recordTransaction = async (
+    evidence: MinedDeploymentEvidence,
+  ): Promise<void> => {
+    upsertMinedDeploymentTransaction(journalTransactions, evidence);
+    try {
+      await writeJournal("in-progress");
+    } catch (error) {
+      throw new PostMinedDeploymentError(
+        evidence.label,
+        evidence.transactionHash,
+        error,
+      );
+    }
+  };
+
+  const recordDeployment = async (
+    key: string,
+    deployment: DeploymentResult,
+    details: Record<string, unknown> = {},
+  ): Promise<void> => {
+    journalCompiler[deployment.artifact.contractName] = deployment.artifact;
+    journalContracts[key] = {
+      address: deployment.address,
+      runtimeCodehash: deployment.artifact.runtimeCodehash,
+      deploymentTx: deployment.deploymentTx,
+      gasUsed: deployment.gasUsed,
+      ...details,
+    };
+    await writeJournal("in-progress");
+  };
+
+  try {
+  stage = "network validation";
   const network = await ethers.provider.getNetwork();
   if (network.chainId !== 7_082_400n) {
     throw new Error(`deployment is restricted to COTI testnet (got chain ${network.chainId})`);
   }
 
+  stage = "configuration validation";
   const feeBeneficiary = process.env.CIPHERDEX_FEE_BENEFICIARY?.trim();
   if (!feeBeneficiary || !ethers.isAddress(feeBeneficiary)) {
     throw new Error("CIPHERDEX_FEE_BENEFICIARY must be a valid dedicated fee address");
@@ -144,71 +277,152 @@ async function main(): Promise<void> {
     reviewedPrivateTokens,
   );
 
+  stage = "CipherDEXFeeVault deployment";
   const feeVaultFactory = await ethers.getContractFactory("CipherDEXFeeVault");
   const feeVaultDeployment = await deployAndReport<FeeVaultHandle>(
     "CipherDEXFeeVault",
     feeVaultFactory,
+    recordTransaction,
     feeBeneficiary,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.feeVault },
   );
+  await recordDeployment("feeVault", feeVaultDeployment, { beneficiary: feeBeneficiary });
 
+  stage = "PrivateLPTokenFactory deployment";
   const privateLpTokenFactoryDeployment = await deployAndReport(
     "PrivateLPTokenFactory",
     await ethers.getContractFactory("PrivateLPTokenFactory"),
+    recordTransaction,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.privateLpTokenFactory },
   );
+  await recordDeployment("confidentialLpTokenFactory", privateLpTokenFactoryDeployment);
 
+  stage = "ConfidentialCPMMFactory deployment";
   const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory");
   const factoryDeployment = await deployAndReport<ConfidentialFactoryHandle>(
     "ConfidentialCPMMFactory",
     factoryFactory,
+    recordTransaction,
     feeVaultDeployment.address,
     privateLpTokenFactoryDeployment.address,
     privateTokenCodehashes,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.confidentialFactory },
   );
+  await recordDeployment("confidentialFactory", factoryDeployment, {
+    reviewedPrivateTokens,
+    approvedPrivateTokenCodehashes: privateTokenCodehashes,
+  });
   const factory = factoryDeployment.contract;
 
+  stage = "ConfidentialBestExecutionRouter deployment";
+  const confidentialRouterDeployment = await deployAndReport<VersionedFactoryBoundHandle>(
+    "ConfidentialBestExecutionRouter",
+    await ethers.getContractFactory("ConfidentialBestExecutionRouter"),
+    recordTransaction,
+    factoryDeployment.address,
+    { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.confidentialBestExecutionRouter },
+  );
+  await recordDeployment("confidentialBestExecutionRouter", confidentialRouterDeployment, {
+    protocolVersion: "1",
+    factory: factoryDeployment.address,
+  });
+  stage = "confidential best-execution router binding";
+  const bestExecutionRouterEvidence = await requireMinedSuccess(
+    "confidential best-execution router binding",
+    () => factory.setBestExecutionRouter(
+      confidentialRouterDeployment.address,
+      { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.routerBinding },
+    ),
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
+  const bestExecutionRouterReceipt = bestExecutionRouterEvidence.receipt;
+  await recordTransaction({
+    label: "confidential best-execution router binding",
+    transactionHash: bestExecutionRouterEvidence.transactionHash,
+    gasUsed: bestExecutionRouterReceipt?.gasUsed?.toString() ?? null,
+  });
+  journalContracts.bestExecutionRouterBinding = {
+    address: confidentialRouterDeployment.address,
+    transaction: bestExecutionRouterEvidence.transactionHash,
+    gasUsed: bestExecutionRouterReceipt?.gasUsed?.toString() ?? null,
+  };
+  await writeJournal("in-progress");
+  console.log(
+    `confidential best-execution router configured: ${confidentialRouterDeployment.address} ` +
+      `tx=${bestExecutionRouterEvidence.transactionHash} ` +
+      `gas=${bestExecutionRouterReceipt?.gasUsed?.toString() ?? "unknown"}`,
+  );
+
+  stage = "ConfidentialLaunchpadMigrator deployment";
   const launchpadFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
   const launchpadDeployment = await deployAndReport<FactoryBoundHandle>(
     "ConfidentialLaunchpadMigrator",
     launchpadFactory,
+    recordTransaction,
     factoryDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.launchpadMigrator },
   );
-  const adapterTx = await factory.setBootstrapAdapter(launchpadDeployment.address, {
-    gasLimit: TESTNET_DEPLOY_GAS_LIMITS.adapterBinding,
+  await recordDeployment("launchpadMigrator", launchpadDeployment);
+  stage = "launchpad adapter binding";
+  const adapterEvidence = await requireMinedSuccess(
+    "launchpad adapter binding",
+    () => factory.setBootstrapAdapter(launchpadDeployment.address, {
+      gasLimit: TESTNET_DEPLOY_GAS_LIMITS.adapterBinding,
+    }),
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
+  const adapterReceipt = adapterEvidence.receipt;
+  await recordTransaction({
+    label: "launchpad adapter binding",
+    transactionHash: adapterEvidence.transactionHash,
+    gasUsed: adapterReceipt?.gasUsed?.toString() ?? null,
   });
-  const adapterReceipt = await adapterTx.wait();
+  journalContracts.bootstrapAdapterBinding = {
+    address: launchpadDeployment.address,
+    transaction: adapterEvidence.transactionHash,
+    gasUsed: adapterReceipt?.gasUsed?.toString() ?? null,
+  };
+  await writeJournal("in-progress");
   console.log(
     `launchpad adapter configured: ${launchpadDeployment.address} ` +
-      `tx=${adapterTx.hash} gas=${adapterReceipt?.gasUsed?.toString() ?? "unknown"}`,
+      `tx=${adapterEvidence.transactionHash} ` +
+      `gas=${adapterReceipt?.gasUsed?.toString() ?? "unknown"}`,
   );
 
+  stage = "PublicCPMMFactory deployment";
   const publicFactoryFactory = await ethers.getContractFactory("PublicCPMMFactory");
   const publicFactoryDeployment = await deployAndReport<PublicFactoryHandle>(
     "PublicCPMMFactory",
     publicFactoryFactory,
+    recordTransaction,
     feeVaultDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.publicFactory },
   );
+  await recordDeployment("publicFactory", publicFactoryDeployment);
 
+  stage = "PublicCPMMQuoter deployment";
   const publicQuoterFactory = await ethers.getContractFactory("PublicCPMMQuoter");
   const publicQuoterDeployment = await deployAndReport<FactoryBoundHandle>(
     "PublicCPMMQuoter",
     publicQuoterFactory,
+    recordTransaction,
     publicFactoryDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.publicQuoter },
   );
+  await recordDeployment("publicQuoter", publicQuoterDeployment);
 
+  stage = "PublicCPMMRouter deployment";
   const publicRouterFactory = await ethers.getContractFactory("PublicCPMMRouter");
   const publicRouterDeployment = await deployAndReport<FactoryBoundHandle>(
     "PublicCPMMRouter",
     publicRouterFactory,
+    recordTransaction,
     publicFactoryDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.publicRouter },
   );
+  await recordDeployment("publicRouter", publicRouterDeployment);
 
+  stage = "post-deployment immutable binding verification";
   const sameAddress = (actual: string, expected: string): boolean =>
     actual.toLowerCase() === expected.toLowerCase();
   const [
@@ -216,6 +430,9 @@ async function main(): Promise<void> {
     confidentialFeeVault,
     deployedLpTokenFactory,
     deployedBootstrapAdapter,
+    deployedBestExecutionRouter,
+    confidentialRouterFactory,
+    confidentialRouterVersion,
     migratorFactory,
     publicFeeVault,
     quoterFactory,
@@ -225,6 +442,9 @@ async function main(): Promise<void> {
     factory.feeVault(),
     factory.lpTokenFactory(),
     factory.bootstrapAdapter(),
+    factory.bestExecutionRouter(),
+    confidentialRouterDeployment.contract.factory(),
+    confidentialRouterDeployment.contract.PROTOCOL_VERSION(),
     launchpadDeployment.contract.factory(),
     publicFactoryDeployment.contract.feeVault(),
     publicQuoterDeployment.contract.factory(),
@@ -235,6 +455,9 @@ async function main(): Promise<void> {
     !sameAddress(String(confidentialFeeVault), feeVaultDeployment.address) ||
     !sameAddress(String(deployedLpTokenFactory), privateLpTokenFactoryDeployment.address) ||
     !sameAddress(String(deployedBootstrapAdapter), launchpadDeployment.address) ||
+    !sameAddress(String(deployedBestExecutionRouter), confidentialRouterDeployment.address) ||
+    !sameAddress(String(confidentialRouterFactory), factoryDeployment.address) ||
+    confidentialRouterVersion !== 1n ||
     !sameAddress(String(migratorFactory), factoryDeployment.address) ||
     !sameAddress(String(publicFeeVault), feeVaultDeployment.address) ||
     !sameAddress(String(quoterFactory), publicFactoryDeployment.address) ||
@@ -249,88 +472,17 @@ async function main(): Promise<void> {
   console.log(`feeVault=${feeVaultDeployment.address}`);
   console.log(`feeBeneficiary=${feeBeneficiary}`);
   console.log(`confidentialFactory=${factoryDeployment.address}`);
+  console.log(`confidentialBestExecutionRouter=${confidentialRouterDeployment.address}`);
   console.log(`launchpadMigrator=${launchpadDeployment.address}`);
   console.log(`publicFactory=${publicFactoryDeployment.address}`);
   console.log(`chainId=${network.chainId}`);
 
-  const runtimeCodehashes = Object.fromEntries(
-    await Promise.all(
-      [
-        ["feeVault", feeVaultDeployment.address],
-        ["confidentialFactory", factoryDeployment.address],
-        ["confidentialLpTokenFactory", confidentialLpTokenFactory],
-        ["launchpadMigrator", launchpadDeployment.address],
-        ["publicFactory", publicFactoryDeployment.address],
-        ["publicQuoter", publicQuoterDeployment.address],
-        ["publicRouter", publicRouterDeployment.address],
-      ].map(async ([name, address]) => [name, await runtimeCodehash(address)]),
-    ),
-  );
-
-  await writeDeploymentRecord({
-    schemaVersion: 1,
-    network: "cotiTestnet",
-    chainId: network.chainId.toString(),
-    sourceCommit: deployedSourceCommit,
-    compiler: {
-      solc: "0.8.28",
-      evmVersion: "paris",
-      confidentialViaIR: true,
-      publicViaIR: false,
-      metadataBytecodeHash: "none",
-    },
-    contracts: {
-      feeVault: {
-        address: feeVaultDeployment.address,
-        beneficiary: feeBeneficiary,
-        runtimeCodehash: runtimeCodehashes.feeVault,
-        deploymentTx: feeVaultDeployment.deploymentTx,
-        gasUsed: feeVaultDeployment.gasUsed,
-      },
-      confidentialFactory: {
-        address: factoryDeployment.address,
-        reviewedPrivateTokens,
-        approvedPrivateTokenCodehashes: privateTokenCodehashes,
-        runtimeCodehash: runtimeCodehashes.confidentialFactory,
-        deploymentTx: factoryDeployment.deploymentTx,
-        gasUsed: factoryDeployment.gasUsed,
-      },
-      confidentialLpTokenFactory: {
-        address: confidentialLpTokenFactory,
-        runtimeCodehash: runtimeCodehashes.confidentialLpTokenFactory,
-        deploymentTx: privateLpTokenFactoryDeployment.deploymentTx,
-        gasUsed: privateLpTokenFactoryDeployment.gasUsed,
-      },
-      launchpadMigrator: {
-        address: launchpadDeployment.address,
-        runtimeCodehash: runtimeCodehashes.launchpadMigrator,
-        deploymentTx: launchpadDeployment.deploymentTx,
-        gasUsed: launchpadDeployment.gasUsed,
-      },
-      bootstrapAdapterBinding: {
-        address: launchpadDeployment.address,
-        transaction: adapterTx.hash,
-        gasUsed: adapterReceipt?.gasUsed?.toString() ?? null,
-      },
-      publicFactory: {
-        address: publicFactoryDeployment.address,
-        runtimeCodehash: runtimeCodehashes.publicFactory,
-        deploymentTx: publicFactoryDeployment.deploymentTx,
-        gasUsed: publicFactoryDeployment.gasUsed,
-      },
-      publicQuoter: {
-        address: publicQuoterDeployment.address,
-        runtimeCodehash: runtimeCodehashes.publicQuoter,
-        deploymentTx: publicQuoterDeployment.deploymentTx,
-        gasUsed: publicQuoterDeployment.gasUsed,
-      },
-      publicRouter: {
-        address: publicRouterDeployment.address,
-        runtimeCodehash: runtimeCodehashes.publicRouter,
-        deploymentTx: publicRouterDeployment.deploymentTx,
-        gasUsed: publicRouterDeployment.gasUsed,
-      },
-    },
+  stage = "deployment completion journal";
+  journalContracts.confidentialBestExecutionRouter = {
+    ...(journalContracts.confidentialBestExecutionRouter as Record<string, unknown>),
+    protocolVersion: confidentialRouterVersion.toString(),
+  };
+  await writeJournal("complete", {
     feePolicy: {
       approvedTotalFeeBps: [5, 30, 100],
       protocolFeeShare: { numerator: 1, denominator: 6 },
@@ -345,12 +497,58 @@ async function main(): Promise<void> {
       "not externally audited",
       "no mainnet deployment",
       "public and confidential modes are separate canonical registries",
+      "confidential exact best quotes require paid MPC transactions on the tested runtime",
+      "confidential best execution is single-hop across canonical v1 fee tiers only",
       "no PoD synchronous pool adapter",
     ],
   });
+  console.log(`deployment record: ${deploymentRecord.outputPath}`);
+  } catch (error) {
+    const transactionHash = transactionHashFromError(error);
+    const outcome: DeploymentJournalTransaction["outcome"] =
+      error instanceof UnknownBroadcastOutcomeError
+        ? "outcome-unknown"
+        : error instanceof MinedTransactionStatusError
+          ? "mined-failure"
+          : transactionHash
+            ? "post-mined-error"
+            : "local-failure";
+    if (
+      transactionHash &&
+      !journalTransactions.some(
+        (entry) => entry.transactionHash.toLowerCase() === transactionHash.toLowerCase(),
+      )
+    ) {
+      journalTransactions.push(Object.freeze({
+        label: stage,
+        transactionHash,
+        outcome,
+        gasUsed: null,
+      }));
+    }
+    try {
+      await writeJournal(
+        outcome === "outcome-unknown" ? "outcome-unknown" : "failed",
+        {
+          failure: {
+            classification: outcome,
+            transactionHash: transactionHash ?? null,
+          },
+        },
+      );
+    } catch (journalError) {
+      throw new AggregateError(
+        [error, journalError],
+        "deployment failed and its terminal evidence journal could not be persisted",
+      );
+    }
+    throw error;
+  } finally {
+    await deploymentRecord.close();
+  }
 }
 
 void main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : "deployment failed");
+  console.error(`COTI testnet deployment failed: ${safeTestnetErrorSummary(error)}`);
   process.exitCode = 1;
 });

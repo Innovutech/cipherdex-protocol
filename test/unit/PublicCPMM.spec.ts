@@ -148,6 +148,62 @@ describe("PublicCPMM", function () {
     expect(await token1.balanceOf(await pool.getAddress())).to.equal(amount1);
   });
 
+  it("never treats donated balances as tradable reserves before initialization", async function () {
+    const { trader, tokenA, tokenB, pool } = await deployPool();
+    const poolAddress = await pool.getAddress();
+    const token0IsA = (await pool.token0()).toLowerCase() ===
+      (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const donated0 = token0IsA ? ethers.parseEther("2") : 2_000_000n;
+    const donated1 = token0IsA ? 2_000_000n : ethers.parseEther("2");
+    const input = token0IsA ? ethers.parseEther("1") : 1_000_000n;
+
+    await token0.transfer(poolAddress, donated0);
+    await token1.transfer(poolAddress, donated1);
+    await token0.connect(trader).approve(poolAddress, input);
+
+    await expect(pool.quoteExactInput(input, true))
+      .to.be.revertedWithCustomError(pool, "PoolNotInitialized");
+    await expect(pool.connect(trader).swapExactInput(input, 0n, true, 0xffffffff))
+      .to.be.revertedWithCustomError(pool, "PoolNotInitialized");
+
+    expect(await pool.initialized()).to.equal(false);
+    expect(await token0.balanceOf(poolAddress)).to.equal(donated0);
+    expect(await token1.balanceOf(poolAddress)).to.equal(donated1);
+  });
+
+  it("keeps a fully exited pool non-tradable even after later donations", async function () {
+    const { owner, trader, tokenA, tokenB, pool } = await deployPool();
+    const poolAddress = await pool.getAddress();
+    const token0IsA = (await pool.token0()).toLowerCase() ===
+      (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const amount0 = token0IsA ? ethers.parseEther("100") : 100_000_000n;
+    const amount1 = token0IsA ? 100_000_000n : ethers.parseEther("100");
+    const input = token0IsA ? ethers.parseEther("1") : 1_000_000n;
+
+    await token0.approve(poolAddress, amount0);
+    await token1.approve(poolAddress, amount1);
+    await pool.addLiquidity(amount0, amount1, 1n, 0n, ethers.MaxUint256, 0xffffffff);
+    const allShares = await pool.shares(owner.address);
+    await pool.removeLiquidity(allShares, amount0, amount1, 0xffffffff);
+
+    expect(await pool.initialized()).to.equal(false);
+    expect(await pool.totalShares()).to.equal(0n);
+    await token0.transfer(poolAddress, 1n);
+    await token1.transfer(poolAddress, 1n);
+    await token0.connect(trader).approve(poolAddress, input);
+
+    await expect(pool.quoteExactInput(input, true))
+      .to.be.revertedWithCustomError(pool, "PoolNotInitialized");
+    await expect(pool.connect(trader).swapExactInput(input, 0n, true, 0xffffffff))
+      .to.be.revertedWithCustomError(pool, "PoolNotInitialized");
+    expect(await token0.balanceOf(poolAddress)).to.equal(1n);
+    expect(await token1.balanceOf(poolAddress)).to.equal(1n);
+  });
+
   it("uses liquidity amounts as maxima and enforces permanent locks", async function () {
     const { owner, tokenA, tokenB, pool } = await deployPool();
     const token0IsA = (await pool.token0()).toLowerCase() === (await tokenA.getAddress()).toLowerCase();

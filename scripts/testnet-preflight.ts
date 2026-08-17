@@ -91,7 +91,7 @@ async function main(): Promise<void> {
       privateKey: quotePrivateKey,
       aesKey: quoteAesKey,
       // Current COTI testnet rejects fresh MPC execution under eth_call, so the
-      // supported encrypted quote fallback is a transaction and needs gas.
+      // currently proven encrypted quote path is a transaction and needs gas.
       requiresGas: true,
       requiresTokenBalances: false,
     },
@@ -161,17 +161,19 @@ async function main(): Promise<void> {
       stage = `${identity.role} private token ${index} public-amount policy validation`;
       const publicAmountsEnabled = Boolean(await token.publicAmountsEnabled());
       console.log(
-        `${identity.role} token ${index} ready: address=${address} ` +
+        `${identity.role} token ${index} accessible: address=${address} ` +
           `decimals=${actualDecimals} ` +
           `privateBalanceRead=${identity.requiresTokenBalances ? "ok" : "not-required"} ` +
           `publicAmountsEnabled=${publicAmountsEnabled}`,
       );
     }
 
-    console.log(`${identity.role} identity ready: ${walletAddress}`);
+    console.log(`${identity.role} identity accessible with nonzero required balances: ${walletAddress}`);
   }
 
-  console.log("COTI testnet preflight passed for all isolated identities");
+  console.log(
+    "COTI testnet access preflight passed; each funded runner must still enforce its exact gas and token budget",
+  );
 }
 
 void main().catch(() => {

@@ -1,5 +1,5 @@
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import { Contract, ethers } from "ethers";
+import { Contract, TransactionReceipt, ethers } from "ethers";
 import { ethers as hardhatEthers } from "hardhat";
 import {
   LAUNCHPAD_MIGRATION_EIP712_TYPES,
@@ -13,6 +13,11 @@ import {
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
+import {
+  requireMinedFailure,
+  requireMinedSuccess,
+  safeTestnetErrorSummary,
+} from "./testnet-transaction-evidence";
 
 const MIGRATOR_ABI = [
   `function migrate((address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,${IT_UINT256} amountA,${IT_UINT256} amountB,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,uint64 deadline,bytes authorization) request) returns (address pool,${CT_UINT256} shares)`,
@@ -26,32 +31,13 @@ const PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const LAUNCHPAD_MIGRATOR_DEPLOY_GAS_LIMIT = 2_500_000n;
 const LAUNCHPAD_ADAPTER_BIND_GAS_LIMIT = 250_000n;
-const COTI_TESTNET_TX_GAS_LIMIT = BigInt(
-  process.env.COTI_TESTNET_GAS_LIMIT ?? "30000000",
-);
+const gasLimitText = process.env.COTI_TESTNET_GAS_LIMIT?.trim() ?? "30000000";
+if (!/^\d+$/.test(gasLimitText) || BigInt(gasLimitText) === 0n) {
+  throw new Error("COTI_TESTNET_GAS_LIMIT must be a positive integer");
+}
+const COTI_TESTNET_TX_GAS_LIMIT = BigInt(gasLimitText);
 
 let stage = "configuration";
-
-function safeErrorSummary(error: unknown): string {
-  if (!error || typeof error !== "object") return "code=unknown";
-  const record = error as {
-    name?: unknown;
-    message?: unknown;
-    code?: unknown;
-    shortMessage?: unknown;
-    info?: { error?: { message?: unknown } };
-  };
-  const code = typeof record.code === "string" ? record.code : "unknown";
-  const name = typeof record.name === "string" ? record.name : "Error";
-  const detail = [record.shortMessage, record.info?.error?.message, record.message]
-    .find((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
-  if (!detail) return `name=${name} code=${code}`;
-  const redacted = detail
-    .replace(/0x[0-9a-fA-F]{16,}/g, "[redacted-hex]")
-    .replace(/\s+/g, " ")
-    .slice(0, 240);
-  return `name=${name} code=${code} detail=${redacted}`;
-}
 
 const requiredAddress = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -115,10 +101,53 @@ const submit = async (
   transaction: Promise<{ hash: string; wait(): Promise<any> }>,
 ): Promise<any> => {
   const started = Date.now();
-  const tx = await transaction;
-  const receipt = await tx.wait();
-  console.log(`${label}: tx=${tx.hash} gas=${receipt?.gasUsed?.toString() ?? "unknown"} latencyMs=${Date.now() - started}`);
+  const evidence = await requireMinedSuccess(
+    label,
+    () => transaction,
+    (hash) => hardhatEthers.provider.getTransactionReceipt(hash),
+  );
+  const receipt = evidence.receipt;
+  console.log(
+    `${label}: tx=${evidence.transactionHash} gas=${receipt.gasUsed.toString()} ` +
+      `latencyMs=${Date.now() - started}`,
+  );
   return receipt;
+};
+
+const deployFunded = async (
+  label: string,
+  operation: () => Promise<any>,
+): Promise<any> => {
+  let contract: any;
+  await submit(
+    label,
+    (async () => {
+      contract = await operation();
+      const transaction = contract.deploymentTransaction();
+      if (!transaction) throw new Error(`${label} transaction unavailable`);
+      return transaction;
+    })(),
+  );
+  if (!contract) {
+    throw new Error(`${label} mined without a contract handle; do not retry automatically`);
+  }
+  return contract;
+};
+
+const expectMinedFailure = async (
+  label: string,
+  operation: () => Promise<{
+    hash: string;
+    wait(): Promise<TransactionReceipt | null>;
+  }>,
+): Promise<void> => {
+  stage = label;
+  const evidence = await requireMinedFailure(
+    label,
+    operation,
+    (hash) => hardhatEthers.provider.getTransactionReceipt(hash),
+  );
+  console.log(`${label}: rejected onchain tx=${evidence.transactionHash}`);
 };
 
 const scaleTo18 = (amount: bigint, decimals: number): bigint => {
@@ -207,29 +236,35 @@ async function main(): Promise<void> {
     throw new Error("configured deployer and COTI wallet do not match");
   }
 
-  const feeVault = await (
-    await hardhatEthers.getContractFactory("CipherDEXFeeVault", deployer)
-  ).deploy(walletAddress, { gasLimit: FEE_VAULT_DEPLOY_GAS_LIMIT });
-  await feeVault.waitForDeployment();
-  const lpTokenFactory = await (
-    await hardhatEthers.getContractFactory("PrivateLPTokenFactory", deployer)
-  ).deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT });
-  await lpTokenFactory.waitForDeployment();
-  const factoryFactory = await hardhatEthers.getContractFactory("ConfidentialCPMMFactory", deployer);
-  const factory = await factoryFactory.deploy(
-    await feeVault.getAddress(),
-    await lpTokenFactory.getAddress(),
-    privateTokenCodehashes,
-    { gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT },
+  const feeVaultFactory = await hardhatEthers.getContractFactory("CipherDEXFeeVault", deployer);
+  const feeVault = await deployFunded(
+    "fee vault deployment",
+    () => feeVaultFactory.deploy(walletAddress, { gasLimit: FEE_VAULT_DEPLOY_GAS_LIMIT }),
   );
-  await factory.waitForDeployment();
+  const privateLpFactory = await hardhatEthers.getContractFactory("PrivateLPTokenFactory", deployer);
+  const lpTokenFactory = await deployFunded(
+    "private LP token factory deployment",
+    () => privateLpFactory.deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT }),
+  );
+  const factoryFactory = await hardhatEthers.getContractFactory("ConfidentialCPMMFactory", deployer);
+  const factory = await deployFunded(
+    "confidential factory deployment",
+    async () => factoryFactory.deploy(
+      await feeVault.getAddress(),
+      await lpTokenFactory.getAddress(),
+      privateTokenCodehashes,
+      { gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT },
+    ),
+  );
   const factoryAddress = await factory.getAddress();
 
   const migratorFactory = await hardhatEthers.getContractFactory("ConfidentialLaunchpadMigrator", deployer);
-  const migratorDeployment = await migratorFactory.deploy(factoryAddress, {
-    gasLimit: LAUNCHPAD_MIGRATOR_DEPLOY_GAS_LIMIT,
-  });
-  await migratorDeployment.waitForDeployment();
+  const migratorDeployment = await deployFunded(
+    "launchpad migrator deployment",
+    () => migratorFactory.deploy(factoryAddress, {
+      gasLimit: LAUNCHPAD_MIGRATOR_DEPLOY_GAS_LIMIT,
+    }),
+  );
   const migratorAddress = await migratorDeployment.getAddress();
   await submit(
     "launchpad adapter binding",
@@ -447,21 +482,13 @@ async function main(): Promise<void> {
   if (beforeRejected0 < amount0 || beforeRejected1 < amount1) {
     throw new Error("configured launchpad amounts exceed the available private balance");
   }
-  let rejectedBoundRolledBack = false;
-  try {
-    stage = "rejected launchpad price-bound probe";
-    await submit(
-      stage,
-      disposition === undefined
-        ? migrator.migrate(rejectedRequest, { gasLimit: COTI_TESTNET_TX_GAS_LIMIT })
-        : migrator.migrateWithDisposition(rejectedRequest, disposition, unlockTime, {
-            gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
-          }),
-    );
-  } catch {
-    rejectedBoundRolledBack = true;
-  }
-  if (!rejectedBoundRolledBack) throw new Error("launchpad accepted an impossible price bound");
+  await expectMinedFailure("rejected launchpad price-bound probe", () =>
+    disposition === undefined
+      ? migrator.migrate(rejectedRequest, { gasLimit: COTI_TESTNET_TX_GAS_LIMIT })
+      : migrator.migrateWithDisposition(rejectedRequest, disposition, unlockTime, {
+          gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+        }),
+  );
   if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
     throw new Error("failed launchpad migration left a canonical pool behind");
   }
@@ -489,16 +516,23 @@ async function main(): Promise<void> {
   );
 
   let poolAddress: string | null = null;
+  let migrationEventCount = 0;
   let lockDisposition: {
     disposition: number;
     lockId: string;
     unlockTime: bigint;
   } | null = null;
+  let dispositionEventCount = 0;
   for (const log of receipt?.logs ?? []) {
+    if (String(log.address).toLowerCase() !== migratorAddress.toLowerCase()) continue;
     try {
       const parsed = migrator.interface.parseLog({ topics: log.topics, data: log.data });
-      if (parsed?.name === "LaunchpadMigration") poolAddress = parsed.args.pool as string;
+      if (parsed?.name === "LaunchpadMigration") {
+        migrationEventCount += 1;
+        poolAddress = parsed.args.pool as string;
+      }
       if (parsed?.name === "LaunchpadLockDisposition") {
+        dispositionEventCount += 1;
         lockDisposition = {
           disposition: Number(parsed.args.disposition),
           lockId: parsed.args.lockId as string,
@@ -509,7 +543,12 @@ async function main(): Promise<void> {
       // Ignore logs emitted by the factory and token contracts.
     }
   }
-  if (!poolAddress || !ethers.isAddress(poolAddress)) throw new Error("launchpad pool event missing");
+  if (migrationEventCount !== 1 || !poolAddress || !ethers.isAddress(poolAddress)) {
+    throw new Error("launchpad pool event is missing or ambiguous");
+  }
+  if (dispositionEventCount > 1) {
+    throw new Error("launchpad lock disposition event is ambiguous");
+  }
   if (poolAddress.toLowerCase() !== predictedPoolAddress.toLowerCase()) {
     throw new Error("launchpad did not deploy the predicted canonical pool");
   }
@@ -570,21 +609,13 @@ async function main(): Promise<void> {
 
   const beforeReplay0 = await readPrivateBalance(token0, walletAddress, wallet);
   const beforeReplay1 = await readPrivateBalance(token1, walletAddress, wallet);
-  let replayRejected = false;
-  try {
-    stage = "launchpad replay probe";
-    await submit(
-      stage,
-      disposition === undefined
-        ? migrator.migrate(migrationRequest, { gasLimit: COTI_TESTNET_TX_GAS_LIMIT })
-        : migrator.migrateWithDisposition(migrationRequest, disposition, unlockTime, {
-            gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
-          }),
-    );
-  } catch {
-    replayRejected = true;
-  }
-  if (!replayRejected) throw new Error("launchpad migration replay was accepted");
+  await expectMinedFailure("launchpad replay probe", () =>
+    disposition === undefined
+      ? migrator.migrate(migrationRequest, { gasLimit: COTI_TESTNET_TX_GAS_LIMIT })
+      : migrator.migrateWithDisposition(migrationRequest, disposition, unlockTime, {
+          gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
+        }),
+  );
   if (
     (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeReplay0 ||
     (await readPrivateBalance(token1, walletAddress, wallet)) !== beforeReplay1
@@ -601,7 +632,7 @@ async function main(): Promise<void> {
 void main().catch((error: unknown) => {
   console.error(
     `COTI launchpad migration failed during ${stage}; ` +
-      `${safeErrorSummary(error)}; private payloads were suppressed.`,
+      `${safeTestnetErrorSummary(error)}; private payloads were suppressed.`,
   );
   process.exitCode = 1;
 });

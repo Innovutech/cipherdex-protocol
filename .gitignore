@@ -6,5 +6,5 @@ typechain-types/
 .env
 .env.*
 !.env.example
-deployments/*.json
 .dependency-audit/
+deployments/*.json

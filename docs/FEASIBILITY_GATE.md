@@ -22,6 +22,12 @@ persisted.
 - two canonical fee-tier candidates for the same pair;
 - canonical confidential discovery and encrypted transaction quote selection
   across two fee tiers;
+- transaction-scoped GT validation and reuse across multiple pool calls;
+- private best-output selection with only the winning result offboarded;
+- factory-derived 5/30/100 bps candidates with absent/uninitialized/invalid
+  candidate isolation and deterministic lower-tier ties;
+- atomic best execution with exact router escrow, selected-pool allowance,
+  settlement parity, encrypted slippage rollback and no balance/allowance residue;
 - direct encrypted swaps in both directions;
 - expired, slippage-failing and replayed-input rejection;
 - per-input-token confidential fee-batch counters and premature collection
@@ -38,10 +44,15 @@ persisted.
 The staged probe proves ciphertext-only user reads work under `eth_call`, while
 raw stored-ciphertext `OnBoard`, authenticated validation, arithmetic,
 comparison/mux and both full quote forms fail. A real transaction executes the
-same MPC operations. The stable SDK therefore exposes the exact encrypted
-transaction/event fallback and labels it explicitly. It enables testnet routing
-without publishing reserves, but its gas, latency and public request metadata are
-an unresolved product limitation rather than normal quote UX.
+same MPC operations. A separate funded production gate then proved one paid
+router transaction can reuse one validated GT input across canonical pools,
+privately select, and either offboard only the winner or settle atomically. The
+stable SDK therefore exposes the paid canonical best-quote/best-swap transport
+and labels it explicitly. The paid per-pool transaction remains the primary
+proven quote on deployments without the finalized router, and remains a direct
+compatibility path after that router is deployed. This enables testnet routing
+without publishing reserves, but gas, latency and public winning-route metadata
+remain product limitations rather than normal gasless quote UX.
 
 ## Accounting model
 
@@ -63,10 +74,11 @@ The standard `PrivateERC20` interface does not hide participant addresses.
 may expose sender and recipient. CipherDEX protects amounts, slippage, reserves
 and LP positions; it does not claim anonymous participants.
 
-If permissionless gasless quotes become available, repeated probes would allow an
-active caller to estimate the CPMM curve. Encryption would protect each
-request/result from passive public disclosure, but would not make a deterministic
-curve information-theoretically unknowable to the caller.
+Permissionless paid quotes already allow an active funded caller to estimate the
+CPMM curve through repeated chosen inputs. Encryption protects each
+request/result from passive public disclosure and hides losing candidate outputs,
+but does not make a deterministic curve information-theoretically unknowable to
+the caller.
 
 Confidential fee batches similarly reduce routine per-swap disclosure but cannot
 manufacture an anonymity set in a quiet pool. A beneficiary that knows most
@@ -86,7 +98,8 @@ as an implicit `PrivateERC20` fallback.
 The testnet behavior is demonstrated, not audited. Before any mainnet decision:
 
 1. Obtain independent contract and COTI MPC integration review.
-2. Run sustained stateful/fuzz campaigns beyond the deterministic local suite.
+2. Run sustained stateful/fuzz campaigns beyond the deterministic local suite,
+   including router gas/liveness under future candidate tiers.
 3. Operationally validate the separate 24-hour confidential vault sweep without
    shortening or bypassing its delay.
 4. Exercise launchpad creator-held, timed-lock and permanent-lock dispositions

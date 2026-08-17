@@ -1,8 +1,13 @@
 import { expect } from "chai";
-import { Interface } from "ethers";
+import { Interface, ZeroHash, keccak256 } from "ethers";
 import {
   CONFIDENTIAL_CPMM_ABI,
   CONFIDENTIAL_CPMM_FACTORY_ABI,
+  CONFIDENTIAL_BEST_EXECUTION_POOL_ABI,
+  CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI,
+  CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
+  CONFIDENTIAL_BEST_QUOTE_SELECTOR,
+  CONFIDENTIAL_BEST_SWAP_SELECTOR,
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
   CONFIDENTIAL_QUOTE_TRANSPORT,
   CIPHERDEX_FEE_VAULT_ABI,
@@ -18,14 +23,20 @@ import {
   PUBLIC_CPMM_QUOTER_ABI,
   PUBLIC_CPMM_ROUTER_ABI,
   calculateCipherDEXV1FeeBreakdown,
+  buildConfidentialBestQuoteCall,
+  buildConfidentialBestSwapCall,
+  buildVerifiedConfidentialBestQuoteTransaction,
+  buildVerifiedConfidentialBestSwapTransaction,
+  decryptConfidentialBestExecutionResult,
   getCipherDEXV1FeePolicy,
+  getConfidentialBestExecutionEncryptionBinding,
   isConfidentialLockDiscovery,
   isConfidentialPoolDiscovery,
   isLaunchpadMigrationMetadata,
   isPublicPoolDiscovery,
   minimumCipherDEXV1ConfidentialInput,
-  selectBestConfidentialPoolQuote,
   verifyConfidentialPoolDiscovery,
+  verifyConfidentialBestExecutionRouter,
   verifyPublicPoolDiscovery,
 } from "../../sdk/src/index";
 
@@ -34,6 +45,8 @@ describe("stable SDK surface", function () {
     expect(DISCLOSURE_SCHEMA_VERSION).to.equal(5);
     const pool = new Interface(CONFIDENTIAL_CPMM_ABI);
     const factory = new Interface(CONFIDENTIAL_CPMM_FACTORY_ABI);
+    const bestExecutionPool = new Interface(CONFIDENTIAL_BEST_EXECUTION_POOL_ABI);
+    const bestExecutionRouter = new Interface(CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI);
     const launchpad = new Interface(CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI);
     const privateLpToken = new Interface(PRIVATE_LP_TOKEN_ABI);
     const publicPool = new Interface(PUBLIC_CPMM_ABI);
@@ -62,11 +75,21 @@ describe("stable SDK surface", function () {
     expect(factory.getFunction("PRIVACY_MODE")).to.not.equal(null);
     expect(factory.getFunction("setBootstrapAdapter")).to.not.equal(null);
     expect(factory.getFunction("bootstrapAdapter")).to.not.equal(null);
+    expect(factory.getFunction("setBestExecutionRouter")).to.not.equal(null);
+    expect(factory.getFunction("bestExecutionRouter")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPool")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPoolWithDisposition")).to.not.equal(null);
     expect(factory.getFunction("isApprovedPrivateToken")).to.not.equal(null);
     expect(factory.getEvent("PoolCreated")).to.not.equal(null);
     expect(factory.getEvent("PrivateLPTokenCreated")).to.not.equal(null);
+    expect(factory.getEvent("BestExecutionRouterConfigured")).to.not.equal(null);
+    expect(bestExecutionPool.getFunction("quoteExactInputForRouter")).to.not.equal(null);
+    expect(bestExecutionPool.getFunction("settleExactInputForRouter")).to.not.equal(null);
+    expect(bestExecutionRouter.getFunction("requestBestQuoteExactInput")).to.not.equal(null);
+    expect(bestExecutionRouter.getFunction("swapBestExactInput")).to.not.equal(null);
+    expect(bestExecutionRouter.getEvent("ConfidentialBestQuoteResult")).to.not.equal(null);
+    expect(bestExecutionRouter.getEvent("ConfidentialBestSwapResult")).to.not.equal(null);
+    expect(CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION).to.equal(1);
     expect(privateLpToken.getFunction("pool")).to.not.equal(null);
     expect(privateLpToken.getFunction("balanceOf")).to.not.equal(null);
     expect(launchpad.getFunction("migrate")).to.not.equal(null);
@@ -199,6 +222,411 @@ describe("stable SDK surface", function () {
     ).to.equal(false);
   });
 
+  it("builds immutable caller-encrypted best quote and swap calls", function () {
+    const tokenIn = "0x0000000000000000000000000000000000000011";
+    const tokenOut = "0x0000000000000000000000000000000000000022";
+    const requestId = "0x" + "12".repeat(32);
+    const amountIn = {
+      ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n },
+      signature: "0x1234",
+    };
+    const minimumOut = {
+      ciphertext: { ciphertextHigh: 3n, ciphertextLow: 4n },
+      signature: new Uint8Array([1, 2]),
+    };
+
+    const quote = buildConfidentialBestQuoteCall(
+      tokenIn,
+      tokenOut,
+      amountIn,
+      requestId,
+      1_000n,
+    );
+    expect(quote.functionName).to.equal("requestBestQuoteExactInput");
+    expect(quote.args).to.deep.equal([
+      tokenIn,
+      tokenOut,
+      amountIn,
+      requestId,
+      1_000n,
+    ]);
+    expect(Object.isFrozen(quote)).to.equal(true);
+    expect(Object.isFrozen(quote.args)).to.equal(true);
+    expect(Object.isFrozen(quote.args[2])).to.equal(true);
+    expect(Object.isFrozen(quote.args[2].ciphertext)).to.equal(true);
+
+    const swap = buildConfidentialBestSwapCall(
+      tokenIn,
+      tokenOut,
+      amountIn,
+      minimumOut,
+      requestId,
+      1_000n,
+    );
+    expect(swap.functionName).to.equal("swapBestExactInput");
+    expect(swap.args).to.deep.equal([
+      tokenIn,
+      tokenOut,
+      amountIn,
+      {
+        ciphertext: { ciphertextHigh: 3n, ciphertextLow: 4n },
+        signature: "0x0102",
+      },
+      requestId,
+      1_000n,
+    ]);
+
+    amountIn.ciphertext.ciphertextHigh = 99n;
+    amountIn.signature = "0xabcd";
+    minimumOut.ciphertext.ciphertextLow = 99n;
+    minimumOut.signature[0] = 99;
+    expect(quote.args[2]).to.deep.equal({
+      ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n },
+      signature: "0x1234",
+    });
+    expect(swap.args[2]).to.deep.equal(quote.args[2]);
+    expect(swap.args[3]).to.deep.equal({
+      ciphertext: { ciphertextHigh: 3n, ciphertextLow: 4n },
+      signature: "0x0102",
+    });
+
+    const fullWidthCiphertext = {
+      ciphertext: {
+        ciphertextHigh: (1n << 256n) - 1n,
+        ciphertextLow: 1n << 128n,
+      },
+      signature: "0x1234",
+    };
+    expect(() => buildConfidentialBestQuoteCall(
+      tokenIn,
+      tokenOut,
+      fullWidthCiphertext,
+      requestId,
+      1n,
+    )).to.not.throw();
+
+    for (const operation of [
+      () => buildConfidentialBestQuoteCall(tokenIn, tokenIn, amountIn, requestId, 1n),
+      () => buildConfidentialBestQuoteCall(tokenIn, tokenOut, amountIn, ZeroHash, 1n),
+      () => buildConfidentialBestQuoteCall(tokenIn, tokenOut, amountIn, requestId, 0n),
+      () => buildConfidentialBestQuoteCall(
+        tokenIn,
+        tokenOut,
+        { ...amountIn, signature: "0x" },
+        requestId,
+        1n,
+      ),
+      () => buildConfidentialBestQuoteCall(
+        tokenIn,
+        tokenOut,
+        {
+          ...amountIn,
+          ciphertext: { ciphertextHigh: 1n << 256n, ciphertextLow: 0n },
+        },
+        requestId,
+        1n,
+      ),
+      () => buildConfidentialBestQuoteCall(
+        tokenIn,
+        tokenOut,
+        {
+          ...amountIn,
+          ciphertext: { ciphertextHigh: -1n, ciphertextLow: 0n },
+        },
+        requestId,
+        1n,
+      ),
+    ]) {
+      expect(operation).to.throw(TypeError);
+    }
+  });
+
+  it("binds best-execution transactions and decryption to canonical chain evidence", async function () {
+    const chainId = 31_337;
+    const factory = "0x0000000000000000000000000000000000000099";
+    const routerAddress = "0x0000000000000000000000000000000000000088";
+    const caller = "0x0000000000000000000000000000000000000077";
+    const requestId = "0x" + "ab".repeat(32);
+    const deployedCode = "0x60006000";
+    const deployedCodehash = keccak256(deployedCode);
+    const adapter = {
+      readChainId: async () => BigInt(chainId),
+      getCode: async () => deployedCode,
+      hashRuntimeCode: (code: string) => keccak256(code),
+      readFactoryProtocolVersion: async () => BigInt(CIPHERDEX_PROTOCOL_VERSION),
+      readFactoryBestExecutionRouter: async () => routerAddress,
+      readRouterProtocolVersion: async () =>
+        BigInt(CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION),
+      readRouterFactory: async () => factory,
+    };
+    const verified = await verifyConfidentialBestExecutionRouter(
+      routerAddress,
+      {
+        expectedChainId: chainId,
+        expectedFactory: factory,
+        expectedFactoryRuntimeCodehash: deployedCodehash,
+        expectedRouter: routerAddress,
+        expectedRouterRuntimeCodehash: deployedCodehash,
+        expectedFactoryProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+        expectedRouterProtocolVersion: CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
+      },
+      adapter,
+    );
+    const tokenIn = "0x0000000000000000000000000000000000000011";
+    const tokenOut = "0x0000000000000000000000000000000000000022";
+    const amountIn = {
+      ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n },
+      signature: "0x1234",
+    };
+    const minimumOut = {
+      ciphertext: { ciphertextHigh: 3n, ciphertextLow: 4n },
+      signature: "0x5678",
+    };
+
+    expect(getConfidentialBestExecutionEncryptionBinding(verified, "quote")).to.deep.equal({
+      chainId,
+      contractAddress: routerAddress,
+      functionName: "requestBestQuoteExactInput",
+      functionSelector: CONFIDENTIAL_BEST_QUOTE_SELECTOR,
+    });
+    expect(getConfidentialBestExecutionEncryptionBinding(verified, "swap")).to.deep.equal({
+      chainId,
+      contractAddress: routerAddress,
+      functionName: "swapBestExactInput",
+      functionSelector: CONFIDENTIAL_BEST_SWAP_SELECTOR,
+    });
+    const quote = buildVerifiedConfidentialBestQuoteTransaction(
+      verified,
+      tokenIn,
+      tokenOut,
+      amountIn,
+      requestId,
+      1_000n,
+    );
+    expect(quote.to).to.equal(routerAddress);
+    expect(quote.chainId).to.equal(chainId);
+    expect(quote.functionName).to.equal("requestBestQuoteExactInput");
+    const swap = buildVerifiedConfidentialBestSwapTransaction(
+      verified,
+      tokenIn,
+      tokenOut,
+      amountIn,
+      minimumOut,
+      requestId,
+      1_000n,
+    );
+    expect(swap.to).to.equal(routerAddress);
+    expect(swap.chainId).to.equal(chainId);
+    expect(swap.functionName).to.equal("swapBestExactInput");
+
+    const selectedPool = "0x0000000000000000000000000000000000000066";
+    const transactionHash = "0x" + "cd".repeat(32);
+    const routerInterface = new Interface(CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI);
+    const transactionData = routerInterface.encodeFunctionData(
+      "requestBestQuoteExactInput",
+      [tokenIn, tokenOut, [[1n, 2n], "0x1234"], requestId, 1_000n],
+    );
+    const encodedEvent = routerInterface.encodeEventLog(
+      "ConfidentialBestQuoteResult",
+      [caller, requestId, selectedPool, 30n, true, [5n, 1n << 128n]],
+    );
+    const expectation = {
+      operation: "quote" as const,
+      caller,
+      requestId,
+      tokenIn,
+      tokenOut,
+      transactionHash,
+      transactionData,
+    };
+    const evidence = {
+      transaction: {
+        chainId,
+        hash: transactionHash,
+        from: caller,
+        to: routerAddress,
+        data: transactionData,
+      },
+      receipt: {
+        transactionHash,
+        status: 1,
+        logs: [{ address: routerAddress, ...encodedEvent }],
+      },
+    };
+    const decryptionAdapter = {
+      readChainId: async () => BigInt(chainId),
+      getTransaction: async (hash: string) => {
+        expect(hash).to.equal(transactionHash);
+        return evidence.transaction;
+      },
+      getTransactionReceipt: async (hash: string) => {
+        expect(hash).to.equal(transactionHash);
+        return evidence.receipt;
+      },
+      getCanonicalPool: async () => selectedPool,
+      decryptValue256: async (value: { ciphertextHigh: bigint; ciphertextLow: bigint }) => {
+        expect(value).to.deep.equal({ ciphertextHigh: 5n, ciphertextLow: 1n << 128n });
+        return 42n;
+      },
+    };
+    expect(
+      await decryptConfidentialBestExecutionResult(
+        verified,
+        expectation,
+        decryptionAdapter,
+      ),
+    ).to.equal(42n);
+
+    for (const overrides of [
+      { readChainId: async () => BigInt(chainId + 1) },
+      { readFactoryBestExecutionRouter: async () => caller },
+      { readRouterFactory: async () => caller },
+      { readRouterProtocolVersion: async () => 2n },
+      { getCode: async () => "0x" },
+    ]) {
+      let rejected = false;
+      try {
+        await verifyConfidentialBestExecutionRouter(
+          routerAddress,
+          {
+            expectedChainId: chainId,
+            expectedFactory: factory,
+            expectedFactoryRuntimeCodehash: deployedCodehash,
+            expectedRouter: routerAddress,
+            expectedRouterRuntimeCodehash: deployedCodehash,
+            expectedFactoryProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+            expectedRouterProtocolVersion: CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
+          },
+          { ...adapter, ...overrides },
+        );
+      } catch (error) {
+        rejected = error instanceof TypeError;
+      }
+      expect(rejected).to.equal(true);
+    }
+
+    for (const policyOverrides of [
+      { expectedRouter: caller },
+      { expectedRouterRuntimeCodehash: "0x" + "11".repeat(32) },
+      { expectedFactoryRuntimeCodehash: "0x" + "22".repeat(32) },
+    ]) {
+      let rejected = false;
+      try {
+        await verifyConfidentialBestExecutionRouter(
+          routerAddress,
+          {
+            expectedChainId: chainId,
+            expectedFactory: factory,
+            expectedFactoryRuntimeCodehash: deployedCodehash,
+            expectedRouter: routerAddress,
+            expectedRouterRuntimeCodehash: deployedCodehash,
+            expectedFactoryProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+            expectedRouterProtocolVersion: CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
+            ...policyOverrides,
+          },
+          adapter,
+        );
+      } catch (error) {
+        rejected = error instanceof TypeError;
+      }
+      expect(rejected).to.equal(true);
+    }
+
+    const forgedCases = [
+      {
+        expectation: { ...expectation, operation: "swap" as const },
+        adapter: decryptionAdapter,
+      },
+      {
+        expectation,
+        adapter: {
+          ...decryptionAdapter,
+          getTransaction: async () => ({
+            ...evidence.transaction,
+            data: routerInterface.encodeFunctionData(
+              "requestBestQuoteExactInput",
+              [tokenIn, tokenOut, [[1n, 2n], "0x1234"], requestId, 1_001n],
+            ),
+          }),
+        },
+      },
+      {
+        expectation,
+        adapter: {
+          ...decryptionAdapter,
+          getTransaction: async () => ({
+            ...evidence.transaction,
+            data: routerInterface.encodeFunctionData(
+              "requestBestQuoteExactInput",
+              [tokenIn, tokenOut, [[9n, 2n], "0x1234"], requestId, 1_000n],
+            ),
+          }),
+        },
+      },
+      {
+        expectation,
+        adapter: {
+          ...decryptionAdapter,
+          getTransaction: async () => ({
+            ...evidence.transaction,
+            chainId: chainId + 1,
+          }),
+        },
+      },
+      {
+        expectation,
+        adapter: {
+          ...decryptionAdapter,
+          getTransactionReceipt: async () => ({
+            ...evidence.receipt,
+            logs: [
+              ...evidence.receipt.logs,
+              { address: routerAddress, ...encodedEvent },
+            ],
+          }),
+        },
+      },
+      {
+        expectation,
+        adapter: { ...decryptionAdapter, getCanonicalPool: async () => caller },
+      },
+      {
+        expectation,
+        adapter: { ...decryptionAdapter, readChainId: async () => BigInt(chainId + 1) },
+      },
+      {
+        expectation,
+        adapter: { ...decryptionAdapter, getTransaction: async () => null },
+      },
+      {
+        expectation,
+        adapter: { ...decryptionAdapter, getTransactionReceipt: async () => null },
+      },
+      {
+        expectation,
+        adapter: {
+          ...decryptionAdapter,
+          getTransaction: async () => {
+            throw new Error("RPC unavailable");
+          },
+        },
+      },
+    ];
+    for (const candidate of forgedCases) {
+      let rejected = false;
+      try {
+        await decryptConfidentialBestExecutionResult(
+          verified,
+          candidate.expectation,
+          candidate.adapter,
+        );
+      } catch (error) {
+        rejected = error instanceof TypeError;
+      }
+      expect(rejected).to.equal(true);
+    }
+  });
+
   it("bounds disclosure traversal and never invokes metadata accessors", function () {
     const valid = {
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
@@ -286,7 +714,8 @@ describe("stable SDK surface", function () {
     expect(isConfidentialPoolDiscovery(hostile)).to.equal(false);
   });
 
-  it("requires factory-proven discovery before selecting a confidential quote", async function () {
+  it("requires factory-proven confidential pool discovery", async function () {
+    const chainId = 31_337;
     const factory = "0x0000000000000000000000000000000000000099";
     const feeVault = "0x0000000000000000000000000000000000000055";
     const discovery = (pool: string, feeBps: number) => ({
@@ -305,6 +734,7 @@ describe("stable SDK surface", function () {
       quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
     });
     const adapter = (candidate: ReturnType<typeof discovery>, overrides: Record<string, unknown> = {}) => ({
+      readChainId: async () => BigInt(chainId),
       getCode: async () => "0x60006000",
       readFactoryProtocolVersion: async () => BigInt(CIPHERDEX_PROTOCOL_VERSION),
       isFactoryPrivateTokenApproved: async () => true,
@@ -326,6 +756,7 @@ describe("stable SDK surface", function () {
       verifyConfidentialPoolDiscovery(
         candidate,
         {
+          expectedChainId: chainId,
           expectedFactory: factory,
           expectedFeeVault: feeVault,
           expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
@@ -334,7 +765,6 @@ describe("stable SDK surface", function () {
       );
 
     const slowDiscovery = discovery("0x0000000000000000000000000000000000000033", 30);
-    const bestDiscovery = discovery("0x0000000000000000000000000000000000000044", 100);
     let dynamicPoolReads = 0;
     const dynamicDiscovery = new Proxy(slowDiscovery, {
       get(target, property, receiver) {
@@ -345,6 +775,7 @@ describe("stable SDK surface", function () {
     const snapshottedDiscovery = await verifyConfidentialPoolDiscovery(
       dynamicDiscovery,
       {
+        expectedChainId: chainId,
         expectedFactory: factory,
         expectedFeeVault: feeVault,
         expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
@@ -353,60 +784,15 @@ describe("stable SDK surface", function () {
     );
     expect(snapshottedDiscovery.pool).to.equal(slowDiscovery.pool);
     expect(dynamicPoolReads).to.equal(0);
-    const slow = {
-      discovery: await verify(slowDiscovery),
-      requestId: "request-1",
-      amountIn: 1_000n,
-      zeroForOne: true,
-      decryptedAmountOut: 100n,
-    };
-    const best = {
-      discovery: await verify(bestDiscovery),
-      requestId: "request-1",
-      amountIn: 1_000n,
-      zeroForOne: true,
-      decryptedAmountOut: 110n,
-    };
-    expect(selectBestConfidentialPoolQuote([slow, best])).to.equal(best);
-    expect(selectBestConfidentialPoolQuote([])).to.equal(undefined);
-    expect(() => selectBestConfidentialPoolQuote([
-      slow,
-      { ...best, requestId: "different-request" },
-    ])).to.throw("Incomparable confidential quote evaluations");
-    expect(() => selectBestConfidentialPoolQuote([
-      slow,
-      { ...best, amountIn: best.amountIn + 1n },
-    ])).to.throw("Incomparable confidential quote evaluations");
-    expect(() => selectBestConfidentialPoolQuote([slow, slow])).to.throw(
-      "Incomparable confidential quote evaluations",
-    );
-    expect(() => selectBestConfidentialPoolQuote([{
-      ...slow,
-      discovery: slowDiscovery,
-    }] as never)).to.throw("Invalid confidential quote evaluation");
-
-    const otherFactory = "0x0000000000000000000000000000000000000098";
-    const otherDomain = await verifyConfidentialPoolDiscovery(
-      discovery("0x0000000000000000000000000000000000000066", 5),
-      {
-        expectedFactory: otherFactory,
-        expectedFeeVault: feeVault,
-        expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
-      },
-      adapter(discovery("0x0000000000000000000000000000000000000066", 5)),
-    );
-    expect(() => selectBestConfidentialPoolQuote([
-      slow,
-      {
-        discovery: otherDomain,
-        requestId: slow.requestId,
-        amountIn: slow.amountIn,
-        zeroForOne: slow.zeroForOne,
-        decryptedAmountOut: 120n,
-      },
-    ])).to.throw("Incomparable confidential quote evaluations");
+    expect(await verify(slowDiscovery)).to.deep.include({
+      pool: slowDiscovery.pool,
+      feeBps: slowDiscovery.feeBps,
+      factory,
+      chainId,
+    });
 
     for (const overrides of [
+      { readChainId: async () => BigInt(chainId + 1) },
       { isFactoryPrivateTokenApproved: async () => false },
       { isFactoryPool: async () => false },
       { getCanonicalPool: async () => "0x0000000000000000000000000000000000000077" },
@@ -434,6 +820,7 @@ describe("stable SDK surface", function () {
   });
 
   it("requires canonical factory provenance for public pool discovery", async function () {
+    const chainId = 31_337;
     const factory = "0x0000000000000000000000000000000000000099";
     const feeVault = "0x0000000000000000000000000000000000000055";
     const discovery = {
@@ -451,6 +838,7 @@ describe("stable SDK surface", function () {
       poolKind: "public-erc20-cpmm-v2" as const,
     };
     const adapter = {
+      readChainId: async () => BigInt(chainId),
       getCode: async () => "0x60006000",
       readFactoryProtocolVersion: async () => BigInt(CIPHERDEX_PROTOCOL_VERSION),
       isFactoryPool: async () => true,
@@ -467,6 +855,7 @@ describe("stable SDK surface", function () {
       }),
     };
     const policy = {
+      expectedChainId: chainId,
       expectedFactory: factory,
       expectedFeeVault: feeVault,
       expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
@@ -477,6 +866,7 @@ describe("stable SDK surface", function () {
     expect(Object.isFrozen(verified)).to.equal(true);
 
     for (const overrides of [
+      { readChainId: async () => BigInt(chainId + 1) },
       { isFactoryPool: async () => false },
       { getCanonicalPool: async () => "0x0000000000000000000000000000000000000077" },
       {

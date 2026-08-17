@@ -1,6 +1,6 @@
 # Verification Report
 
-Date: 2026-08-16
+Date: 2026-08-17
 
 ## Scope and environment
 
@@ -21,13 +21,13 @@ an external audit or mainnet readiness.
 - `npm audit --omit=dev --audit-level=high --json`: 0 production findings
 - `npm ls --omit=dev --all`: production graph resolved cleanly
 - full development audit: 46 findings (0 critical, 17 high, 10 moderate, 19 low)
-- privacy-boundary check: passed for 25 Solidity files
+- privacy-boundary check: passed for 29 Solidity files
 - security-boundary check: passed
 - TypeScript: passed
-- clean compile and TypeChain generation: 17 Solidity files, 40 typings
-- full local suite: 75 passing, 1 intentionally gated integration placeholder
+- clean compile and TypeChain generation: 21 Solidity files, 52 typings
+- full local suite: 117 passing, 1 intentionally gated funded integration placeholder
 - deployment gas measurement: passed
-- `git diff --check`: passed before final evidence updates
+- `git diff --check`: passed before fresh deployment evidence
 
 No dependency or lockfile changed. Development-only advisories and lifecycle
 script review are recorded in `DEPENDENCY_AUDIT_REPORT.md`; none is present in
@@ -43,15 +43,43 @@ exact token deltas, public negative-rebase handling, taxed fee collection,
 public and confidential SDK provenance, quote-domain separation, funded-runner
 provenance, and zero-accrual confidential dust.
 
-Two independent read-only reviews of the final worktree found no confirmed
-Solidity vulnerability. The SDK/script review found three integration issues,
-all remediated and regression-tested:
+The current pre-deployment diff received independent read-only contract,
+SDK/configuration and funded-runner reviews. The contract review found no
+reportable Solidity vulnerability. The reviews identified four low-severity
+release-evidence defects: standalone gas measurement could consume stale
+artifacts; this report retained obsolete counts plus a mutable `latest`
+deployment reference; a reconciled mined deployment could reach handle recovery
+before its hash was durably journaled; and the module-initialization AST tracer
+could be bypassed through JavaScript callable indirection. This report no longer
+labels a mutable record authoritative. Mined deployment evidence is now synced
+before contract-handle recovery and enriched by hash without duplication.
+Every supported `--no-compile` command now runs clean, compile and target
+execution in separate blocking processes through an exact target/argument
+allowlist, so target imports cannot observe a stale pre-compile artifact cache.
+The in-script freshness checks remain as defense in depth.
 
-- deployment now rejects a dirty Git worktree before network access and records
-  every deployed runtime codehash with the exact source commit;
-- confidential quote candidates must share the exact process-local `amountIn`,
-  request ID, direction, factory, vault, pair and protocol domain;
-- quote-probe credentials are shape-validated and scrubbed from error output.
+The funded-runner review repeated five earlier deployment-evidence candidates.
+The actual current tree closes them with focused regression evidence:
+
+- mined status errors retain a validated public transaction hash while external
+  payloads and secret-shaped values remain redacted;
+- deployment journals every mined transaction before handle recovery or
+  artifact validation and records terminal `failed` or `outcome-unknown` state;
+- configured funded runners require a complete commit-bound deployment record,
+  clean matching source and current runtime artifact/codehash provenance;
+- canonical runner process isolation guarantees target module loading happens
+  only after a successful clean compile, while the supplemental source boundary
+  rejects reviewed eager module-scope artifact/network patterns;
+- immature confidential fee batches fail the verification command instead of
+  returning successful evidence.
+
+Twenty focused evidence/provenance tests and both source/security boundary gates
+passed after those controls were inspected. The gas-evidence and process-runner
+fixes passed TypeScript, both boundary gates and a full process-isolated clean
+gas-measurement run. An independent re-review reproduced the earlier source
+boundary indirections, then confirmed they can no longer reach stale artifacts
+through any supported command and found no remaining reportable Low-or-higher
+issue in these remediation scopes.
 
 The Codex Security workbench could not seal a final working-tree diff scan
 because its launcher rejected the otherwise valid non-bare worktree as lacking
@@ -82,9 +110,9 @@ deployment work.
 ## Gasless quote investigation
 
 The current runner deployed `MpcQuoteCallProbe` at
-`0x28EBb6a2cc593fb692bb5a9827D65F0e07D3C92D`. A transactional `SetPublic` plus
+`0xB7b996D1Ea549b8692D4A2D7D1632639cfc366D9`. A transactional `SetPublic` plus
 `Decrypt` control succeeded in transaction
-`0x3bdf340c09ec95a6b637015c03fe43b270787e7113c0818d38df98208ad69b30`
+`0x2074722fde98e391c1be10409949dc482060ea13d718dd6b44aec2ea4df35e92`
 using 46,446 gas.
 
 On the configured COTI testnet RPC:
@@ -100,11 +128,47 @@ On the configured COTI testnet RPC:
   stored ciphertext onboarding.
 
 Therefore the preferred gasless design is technically specified but not
-supported by the tested runtime. The paid `requestQuoteExactInput` transaction
-remains an explicit diagnostic/integration fallback, not acceptable normal
-gasless DEX quote UX. No public reserve, TVL, spot-price or TWAP state was added.
-The complete privacy and active curve-probing analysis is in
+supported by the tested runtime. The currently recorded deployment still uses
+the paid per-pool `requestQuoteExactInput` transaction as its primary working
+quote. The canonical paid best-quote router becomes preferred only after this
+version completes final verification and fresh deployment; it is still not
+normal gasless DEX quote UX. No public reserve, TVL, spot-price or TWAP state was added. The
+complete privacy and active curve-probing analysis is in
 `QUOTE_MARKET_DATA_REVIEW.md`.
+
+## Confidential best execution
+
+The lower-level feasibility deployment proved one router can validate a
+caller-bound encrypted input, reuse the GT value across two contracts, compare
+the encrypted outputs, offboard only the winner, and perform exact encrypted
+escrow/allowance/settlement in the same transaction. The quote-only transaction
+used 1,726,424 gas and quote-plus-swap used 5,771,737 gas.
+
+A fresh funded run of the production `ConfidentialBestExecutionRouter` then
+passed against three canonical confidential fee tiers:
+
+- confidential factory: `0xA72e1c4671C995FC1a5013cBfe992A9687b36603`
+- best-execution router: `0x76B5c628EF412f62BA391138f165C2EEf61317b9`
+- 5 bps pool: `0x7495b804D4A209c23462df638F5F6180527319E4`
+- 30 bps pool: `0xdB7803f899aA9f381f03103C589676694d1ba6D7`
+- 100 bps pool: `0xCd1abc05C956aE6Bc05D4B71822736cb7c57eDCE`
+
+The run covered absent and uninitialized tiers, encrypted-invalid candidate
+isolation, request/ciphertext replay, deadline and caller binding, quote-only
+pool-state immutability, both swap directions, every tier, encrypted slippage
+rollback, exact escrow and allowance cleanup, and quote/settlement parity. Gas:
+
+| Candidate count | Paid best quote | Quote plus swap |
+| ---: | ---: | ---: |
+| 2 | 16,872,645 | 29,530,376 |
+| 3 | 25,247,841 | 38,236,748 |
+
+The reverse three-candidate quote-plus-swap used 37,903,897 gas. The runner's
+60M transaction cap is a safety ceiling; receipts above are actual gas charged.
+
+These are disposable COTI testnet validation contracts, not the final canonical
+deployment record. No key, ciphertext, private balance, quote or decrypted
+amount was printed or persisted.
 
 ## COTI testnet scenario
 
@@ -116,11 +180,11 @@ values.
 
 The fresh canonical scenario used:
 
-- fee vault: `0x9842B39B89c7975Ef6d8EE65dCe27E443Bc1dBD5`
-- private LP-token factory: `0x987bd06e276ACf5c4FB0C5D41F00286cb2c7B766`
-- confidential factory: `0x756c2Aba39B731b6Dc59fcAa46884507914b8665`
-- primary 30-bps pool: `0x44165c9dB80fEEBF41A06F2e22DEC008537cc512`
-- 100-bps quote candidate: `0x07FB8742C35a7F6e7c7Bf0349d210bebdd58078d`
+- fee vault: `0x011009FF188C3E9BD75c7cEf35Cc1dA90d784158`
+- private LP-token factory: `0x96E6A46235C5fc5dc7f8A50b7193Bc48F5415d08`
+- confidential factory: `0x772aCbda00f9E1cC8C0aCE0cf2c1f9A30de166dc`
+- primary 30-bps pool: `0x4304105Ec12E3c7e86045269B073f73af4bA07b6`
+- 100-bps quote candidate: `0x92836192434277ee8aD8A74428354dF3A442b7EB`
 
 The runner proved arbitrary-ratio initialization, proportional second-LP entry
 without donation, canonical fee-tier discovery, two caller-encrypted quote
@@ -171,44 +235,32 @@ was decrypted, returned or emitted.
 | `CipherDEXFeeVault` | 1,917 | 1,714 | 447,550 |
 | `PrivateLPToken` | 12,976 | 11,453 | factory-created |
 | `PrivateLPTokenFactory` | 13,196 | 13,169 | 2,896,829 |
-| `ConfidentialCPMM` | 15,922 | 14,671 | factory-created |
-| `ConfidentialCPMMFactory` | 20,526 | 19,912 | 4,469,604 |
-| `ConfidentialLaunchpadMigrator` | 8,488 | 8,123 | 1,838,032 |
-| `PublicCPMM` | 11,757 | 10,164 | factory-created |
-| `PublicCPMMFactory` | 13,649 | 13,460 | 2,951,737 |
+| `ConfidentialCPMM` | 18,104 | 16,825 | factory-created |
+| `ConfidentialCPMMFactory` | 23,223 | 22,602 | 5,049,542 |
+| `ConfidentialBestExecutionRouter` | 7,773 | 7,347 | 1,672,903 |
+| `ConfidentialLaunchpadMigrator` | 8,481 | 8,116 | 1,836,520 |
+| `PublicCPMM` | 11,826 | 10,233 | factory-created |
+| `PublicCPMMFactory` | 13,718 | 13,529 | 2,966,648 |
 | `PublicCPMMQuoter` | 816 | 640 | 193,697 |
-| `PublicCPMMRouter` | 2,748 | 2,560 | 630,523 |
+| `PublicCPMMRouter` | 3,162 | 2,974 | 719,995 |
 
-The confidential factory pool-creation measurement was 5,591,910 gas and is
+The confidential factory pool-creation measurement was 6,024,514 gas and is
 exercised separately from factory deployment. All runtime bytecode is below the
 24,576-byte EIP-170 limit and all initcode is below the 49,152-byte EIP-3860
 limit.
 
 ## Authoritative COTI testnet deployment
 
-The reviewed clean source commit
-`206840f986162f02fadd29211fb0b5e39ce7a5b1` was deployed to COTI testnet
-(`7082400`). The deployment script re-read that commit before network access,
-recorded each observed runtime codehash and verified all immutable bindings after
-confirmation. The sanitized machine-readable record is
-`deployments/coti-testnet-latest.json`.
-
-| Component | Address | Deployment transaction |
-| --- | --- | --- |
-| Fee vault | `0x28968cc36779Dfb5Fc49BFa7944279C193f39981` | `0x9c87db4eb337f88d9cfc6571a3fc6355b75664b0e98f1b1ca5c06f6a642f2086` |
-| Private LP-token factory | `0x26e3c623ff29F09C2E1D7eec930292Cc31EC28E3` | `0x83a4fd8632007e9c9a07eeb72f9412790ee61eadcefe652728d38f7a29a0e1b5` |
-| Confidential factory | `0x999dC50F453D00866e038A9465D59FebF46FaBbc` | `0x6efd9913dbb8bfea2d7415136a6be73546c0c061dc9d285b10364811e6479710` |
-| Launchpad migrator | `0x00A48a4a334E994112f26f5037caE9541834583b` | `0x05bbd7c06ead1840be3339a8bab09321c42500dca91da10c28e98c9c0609fb75` |
-| Public factory | `0x519AE4dCebFFC674306C818Dae7dD2aFE7453578` | `0x831570a1c17eb2bde236fdc63bfd357347ef76dd3dbc7d076a25fdb260b88f80` |
-| Public quoter | `0x81107C379aFA15bCAf03017b08BD91E159029160` | `0x16eb188921e75d4d1633200ac934b9105d34fb07bfcfc84b67804a76277b774b` |
-| Public router | `0x9021e12D41aB83eeAf6950eE8A62DC835A69802D` | `0xca9ca9711f776712f0054ad3a814a1299c3ad8421d83d3216f8ede3c68d24e12` |
-
-The confidential factory bootstrap adapter was bound to the launchpad migrator
-in transaction
-`0xc3616675cc665369ee5ea83a0351162eef837cf76c008f594366f138db2f77d7`.
-The fee vault's immutable beneficiary is
-`0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff`. This deployment created no pools,
-onboarded no wallet, and moved no user or private-token assets.
+No deployment record in this pre-deployment worktree is authoritative for the
+new best-execution implementation. Historical addresses above are disposable
+feasibility and regression evidence only. After this reviewed source is committed,
+the deployment runner must create a fresh immutable
+`deployments/coti-testnet-<source-commit>.json` record on COTI testnet (`7082400`),
+bound to the exact clean source commit, current compiler input, runtime
+codehashes, immutable bindings and every mined transaction. Final addresses and
+transactions belong here only after that record and the funded end-to-end run
+both pass. The configured immutable fee-vault beneficiary is
+`0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff`.
 
 ## Residual assumptions and remaining gates
 
@@ -226,7 +278,7 @@ onboarded no wallet, and moved no user or private-token assets.
 - Mainnet requires independent Solidity, economic and COTI MPC review, longer
   stateful/fuzz campaigns, and a reviewed multisig/governance beneficiary.
 
-PoD, a generic confidential router, private multi-hop execution, public
+PoD, caller-supplied or unchecked routing, private multi-hop execution, public
 confidential-pool analytics and legacy-liquidity migration are outside this
 version.
 

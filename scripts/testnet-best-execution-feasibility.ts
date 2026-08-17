@@ -1,0 +1,375 @@
+import {
+  Contract,
+  ContractFactory,
+  TransactionReceipt,
+  Wallet as EthersWallet,
+  ethers as ethersLibrary,
+} from "ethers";
+import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
+import hre, { ethers } from "hardhat";
+
+import {
+  CT_UINT256,
+  IT_UINT256,
+  PRIVATE_ERC20_TESTNET_ABI,
+} from "./coti-testnet-abi";
+import { decryptPrivateValue256 } from "./coti-testnet-values";
+import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
+import {
+  requireMinedSuccess,
+  safeTestnetErrorSummary,
+} from "./testnet-transaction-evidence";
+
+const EXPECTED_CHAIN_ID = 7_082_400n;
+const CALL_GAS_LIMIT = 30_000_000n;
+const DEFAULT_INPUT = 10_001n;
+let stage = "configuration";
+
+const ROUTER_ABI = [
+  `function requestBestQuoteExactInput(${IT_UINT256} amountIn,bytes32 requestId) returns (${CT_UINT256} result)`,
+  `function swapBestExactInput(${IT_UINT256} amountIn,${IT_UINT256} minimumOut,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} result)`,
+  `event ProbeBestQuote(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,${CT_UINT256} result)`,
+  `event ProbeBestSwap(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,${CT_UINT256} result)`,
+] as const;
+
+function requiredPrivateKey(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value || !/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error(`${name} must be a 32-byte 0x-prefixed private key`);
+  }
+  return value;
+}
+
+function requiredAesKey(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value || !/^[0-9a-fA-F]{32}$/.test(value)) {
+    throw new Error(`${name} must be a 16-byte hexadecimal AES key`);
+  }
+  return value;
+}
+
+function requiredAddress(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value || !ethersLibrary.isAddress(value)) {
+    throw new Error(`${name} must be a valid deployed address`);
+  }
+  return ethersLibrary.getAddress(value);
+}
+
+function positiveAmount(): bigint {
+  const raw = process.env.COTI_BEST_EXECUTION_TEST_AMOUNT_IN?.trim();
+  if (raw && !/^\d+$/.test(raw)) {
+    throw new Error("COTI_BEST_EXECUTION_TEST_AMOUNT_IN must be a safe positive uint256");
+  }
+  const value = raw ? BigInt(raw) : DEFAULT_INPUT;
+  if (value <= 0n || value > (2n ** 256n - 1n) / 4n) {
+    throw new Error("COTI_BEST_EXECUTION_TEST_AMOUNT_IN must be a safe positive uint256");
+  }
+  return value;
+}
+
+async function submit(
+  label: string,
+  operation: () => Promise<{
+    hash: string;
+    wait(): Promise<TransactionReceipt | null>;
+  }>,
+): Promise<Readonly<{ transactionHash: string; receipt: TransactionReceipt }>> {
+  stage = label;
+  return requireMinedSuccess(
+    label,
+    operation,
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
+}
+
+async function deployProbe(
+  label: string,
+  factory: ContractFactory,
+  args: readonly unknown[],
+): Promise<any> {
+  let contract: any;
+  await submit(label, async () => {
+    contract = await factory.deploy(...args, { gasLimit: CALL_GAS_LIMIT });
+    const transaction = contract.deploymentTransaction();
+    if (!transaction) throw new Error(`${label} transaction is unavailable`);
+    return transaction;
+  });
+  if (!contract) {
+    throw new Error(`${label} was mined but its contract handle is unavailable; do not retry automatically`);
+  }
+  return contract;
+}
+
+async function encryptedBalance(
+  token: Contract,
+  wallet: CotiWallet,
+  account: string,
+): Promise<bigint> {
+  return decryptPrivateValue256(wallet, await token.balanceOf.staticCall(account));
+}
+
+async function approveEncrypted(
+  token: Contract,
+  wallet: CotiWallet,
+  tokenAddress: string,
+  spender: string,
+  amount: bigint,
+): Promise<void> {
+  const approve = token.getFunction("approve");
+  const selector = token.interface.getFunction("approve")?.selector;
+  if (!selector) {
+    throw new Error("private token approve selector is unavailable");
+  }
+  const input = await wallet.encryptValue256(amount, tokenAddress, selector);
+  await submit(
+    "encrypted approval",
+    () => approve(spender, input, { gasLimit: CALL_GAS_LIMIT }),
+  );
+}
+
+async function transferEncrypted(
+  token: Contract,
+  wallet: CotiWallet,
+  tokenAddress: string,
+  recipient: string,
+  amount: bigint,
+): Promise<void> {
+  const transfer = token.getFunction("transfer");
+  const selector = token.interface.getFunction("transfer")?.selector;
+  if (!selector) {
+    throw new Error("private token transfer selector is unavailable");
+  }
+  const input = await wallet.encryptValue256(amount, tokenAddress, selector);
+  await submit(
+    "encrypted transfer",
+    () => transfer(recipient, input, { gasLimit: CALL_GAS_LIMIT }),
+  );
+}
+
+function eventFromReceipt(
+  router: Contract,
+  receipt: TransactionReceipt | null,
+  name: "ProbeBestQuote" | "ProbeBestSwap",
+  caller: string,
+  requestId: string,
+): { selectedPool: string; result: unknown } {
+  const routerAddress = String(router.target).toLowerCase();
+  const matches: Array<{ selectedPool: string; result: unknown }> = [];
+  for (const log of receipt?.logs ?? []) {
+    if (log.address.toLowerCase() !== routerAddress) continue;
+    try {
+      const parsed = router.interface.parseLog(log);
+      if (
+        parsed?.name === name &&
+        String(parsed.args.caller).toLowerCase() === caller.toLowerCase() &&
+        String(parsed.args.requestId).toLowerCase() === requestId.toLowerCase()
+      ) {
+        matches.push({
+          selectedPool: ethersLibrary.getAddress(String(parsed.args.selectedPool)),
+          result: parsed.args.result,
+        });
+      }
+    } catch {
+      // Ignore logs from the private token and pool probes.
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error(`${name} event is missing or ambiguous`);
+  }
+  return matches[0]!;
+}
+
+async function main(): Promise<void> {
+  await hre.run("clean");
+  await hre.run("compile");
+  stage = "current artifacts compiled";
+
+  const privateKey = requiredPrivateKey("COTI_TESTNET_PRIVATE_KEY");
+  const aesKey = requiredAesKey("COTI_AES_KEY");
+  const tokenInAddress = requiredAddress("COTI_TOKEN0");
+  const tokenOutAddress = requiredAddress("COTI_TOKEN1");
+  const amountIn = positiveAmount();
+  const expectedBestOutput = amountIn * 3n;
+
+  stage = "network and wallet initialization";
+  const network = await ethers.provider.getNetwork();
+  if (network.chainId !== EXPECTED_CHAIN_ID) {
+    throw new Error(`expected COTI testnet ${EXPECTED_CHAIN_ID}, received ${network.chainId}`);
+  }
+  const wallet = new CotiWallet(privateKey, ethers.provider, { aesKey });
+  wallet.setAesKey(aesKey);
+  const caller = await wallet.getAddress();
+  const deployer = new EthersWallet(privateKey, ethers.provider);
+  const tokenIn = new Contract(tokenInAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
+  const tokenOut = new Contract(tokenOutAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
+
+  const [inputBalanceBefore, outputBalanceBefore] = await Promise.all([
+    encryptedBalance(tokenIn, wallet, caller),
+    encryptedBalance(tokenOut, wallet, caller),
+  ]);
+  if (inputBalanceBefore < amountIn || outputBalanceBefore < expectedBestOutput * 2n) {
+    throw new Error("funded test wallet does not have enough private assets for the probe");
+  }
+
+  stage = "pool probe deployment";
+  const poolFactory = await ethers.getContractFactory("MpcBestExecutionPoolProbe", deployer);
+  const pool0 = await deployProbe(
+    "pool probe 0 deployment",
+    poolFactory,
+    [tokenInAddress, tokenOutAddress, 2n, 1n],
+  );
+  const pool1 = await deployProbe(
+    "pool probe 1 deployment",
+    poolFactory,
+    [tokenInAddress, tokenOutAddress, 3n, 1n],
+  );
+  const pool0Address = await pool0.getAddress();
+  const pool1Address = await pool1.getAddress();
+  await Promise.all([
+    verifyDeployedRuntimeArtifact("MpcBestExecutionPoolProbe", pool0Address),
+    verifyDeployedRuntimeArtifact("MpcBestExecutionPoolProbe", pool1Address),
+  ]);
+
+  stage = "router probe deployment and binding";
+  const routerFactory = await ethers.getContractFactory("MpcBestExecutionRouterProbe", deployer);
+  const routerDeployment = await deployProbe(
+    "router probe deployment",
+    routerFactory,
+    [tokenInAddress, pool0Address, pool1Address],
+  );
+  const routerAddress = await routerDeployment.getAddress();
+  await verifyDeployedRuntimeArtifact("MpcBestExecutionRouterProbe", routerAddress);
+  await submit(
+    "pool probe 0 router binding",
+    () => pool0.configureRouter(routerAddress, { gasLimit: CALL_GAS_LIMIT }),
+  );
+  await submit(
+    "pool probe 1 router binding",
+    () => pool1.configureRouter(routerAddress, { gasLimit: CALL_GAS_LIMIT }),
+  );
+
+  stage = "pool output funding";
+  const poolFunding = expectedBestOutput * 2n;
+  await transferEncrypted(tokenOut, wallet, tokenOutAddress, pool0Address, poolFunding);
+  await transferEncrypted(tokenOut, wallet, tokenOutAddress, pool1Address, poolFunding);
+
+  const router = new Contract(routerAddress, ROUTER_ABI, wallet);
+  const quoteRequestId = ethersLibrary.keccak256(
+    ethersLibrary.toUtf8Bytes(`cipherdex-gt-quote-${Date.now()}`),
+  );
+  stage = "cross-contract GT quote and private selection";
+  const quoteFunction = router.getFunction("requestBestQuoteExactInput");
+  const quoteSelector = router.interface.getFunction("requestBestQuoteExactInput")?.selector;
+  if (!quoteSelector) {
+    throw new Error("best quote selector is unavailable");
+  }
+  const quoteInput = await wallet.encryptValue256(
+    amountIn,
+    routerAddress,
+    quoteSelector,
+  );
+  const quoteEvidence = await submit(
+    "cross-contract GT quote and private selection",
+    () => quoteFunction(quoteInput, quoteRequestId, { gasLimit: CALL_GAS_LIMIT }),
+  );
+  const quoteReceipt = quoteEvidence.receipt;
+  const quoteEvent = eventFromReceipt(
+    router,
+    quoteReceipt,
+    "ProbeBestQuote",
+    caller,
+    quoteRequestId,
+  );
+  if (quoteEvent.selectedPool !== pool1Address) {
+    throw new Error("private candidate selection did not choose the larger output");
+  }
+  if (await wallet.decryptValue256(quoteEvent.result as never) !== expectedBestOutput) {
+    throw new Error("winning encrypted quote did not decrypt to the expected result");
+  }
+  const [inputAfterQuote, outputAfterQuote] = await Promise.all([
+    encryptedBalance(tokenIn, wallet, caller),
+    encryptedBalance(tokenOut, wallet, caller),
+  ]);
+  if (inputAfterQuote !== inputBalanceBefore || outputAfterQuote !== outputBalanceBefore - poolFunding * 2n) {
+    throw new Error("quote-only probe changed private token balances");
+  }
+
+  stage = "router escrow allowance";
+  await approveEncrypted(tokenIn, wallet, tokenInAddress, routerAddress, amountIn);
+
+  stage = "atomic selected-pool settlement";
+  const swapRequestId = ethersLibrary.keccak256(
+    ethersLibrary.toUtf8Bytes(`cipherdex-gt-swap-${Date.now()}`),
+  );
+  const swapFunction = router.getFunction("swapBestExactInput");
+  const swapSelector = router.interface.getFunction("swapBestExactInput")?.selector;
+  if (!swapSelector) {
+    throw new Error("best swap selector is unavailable");
+  }
+  const [swapInput, minimumOutput] = await Promise.all([
+    wallet.encryptValue256(amountIn, routerAddress, swapSelector),
+    wallet.encryptValue256(expectedBestOutput, routerAddress, swapSelector),
+  ]);
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+  const swapEvidence = await submit(
+    "atomic selected-pool settlement",
+    () => swapFunction(
+      swapInput,
+      minimumOutput,
+      swapRequestId,
+      deadline,
+      { gasLimit: CALL_GAS_LIMIT },
+    ),
+  );
+  const swapReceipt = swapEvidence.receipt;
+  const swapEvent = eventFromReceipt(
+    router,
+    swapReceipt,
+    "ProbeBestSwap",
+    caller,
+    swapRequestId,
+  );
+  if (swapEvent.selectedPool !== pool1Address) {
+    throw new Error("settlement did not use the privately selected pool");
+  }
+  if (await wallet.decryptValue256(swapEvent.result as never) !== expectedBestOutput) {
+    throw new Error("settled encrypted output did not match the winning quote");
+  }
+
+  const [inputAfterSwap, outputAfterSwap] = await Promise.all([
+    encryptedBalance(tokenIn, wallet, caller),
+    encryptedBalance(tokenOut, wallet, caller),
+  ]);
+  if (inputAfterSwap !== inputBalanceBefore - amountIn) {
+    throw new Error("atomic settlement did not debit the exact encrypted input");
+  }
+  if (outputAfterSwap !== outputBalanceBefore - poolFunding * 2n + expectedBestOutput) {
+    throw new Error("atomic settlement did not credit the exact selected output");
+  }
+  const callerAllowance = await tokenIn.allowance.staticCall(caller, routerAddress);
+  if (await wallet.decryptValue256(callerAllowance.ownerCiphertext) !== 0n) {
+    throw new Error("atomic settlement left a caller-to-router allowance");
+  }
+
+  console.log(`GT pool probe 0: ${pool0Address}`);
+  console.log(`GT pool probe 1: ${pool1Address}`);
+  console.log(`GT router probe: ${routerAddress}`);
+  console.log(
+    `quote-only tx=${quoteEvidence.transactionHash} gas=${quoteReceipt.gasUsed.toString()}`,
+  );
+  console.log(
+    `quote-plus-swap tx=${swapEvidence.transactionHash} gas=${swapReceipt.gasUsed.toString()}`,
+  );
+  console.log(
+    "COTI testnet GT feasibility passed: current runtime artifacts reused caller-bound GT across two contracts, selected privately, escrowed exactly, consumed the caller and pool allowances, and contract-enforced restoration of the router's starting input balance",
+  );
+}
+
+void main().catch((error: unknown) => {
+  console.error(
+    `COTI best-execution feasibility failed: stage=${stage} ` +
+      safeTestnetErrorSummary(error),
+  );
+  process.exitCode = 1;
+});

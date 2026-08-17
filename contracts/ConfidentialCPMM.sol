@@ -5,6 +5,8 @@ import "@coti-io/coti-contracts/contracts/token/PrivateERC20/IPrivateERC20.sol";
 import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "./interfaces/IPrivateLPToken.sol";
+import "./interfaces/IConfidentialBestExecution.sol";
+import "./interfaces/IConfidentialCPMMFactory.sol";
 import "./CipherDEXFeePolicy.sol";
 
 /**
@@ -102,6 +104,8 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
     error UnsupportedPrivateToken();
     error PrivateTransferAmountMismatch();
     error UnexpectedInitializationState();
+    error BestExecutionRouterUnauthorized();
+    error InvalidSwapRecipient();
 
     event SwapExecuted(address indexed trader, bool indexed zeroForOne);
     event LiquidityAdded(address indexed provider);
@@ -206,11 +210,11 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
     }
 
     /**
-     * @notice Computes an encrypted quote in a transaction when the active COTI
-     *         RPC cannot execute MPC precompiles under eth_call.
-     * @dev This exact fallback has gas, inclusion-latency and public metadata
-     *      costs. The result remains encrypted for the caller and the function
-     *      never changes pool accounting.
+     * @notice Computes an encrypted per-pool quote in a transaction.
+     * @dev This is the currently proven quote path on COTI testnet because fresh
+     *      MPC work is not supported reliably under eth_call. It has gas,
+     *      inclusion-latency and public metadata costs, but never changes pool
+     *      accounting and returns the amount only encrypted for the caller.
      */
     function requestQuoteExactInput(
         itUint256 calldata amountIn,
@@ -235,6 +239,27 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
     }
 
     /**
+     * @notice Returns the authoritative encrypted quote and encrypted validity
+     *         bit to the factory-bound best-execution router.
+     * @dev No state or amount-bearing event is written. Invalid encrypted inputs
+     *      are represented as `(0, false)` so one unusable fee tier cannot block
+     *      another canonical candidate.
+     */
+    function quoteExactInputForRouter(
+        gtUint256 amountIn,
+        bool zeroForOne
+    ) external returns (gtUint256 amountOut, gtBool valid) {
+        _requireBestExecutionRouter();
+        if (!initialized) revert PoolNotInitialized();
+        return _routerQuoteAmounts(
+            amountIn,
+            _reserve0(),
+            _reserve1(),
+            zeroForOne
+        );
+    }
+
+    /**
      * @notice Executes a swap with encrypted input and encrypted minimum output.
      * @dev The recipient is msg.sender and therefore public at the EVM layer. The
      *      amount and resulting output are never placed in this pool's events/errors.
@@ -248,15 +273,54 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         _requireBeforeDeadline(deadline);
         gtUint256 input = _validateAndConsume(amountIn);
         gtUint256 minimum = MpcCore.validateCiphertext(minAmountOut);
+        gtUint256 output = _settleExactInput(
+            msg.sender,
+            msg.sender,
+            input,
+            minimum,
+            zeroForOne
+        );
+        return MpcCore.offBoardToUser(output, msg.sender);
+    }
+
+    /**
+     * @notice Settles one router-funded swap directly to the user.
+     * @dev The pool recomputes the quote and remains authoritative for slippage,
+     *      reserve, fee, invariant and exact private-token delta enforcement.
+     */
+    function settleExactInputForRouter(
+        address recipient,
+        gtUint256 amountIn,
+        gtUint256 minimumOut,
+        bool zeroForOne,
+        uint64 deadline
+    ) external nonReentrant returns (gtUint256 amountOut) {
+        _requireBestExecutionRouter();
+        _requireBeforeDeadline(deadline);
+        if (recipient == address(0)) revert InvalidSwapRecipient();
+        return _settleExactInput(
+            msg.sender,
+            recipient,
+            amountIn,
+            minimumOut,
+            zeroForOne
+        );
+    }
+
+    function _settleExactInput(
+        address fundingSource,
+        address recipient,
+        gtUint256 input,
+        gtUint256 minimum,
+        bool zeroForOne
+    ) internal returns (gtUint256 output) {
+        if (!initialized) revert PoolNotInitialized();
         gtUint256 reserve0 = _reserve0();
         gtUint256 reserve1 = _reserve1();
         gtUint256 reserveIn = zeroForOne ? reserve0 : reserve1;
         gtUint256 reserveOut = zeroForOne ? reserve1 : reserve0;
-        (
-            gtUint256 output,
-            ,
-            gtUint256 protocolFee
-        ) = _swapAmounts(input, reserveIn, reserveOut);
+        gtUint256 protocolFee;
+        (output, , protocolFee) = _swapAmounts(input, reserveIn, reserveOut);
         gtUint256 reserveCredit = _subChecked(input, protocolFee);
 
         if (!MpcCore.decrypt(MpcCore.ge(output, minimum))) revert SlippageExceeded();
@@ -271,8 +335,8 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
                 _addChecked(_protocolFees0(), protocolFee)
             );
             _recordProtocolFeeAccrual(true);
-            _pullPrivateExact(token0, msg.sender, input);
-            _pushPrivateExact(token1, msg.sender, output);
+            _pullPrivateExact(token0, fundingSource, input);
+            _pushPrivateExact(token1, recipient, output);
         } else {
             gtUint256 nextReserve1 = _addChecked(reserve1, reserveCredit);
             gtUint256 nextReserve0 = _subChecked(reserve0, output);
@@ -283,12 +347,11 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
                 _addChecked(_protocolFees1(), protocolFee)
             );
             _recordProtocolFeeAccrual(false);
-            _pullPrivateExact(token1, msg.sender, input);
-            _pushPrivateExact(token0, msg.sender, output);
+            _pullPrivateExact(token1, fundingSource, input);
+            _pushPrivateExact(token0, recipient, output);
         }
 
-        emit SwapExecuted(msg.sender, zeroForOne);
-        return MpcCore.offBoardToUser(output, msg.sender);
+        emit SwapExecuted(recipient, zeroForOne);
     }
 
     /**
@@ -362,10 +425,12 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         gtUint256 reserve1 = _reserve1();
 
         if (!initialized) {
-            if (
-                MpcCore.decrypt(MpcCore.ne(reserve0, MpcCore.setPublic256(uint256(0)))) ||
-                MpcCore.decrypt(MpcCore.ne(reserve1, MpcCore.setPublic256(uint256(0))))
-            ) revert BootstrapBalanceMismatch();
+            if (MpcCore.decrypt(MpcCore.ne(reserve0, MpcCore.setPublic256(uint256(0))))) {
+                revert BootstrapBalanceMismatch();
+            }
+            if (MpcCore.decrypt(MpcCore.ne(reserve1, MpcCore.setPublic256(uint256(0))))) {
+                revert BootstrapBalanceMismatch();
+            }
             gtUint256 normalized0 = _scale(input0, scale0);
             gtUint256 normalized1 = _scale(input1, scale1);
             // The minimum normalized side is a deterministic private share
@@ -537,10 +602,12 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
             revert InvalidPriceBounds();
         }
 
-        if (
-            MpcCore.decrypt(MpcCore.ne(_reserve0(), MpcCore.setPublic256(uint256(0)))) ||
-            MpcCore.decrypt(MpcCore.ne(_reserve1(), MpcCore.setPublic256(uint256(0))))
-        ) {
+        gtUint256 existingReserve0 = _reserve0();
+        gtUint256 existingReserve1 = _reserve1();
+        if (MpcCore.decrypt(MpcCore.ne(existingReserve0, MpcCore.setPublic256(uint256(0))))) {
+            revert BootstrapBalanceMismatch();
+        }
+        if (MpcCore.decrypt(MpcCore.ne(existingReserve1, MpcCore.setPublic256(uint256(0))))) {
             revert BootstrapBalanceMismatch();
         }
         // The minimum normalized side defines the initial private share unit.
@@ -621,29 +688,19 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         gtUint256 reserve0 = _reserve0();
         gtUint256 reserve1 = _reserve1();
         gtBool fullExit = MpcCore.eq(requestedShares, currentTotal);
-        bool isFullExit = MpcCore.decrypt(fullExit);
-        gtUint256 amount0Calculated;
-        gtUint256 amount1Calculated;
-        if (isFullExit) {
-            amount0Calculated = reserve0;
-            amount1Calculated = reserve1;
-        } else {
-            amount0Calculated = MpcCore.div(
-                _mulChecked(requestedShares, reserve0),
-                currentTotal
-            );
-            amount1Calculated = MpcCore.div(
-                _mulChecked(requestedShares, reserve1),
-                currentTotal
-            );
-        }
+        gtUint256 amount0Calculated = MpcCore.div(
+            _mulChecked(requestedShares, reserve0),
+            currentTotal
+        );
+        gtUint256 amount1Calculated = MpcCore.div(
+            _mulChecked(requestedShares, reserve1),
+            currentTotal
+        );
 
         if (!MpcCore.decrypt(MpcCore.ge(amount0Calculated, minimum0))) revert SlippageExceeded();
         if (!MpcCore.decrypt(MpcCore.ge(amount1Calculated, minimum1))) revert SlippageExceeded();
 
-        gtUint256 nextTotalShares = isFullExit
-            ? MpcCore.setPublic256(uint256(0))
-            : _subChecked(currentTotal, requestedShares);
+        gtUint256 nextTotalShares = _subChecked(currentTotal, requestedShares);
         totalShares = MpcCore.offBoard(nextTotalShares);
         if (lpToken == address(0)) {
             shares[msg.sender] = MpcCore.offBoard(
@@ -654,10 +711,14 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         }
         gtUint256 nextReserve0 = _subChecked(reserve0, amount0Calculated);
         gtUint256 nextReserve1 = _subChecked(reserve1, amount1Calculated);
+        _assertOperationalBounds(
+            _selectIf(fullExit, reserve0, nextReserve0),
+            _selectIf(fullExit, reserve1, nextReserve1),
+            _selectIf(fullExit, currentTotal, nextTotalShares)
+        );
+        bool isFullExit = MpcCore.decrypt(fullExit);
         if (isFullExit) {
             initialized = false;
-        } else {
-            _assertOperationalBounds(nextReserve0, nextReserve1, nextTotalShares);
         }
         reserve0State = MpcCore.offBoard(nextReserve0);
         reserve1State = MpcCore.offBoard(nextReserve1);
@@ -812,6 +873,204 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         _requirePositive(amountOut);
     }
 
+    /**
+     * @dev Non-reverting counterpart used only for candidate comparison. Every
+     *      arithmetic failure contributes to an encrypted validity bit and the
+     *      returned output is masked to zero. Settlement still uses the strict
+     *      checked path above and reverts on any invalid condition.
+     */
+    function _routerQuoteAmounts(
+        gtUint256 amountIn,
+        gtUint256 reserve0,
+        gtUint256 reserve1,
+        bool zeroForOne
+    ) internal returns (gtUint256 amountOut, gtBool valid) {
+        gtUint256 zero = MpcCore.setPublic256(uint256(0));
+        gtUint256 one = MpcCore.setPublic256(uint256(1));
+        gtUint256 reserveIn = zeroForOne ? reserve0 : reserve1;
+        gtUint256 reserveOut = zeroForOne ? reserve1 : reserve0;
+        valid = MpcCore.and(
+            MpcCore.gt(amountIn, zero),
+            MpcCore.and(
+                MpcCore.gt(reserveIn, zero),
+                MpcCore.gt(reserveOut, zero)
+            )
+        );
+
+        (gtBool netProductOverflow, gtUint256 netProduct) =
+            MpcCore.checkedMulWithOverflowBit(
+                amountIn,
+                FEE_DENOMINATOR - feeBps
+            );
+        valid = MpcCore.and(valid, MpcCore.not(netProductOverflow));
+        gtUint256 netAmountIn = MpcCore.div(netProduct, FEE_DENOMINATOR);
+        valid = MpcCore.and(valid, MpcCore.gt(netAmountIn, zero));
+
+        (gtBool totalFeeUnderflow, gtUint256 totalFee) =
+            MpcCore.checkedSubWithOverflowBit(amountIn, netAmountIn);
+        valid = MpcCore.and(valid, MpcCore.not(totalFeeUnderflow));
+        gtUint256 protocolFee = MpcCore.div(
+            totalFee,
+            PROTOCOL_FEE_SHARE_DENOMINATOR
+        );
+        valid = MpcCore.and(valid, MpcCore.gt(protocolFee, zero));
+
+        (gtBool reserveInOverflow, gtUint256 newReserveIn) =
+            MpcCore.checkedAddWithOverflowBit(reserveIn, netAmountIn);
+        valid = MpcCore.and(valid, MpcCore.not(reserveInOverflow));
+        (gtBool invariantOverflow, gtUint256 invariant) =
+            MpcCore.checkedMulWithOverflowBit(reserveIn, reserveOut);
+        valid = MpcCore.and(valid, MpcCore.not(invariantOverflow));
+
+        gtBool denominatorIsZero = MpcCore.eq(newReserveIn, zero);
+        gtUint256 safeDenominator = _selectIf(
+            denominatorIsZero,
+            one,
+            newReserveIn
+        );
+        gtUint256 quotient = MpcCore.div(invariant, safeDenominator);
+        gtUint256 remainder = MpcCore.rem(invariant, safeDenominator);
+        gtBool exact = MpcCore.eq(remainder, zero);
+        (gtBool ceilingOverflow, gtUint256 roundedUp) =
+            MpcCore.checkedAddWithOverflowBit(quotient, one);
+        valid = MpcCore.and(
+            valid,
+            MpcCore.or(exact, MpcCore.not(ceilingOverflow))
+        );
+        gtUint256 retainedReserve = _selectIf(
+            exact,
+            quotient,
+            roundedUp
+        );
+        (gtBool outputUnderflow, gtUint256 candidateOutput) =
+            MpcCore.checkedSubWithOverflowBit(reserveOut, retainedReserve);
+        valid = MpcCore.and(valid, MpcCore.not(outputUnderflow));
+        valid = MpcCore.and(valid, MpcCore.gt(candidateOutput, zero));
+        valid = _routerSettlementValidity(
+            amountIn,
+            candidateOutput,
+            protocolFee,
+            reserve0,
+            reserve1,
+            zeroForOne,
+            valid
+        );
+        amountOut = _selectIf(valid, candidateOutput, zero);
+    }
+
+    /**
+     * @dev Mirrors every encrypted arithmetic and public counter bound reached
+     *      by strict settlement. A candidate that would revert during
+     *      settlement is masked out before best-pool selection.
+     */
+    function _routerSettlementValidity(
+        gtUint256 amountIn,
+        gtUint256 amountOut,
+        gtUint256 protocolFee,
+        gtUint256 reserve0,
+        gtUint256 reserve1,
+        bool zeroForOne,
+        gtBool valid
+    ) internal returns (gtBool) {
+        (gtBool reserveCreditUnderflow, gtUint256 reserveCredit) =
+            MpcCore.checkedSubWithOverflowBit(amountIn, protocolFee);
+        valid = MpcCore.and(valid, MpcCore.not(reserveCreditUnderflow));
+
+        gtUint256 nextReserve0;
+        gtUint256 nextReserve1;
+        if (zeroForOne) {
+            (gtBool reserve0Overflow, gtUint256 increasedReserve0) =
+                MpcCore.checkedAddWithOverflowBit(reserve0, reserveCredit);
+            (gtBool reserve1Underflow, gtUint256 reducedReserve1) =
+                MpcCore.checkedSubWithOverflowBit(reserve1, amountOut);
+            valid = MpcCore.and(valid, MpcCore.not(reserve0Overflow));
+            valid = MpcCore.and(valid, MpcCore.not(reserve1Underflow));
+            nextReserve0 = increasedReserve0;
+            nextReserve1 = reducedReserve1;
+        } else {
+            (gtBool reserve1Overflow, gtUint256 increasedReserve1) =
+                MpcCore.checkedAddWithOverflowBit(reserve1, reserveCredit);
+            (gtBool reserve0Underflow, gtUint256 reducedReserve0) =
+                MpcCore.checkedSubWithOverflowBit(reserve0, amountOut);
+            valid = MpcCore.and(valid, MpcCore.not(reserve1Overflow));
+            valid = MpcCore.and(valid, MpcCore.not(reserve0Underflow));
+            nextReserve0 = reducedReserve0;
+            nextReserve1 = increasedReserve1;
+        }
+
+        return _routerOperationalValidity(
+            nextReserve0,
+            nextReserve1,
+            protocolFee,
+            zeroForOne,
+            valid
+        );
+    }
+
+    function _routerOperationalValidity(
+        gtUint256 nextReserve0,
+        gtUint256 nextReserve1,
+        gtUint256 protocolFee,
+        bool zeroForOne,
+        gtBool valid
+    ) internal returns (gtBool) {
+        gtUint256 zero = MpcCore.setPublic256(uint256(0));
+        gtUint256 shareSupply = _readPrivate(totalShares);
+        valid = MpcCore.and(
+            valid,
+            MpcCore.and(
+                MpcCore.gt(nextReserve0, zero),
+                MpcCore.and(
+                    MpcCore.gt(nextReserve1, zero),
+                    MpcCore.gt(shareSupply, zero)
+                )
+            )
+        );
+
+        valid = _routerMulValidity(valid, nextReserve0, nextReserve1);
+        valid = _routerMulValidity(valid, shareSupply, nextReserve0);
+        valid = _routerMulValidity(valid, shareSupply, nextReserve1);
+        valid = _routerMulValidity(valid, nextReserve0, scale0);
+
+        (gtBool normalized1Overflow, gtUint256 normalized1) =
+            MpcCore.checkedMulWithOverflowBit(nextReserve1, scale1);
+        valid = MpcCore.and(valid, MpcCore.not(normalized1Overflow));
+        valid = _routerMulValidity(valid, normalized1, PRICE_SCALE);
+
+        gtUint256 accruedFees = zeroForOne
+            ? _protocolFees0()
+            : _protocolFees1();
+        (gtBool feeOverflow, ) =
+            MpcCore.checkedAddWithOverflowBit(accruedFees, protocolFee);
+        valid = MpcCore.and(valid, MpcCore.not(feeOverflow));
+
+        uint32 swapCount = zeroForOne
+            ? protocolFeeSwapCount0
+            : protocolFeeSwapCount1;
+        return MpcCore.and(
+            valid,
+            MpcCore.setPublic(swapCount < type(uint32).max)
+        );
+    }
+
+    function _routerMulValidity(
+        gtBool valid,
+        gtUint256 left,
+        gtUint256 right
+    ) internal returns (gtBool) {
+        (gtBool overflow, ) = MpcCore.checkedMulWithOverflowBit(left, right);
+        return MpcCore.and(valid, MpcCore.not(overflow));
+    }
+
+    function _routerMulValidity(
+        gtBool valid,
+        gtUint256 left,
+        uint256 right
+    ) internal returns (gtBool) {
+        (gtBool overflow, ) = MpcCore.checkedMulWithOverflowBit(left, right);
+        return MpcCore.and(valid, MpcCore.not(overflow));
+    }
+
     function _recordProtocolFeeAccrual(bool token0Side) internal {
         if (token0Side) {
             if (protocolFeeSwapCount0 == 0) {
@@ -862,10 +1121,12 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         );
         gtUint256 floorPrice = MpcCore.div(priceNumerator, normalized0);
         gtUint256 ceilingPrice = _ceilDiv(priceNumerator, normalized0);
-        if (
-            !MpcCore.decrypt(MpcCore.ge(floorPrice, minimumPrice)) ||
-            !MpcCore.decrypt(MpcCore.le(ceilingPrice, maximumPrice))
-        ) revert PriceOutsideBounds();
+        if (!MpcCore.decrypt(MpcCore.ge(floorPrice, minimumPrice))) {
+            revert PriceOutsideBounds();
+        }
+        if (!MpcCore.decrypt(MpcCore.le(ceilingPrice, maximumPrice))) {
+            revert PriceOutsideBounds();
+        }
     }
 
     function _assertOperationalBounds(
@@ -892,7 +1153,8 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         gtUint256 beforeBalance = _privatePoolBalance(tokenAddress);
         IPrivateERC20(tokenAddress).transferFromGT(from, address(this), amount);
         gtUint256 afterBalance = _privatePoolBalance(tokenAddress);
-        if (!MpcCore.decrypt(MpcCore.eq(afterBalance, _addChecked(beforeBalance, amount)))) {
+        gtUint256 expectedAfterBalance = _addChecked(beforeBalance, amount);
+        if (!MpcCore.decrypt(MpcCore.eq(afterBalance, expectedAfterBalance))) {
             revert PrivateTransferAmountMismatch();
         }
     }
@@ -901,7 +1163,8 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         gtUint256 beforeBalance = _privatePoolBalance(tokenAddress);
         IPrivateERC20(tokenAddress).transferGT(to, amount);
         gtUint256 afterBalance = _privatePoolBalance(tokenAddress);
-        if (!MpcCore.decrypt(MpcCore.eq(afterBalance, _subChecked(beforeBalance, amount)))) {
+        gtUint256 expectedAfterBalance = _subChecked(beforeBalance, amount);
+        if (!MpcCore.decrypt(MpcCore.eq(afterBalance, expectedAfterBalance))) {
             revert PrivateTransferAmountMismatch();
         }
     }
@@ -932,11 +1195,23 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         gtUint256 quotient = MpcCore.div(numerator, denominator);
         gtUint256 remainder = MpcCore.rem(numerator, denominator);
         gtBool exact = MpcCore.eq(remainder, MpcCore.setPublic256(uint256(0)));
-        return MpcCore.mux(
+        return _selectIf(
             exact,
-            MpcCore.add(quotient, MpcCore.setPublic256(uint256(1))),
-            quotient
+            quotient,
+            MpcCore.add(quotient, MpcCore.setPublic256(uint256(1)))
         );
+    }
+
+    /**
+     * @dev COTI's MpcCore.mux selects its third argument when condition is true.
+     * This wrapper presents conventional `(condition, whenTrue, whenFalse)` order.
+     */
+    function _selectIf(
+        gtBool condition,
+        gtUint256 whenTrue,
+        gtUint256 whenFalse
+    ) internal returns (gtUint256) {
+        return MpcCore.mux(condition, whenFalse, whenTrue);
     }
 
     function _requirePositive(gtUint256 value) internal {
@@ -993,5 +1268,13 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         } catch {
             return false;
         }
+    }
+
+    function _requireBestExecutionRouter() internal view {
+        if (
+            bootstrapper.code.length == 0 ||
+            msg.sender == address(0) ||
+            IConfidentialCPMMFactory(bootstrapper).bestExecutionRouter() != msg.sender
+        ) revert BestExecutionRouterUnauthorized();
     }
 }

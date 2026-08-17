@@ -12,6 +12,7 @@ interface IConfidentialCPMM {
     );
 
     function PROTOCOL_VERSION() external view returns (uint256);
+    function PRIVACY_MODE() external view returns (uint8);
     function token0() external view returns (address);
     function token1() external view returns (address);
     function token0Decimals() external view returns (uint8);

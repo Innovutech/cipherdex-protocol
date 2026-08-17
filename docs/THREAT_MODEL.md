@@ -33,6 +33,14 @@
 - stack exhaustion or getter execution while validating untrusted SDK metadata;
 - the confidential core has no public spot, TWAP, reserve, TVL, or aggregate
   LP-supply publication path;
+- caller-supplied pool substitution in confidential best execution; candidates
+  come only from canonical factory keys and approved v1 fee tiers;
+- cross-selector/request ciphertext replay at the best-execution router;
+- losing confidential candidate outputs being offboarded or logged;
+- quote-only requests moving funds or mutating pool accounting;
+- successful atomic routing leaving input escrow or candidate allowance residue;
+- selected settlement bypassing pool-owned fee, slippage, invariant, reserve,
+  protocol-fee or exact-delta enforcement;
 
 ## Not solved by this phase
 
@@ -50,8 +58,14 @@
 - asynchronous PoD callback failures or cross-chain settlement;
 - wallet/UI leakage before a transaction is encrypted;
 - gasless confidential exact quoting on COTI runtimes that reject fresh MPC
-  execution under `eth_call`; the transaction fallback adds gas, latency and
-  public caller/pool/direction/timing metadata;
+  execution under `eth_call`; the paid best-quote transaction adds gas, latency
+  and public caller/winning-pool/direction/timing metadata;
+- best-quote or best-swap liveness when one canonical candidate itself reverts
+  unexpectedly rather than returning an encrypted invalid result. Immutable
+  reviewed pool/token code limits this to defects or external MPC failure; the
+  router does not catch and reinterpret arbitrary failures;
+- gas cost and block-limit headroom as additional fee tiers are considered. V1
+  is hard-bounded to three tiers and has no caller-controlled candidate loop;
 - active differencing of low-volume confidential fee batches by a beneficiary or
   adversary that already knows most constituent trades; count/time batching and
   the vault sweep cadence reduce routine per-swap disclosure but cannot create
@@ -72,6 +86,7 @@ callbacks, gas griefing, pool initialization, LP rounding, event linkability,
 precompile behavior under `eth_call`, and testnet-to-mainnet compiler/deployment
 differences. No external audit is claimed.
 
-Execution contracts report protocol version 2; the launchpad migrator reports
-version 3. Integrations must bind execution to the configured factory, fee vault,
-protocol version and canonical pool mapping.
+Pool/factory execution contracts report protocol version 2, the confidential
+best-execution router reports version 1, and the launchpad migrator reports
+version 3. Integrations must bind execution to the configured factory, its
+one-time router, fee vault, protocol versions and canonical pool mapping.

@@ -5,6 +5,7 @@ import "./ConfidentialCPMM.sol";
 import "./CipherDEXFeePolicy.sol";
 import "./interfaces/IConfidentialCPMM.sol";
 import "./interfaces/IConfidentialCPMMFactory.sol";
+import "./interfaces/IConfidentialBestExecution.sol";
 import "./interfaces/IPrivateLPTokenFactory.sol";
 
 /**
@@ -26,6 +27,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     address public immutable feeVault;
     address public immutable bootstrapConfigurator;
     address public bootstrapAdapter;
+    address public bestExecutionRouter;
 
     error InvalidTokenPair();
     error InvalidFee();
@@ -38,6 +40,9 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     error BootstrapAdapterUnauthorized();
     error BootstrapAdapterAlreadyConfigured();
     error InvalidBootstrapAdapter();
+    error BestExecutionRouterUnauthorized();
+    error BestExecutionRouterAlreadyConfigured();
+    error InvalidBestExecutionRouter();
     error PoolAlreadyInitialized();
 
     constructor(
@@ -72,6 +77,27 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         if (adapter.code.length == 0) revert InvalidBootstrapAdapter();
         bootstrapAdapter = adapter;
         emit BootstrapAdapterConfigured(adapter);
+    }
+
+    /**
+     * @notice Binds the one canonical confidential best-execution router.
+     * @dev This is a one-time deployment operation. Pools read this immutable-in-
+     *      practice binding before accepting any raw transaction-scoped GT value.
+     */
+    function setBestExecutionRouter(address router) external {
+        if (msg.sender != bootstrapConfigurator) {
+            revert BestExecutionRouterUnauthorized();
+        }
+        if (bestExecutionRouter != address(0)) {
+            revert BestExecutionRouterAlreadyConfigured();
+        }
+        if (
+            router.code.length == 0 ||
+            IConfidentialBestExecutionRouter(router).factory() != address(this) ||
+            IConfidentialBestExecutionRouter(router).PROTOCOL_VERSION() != 1
+        ) revert InvalidBestExecutionRouter();
+        bestExecutionRouter = router;
+        emit BestExecutionRouterConfigured(router);
     }
 
     function createPool(

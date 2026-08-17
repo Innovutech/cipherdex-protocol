@@ -165,6 +165,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
         view
         returns (uint256 amountOut)
     {
+        if (!initialized) revert PoolNotInitialized();
         (uint256 reserveIn, uint256 reserveOut) = _reserves(zeroForOne);
         return _amountOut(amountIn, reserveIn, reserveOut);
     }
@@ -176,6 +177,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint64 deadline
     ) external nonReentrant returns (uint256 amountOut) {
         _requireBeforeDeadline(deadline);
+        if (!initialized) revert PoolNotInitialized();
         if (amountIn == 0) revert InvalidAmount();
         _reconcileProtocolFeeLosses();
 

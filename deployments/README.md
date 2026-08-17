@@ -9,11 +9,12 @@ latency only. A release record should include:
 
 - network and chain ID;
 - compiler version, EVM target and optimizer settings;
-- factory, pool, LP-token factory, launchpad migrator, public factory, quoter
-  and router addresses;
+- confidential factory, its configured best-execution router, pool, LP-token
+  factory, launchpad migrator, public factory, quoter and router addresses;
 - deployment transaction hashes and gas used;
 - ABI/schema version and source commit;
 - known limitations and independent-review status.
 
 Generated deployment records remain ignored until they have been reviewed and
-sanitized for publication.
+sanitized for publication. After that review, publish only the commit-bound
+final record explicitly with `git add -f deployments/coti-testnet-<commit>.json`.

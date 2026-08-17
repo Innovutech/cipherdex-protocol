@@ -68,15 +68,25 @@ contract PublicCPMMRouter {
             ? IPublicCPMM(pool).token1()
             : IPublicCPMM(pool).token0();
 
-        IERC20(inputToken).safeTransferFrom(msg.sender, address(this), amountIn);
-        IERC20(inputToken).forceApprove(pool, amountIn);
+        IERC20 input = IERC20(inputToken);
+        uint256 inputBalanceBefore = input.balanceOf(address(this));
+        input.safeTransferFrom(msg.sender, address(this), amountIn);
+        uint256 inputBalanceAfter = input.balanceOf(address(this));
+        if (
+            inputBalanceAfter < inputBalanceBefore ||
+            inputBalanceAfter - inputBalanceBefore != amountIn
+        ) revert TransferAmountMismatch();
+        input.forceApprove(pool, amountIn);
         uint256 routerAmountOut = IPublicCPMM(pool).swapExactInput(
             amountIn,
             0,
             zeroForOne,
             deadline
         );
-        IERC20(inputToken).forceApprove(pool, 0);
+        input.forceApprove(pool, 0);
+        if (input.balanceOf(address(this)) != inputBalanceBefore) {
+            revert TransferAmountMismatch();
+        }
 
         amountOut = _transferOut(
             IERC20(outputToken),

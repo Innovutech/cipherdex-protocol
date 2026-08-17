@@ -45,6 +45,7 @@ if (!isConfidentialPoolDiscovery(untrustedDiscovery)) {
 const discovery = await verifyConfidentialPoolDiscovery(
   untrustedDiscovery,
   {
+    expectedChainId: configuredChainId,
     expectedFactory: configuredFactory,
     expectedFeeVault: configuredFeeVault,
     expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
@@ -65,12 +66,63 @@ verification adapter makes this check mandatory.
 Current COTI nodes reject fresh MPC execution under `eth_call`, beginning with
 raw stored-ciphertext `OnBoard`. Deployment-time encrypted constants remove
 `SetPublic` but do not remove the required onboarding and therefore do not make a
-complete quote callable. A dedicated quote identity therefore creates a fresh
-authenticated input for each verified canonical candidate, calls
-`requestQuoteExactInput`, decrypts the matching `ConfidentialQuoteResult`, and
-passes process-local evaluations to `selectBestConfidentialPoolQuote`.
-Each evaluation is bound to the same exact process-local `amountIn`, logical
-request ID and direction; mixed-input candidates are rejected.
+complete quote callable. Integrations must first verify the configured router
+against deployed code, its protocol version, immutable `factory()` and the
+factory's one-time `bestExecutionRouter()` binding:
+
+```ts
+const router = await verifyConfidentialBestExecutionRouter(
+  configuredRouter,
+  {
+    expectedChainId: configuredChainId,
+    expectedFactory: configuredFactory,
+    expectedFactoryRuntimeCodehash:
+      deployment.contracts.confidentialFactory.runtimeCodehash,
+    expectedRouter: deployment.contracts.confidentialBestExecutionRouter.address,
+    expectedRouterRuntimeCodehash:
+      deployment.contracts.confidentialBestExecutionRouter.runtimeCodehash,
+    expectedFactoryProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+    expectedRouterProtocolVersion: CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
+  },
+  rpcBackedRouterVerificationAdapter,
+);
+
+const binding = getConfidentialBestExecutionEncryptionBinding(router, "quote");
+const encryptedAmount = await cotiWallet.encryptValue256(
+  amountIn,
+  binding.contractAddress,
+  binding.functionSelector,
+);
+const requestId = randomNonzeroBytes32();
+const transaction = buildVerifiedConfidentialBestQuoteTransaction(
+  router,
+  tokenIn,
+  tokenOut,
+  encryptedAmount,
+  requestId,
+  deadline,
+);
+```
+
+`requestBestQuoteExactInput` derives all candidates from the canonical factory,
+quotes initialized 5/30/100 bps pools with the same GT input, selects privately
+and emits one caller-encrypted winner. After submission, call
+`decryptConfidentialBestExecutionResult` with the expected operation, caller,
+request ID, token pair, transaction hash and exact encoded transaction calldata.
+Its trusted adapter must fetch the
+raw transaction and receipt by that hash; application code cannot inject either
+as evidence. The SDK verifies the chain, byte-for-byte calldata, exact router event,
+selected tier and a fresh canonical-pool lookup before decrypting. The currently
+recorded pre-router deployment uses pool-level `requestQuoteExactInput` as its
+primary working quote; after this router version is finalized and freshly
+deployed, that path remains supported for compatibility and diagnosis.
+
+The verification and decryption adapters are trusted chain-data boundaries, not
+indexer callbacks. Expected addresses and runtime codehashes must come from the
+reviewed deployment record over a separately authenticated channel. Use the
+wallet's reviewed provider or a provider quorum for chain reads; an adversarial
+single RPC can fabricate an internally consistent chain view, which ordinary
+JSON-RPC reads cannot independently disprove.
 
 The identity is non-custodial: it holds only quote gas, never receives user funds
 and never signs swaps. Integrators must expose the transaction cost/latency and
@@ -85,10 +137,22 @@ must not:
 ## Confidential execution boundary
 
 Authenticated COTI inputs bind sender, target contract and function selector.
-The protocol therefore has no generic confidential router. A future supported
-execution flow must create fresh user-bound inputs for `swapExactInput`, include
-a reviewed nonzero minimum output and call the selected pool directly. Quote
-inputs cannot be reused for settlement.
+For atomic best execution, independently encrypt both exact input and nonzero
+minimum output for the verified router's `swapBestExactInput` selector and use
+`buildVerifiedConfidentialBestSwapTransaction`. Quote ciphertext cannot be
+reused because its selector binding differs.
+
+Before submitting, grant the router exactly the encrypted input amount on the
+input token. The router resolves only canonical candidates, pulls that exact
+amount into temporary escrow, grants only the selected pool an exact temporary
+allowance and settles directly to the caller. The pool recomputes its quote and
+enforces encrypted slippage, fees, reserves, invariant and token deltas. A
+successful call requires the router's starting token balance and every candidate
+allowance to be restored; any failure rolls the whole transaction back.
+
+Direct `swapExactInput` remains supported for a user that intentionally selects
+one verified pool. It requires fresh pool/selector-bound ciphertexts and is not
+the preferred best-execution path.
 
 ## Launchpad bootstrap
 

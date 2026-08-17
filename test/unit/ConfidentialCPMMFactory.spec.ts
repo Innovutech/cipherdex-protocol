@@ -68,6 +68,7 @@ describe("ConfidentialCPMMFactory", function () {
     const lpTokenFactoryAddress = await factory.lpTokenFactory();
     expect(lpTokenFactoryAddress).to.equal(await lpTokenFactory.getAddress());
     expect(await factory.bootstrapAdapter()).to.equal(ethers.ZeroAddress);
+    expect(await factory.bestExecutionRouter()).to.equal(ethers.ZeroAddress);
     const [, outsider] = await ethers.getSigners();
     expect(await factory.bootstrapConfigurator()).to.equal(deployer.address);
     const decoyAddress = await lpTokenFactory.connect(outsider).create.staticCall(pool);
@@ -86,6 +87,28 @@ describe("ConfidentialCPMMFactory", function () {
     await expect(
       factory.setBootstrapAdapter(await migrator.getAddress()),
     ).to.be.revertedWithCustomError(factory, "BootstrapAdapterAlreadyConfigured");
+
+    await expect(
+      factory.setBestExecutionRouter(await migrator.getAddress()),
+    ).to.be.revertedWithCustomError(factory, "InvalidBestExecutionRouter");
+    const bestExecutionRouter = await (
+      await ethers.getContractFactory("ConfidentialBestExecutionRouter")
+    ).deploy(await factory.getAddress());
+    await bestExecutionRouter.waitForDeployment();
+    await expect(
+      factory.connect(outsider).setBestExecutionRouter(
+        await bestExecutionRouter.getAddress(),
+      ),
+    ).to.be.revertedWithCustomError(factory, "BestExecutionRouterUnauthorized");
+    await expect(
+      factory.setBestExecutionRouter(await bestExecutionRouter.getAddress()),
+    ).to.emit(factory, "BestExecutionRouterConfigured")
+      .withArgs(await bestExecutionRouter.getAddress());
+    expect(await factory.bestExecutionRouter())
+      .to.equal(await bestExecutionRouter.getAddress());
+    await expect(
+      factory.setBestExecutionRouter(await bestExecutionRouter.getAddress()),
+    ).to.be.revertedWithCustomError(factory, "BestExecutionRouterAlreadyConfigured");
     await expect(
       factory.connect(outsider).bootstrapPool(
         pool,
@@ -101,6 +124,9 @@ describe("ConfidentialCPMMFactory", function () {
     expect(await factory.allPools(0)).to.equal(pool);
 
     const poolContract = await ethers.getContractAt("ConfidentialCPMM", pool);
+    await expect(
+      poolContract.connect(outsider).quoteExactInputForRouter(0n, true),
+    ).to.be.revertedWithCustomError(poolContract, "BestExecutionRouterUnauthorized");
     await expect(
       poolContract.connect(outsider).initializeLPToken(decoyAddress),
     ).to.be.revertedWithCustomError(poolContract, "BootstrapUnauthorized");

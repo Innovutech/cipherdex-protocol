@@ -44,9 +44,13 @@ test-harness use; canonical discovery always uses factory-created LP tokens. The
 launchpad migrator preserves creator-held shares by default and also exposes an
 atomic timed-lock or permanent-lock disposition.
 
-Public pools additionally expose a factory-gated exact-input router and quoter.
-Confidential pools are called directly because their encrypted input signatures
-bind the caller and target pool.
+Public pools expose a factory-gated exact-input router and gasless quoter.
+Confidential pools retain direct execution and additionally expose a
+factory-bound `ConfidentialBestExecutionRouter`. Users encrypt inputs for that
+router and exact function selector. The router reuses the validated MPC value
+across only the factory's canonical 5, 30 and 100 bps pools, privately selects
+the largest valid output and offboards only the winner. It can either return a
+paid encrypted best quote or atomically escrow and settle the selected pool.
 
 The current testnet execution contracts use protocol version 2 and the launchpad
 migrator uses version 3. Previous testnet artifacts are disposable and are not a
@@ -59,11 +63,13 @@ adapter/state machine; treating them as ordinary ERC-20 calls would be incorrect
 Confidential pools deliberately expose no public reserve-derived market data:
 no reserves, TVL, aggregate LP supply, spot price or TWAP. The current COTI
 testnet RPC permits ciphertext-only storage reads but rejects `OnBoard` and every
-tested fresh MPC path under `eth_call`. Confidential pools therefore provide an
-exact encrypted transaction/event quote fallback. It preserves amount secrecy
-and supports deterministic fee-tier selection, but costs gas, waits for inclusion
-and publicly reveals caller, pool, direction and timing. This is a testnet
-feasibility boundary, not normal gasless DEX quote UX. Read
+tested fresh MPC path under `eth_call`. The currently recorded v2 deployment has
+only the proven paid per-pool quote, so that remains its primary quote path. This
+working version adds one paid router transaction across all canonical fee tiers;
+only after final verification and fresh deployment does that become preferred and
+the per-pool request become the compatibility fallback. Both transports cost gas
+and wait for inclusion, so this is a testnet runtime limitation rather than normal
+gasless DEX quote UX. Read
 [docs/QUOTE_MARKET_DATA_REVIEW.md](docs/QUOTE_MARKET_DATA_REVIEW.md),
 [docs/FEE_ECONOMICS.md](docs/FEE_ECONOMICS.md),
 [docs/FEASIBILITY_GATE.md](docs/FEASIBILITY_GATE.md) and
@@ -76,6 +82,7 @@ protocol.
 npm ci --ignore-scripts
 npm run verify
 npm run testnet:preflight
+npm run testnet:best-execution
 npm run deploy:testnet
 ```
 

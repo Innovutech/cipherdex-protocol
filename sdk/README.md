@@ -10,8 +10,12 @@ reserved, explicitly unsupported fully-confidential recipient/identity mode;
 clients must reject it rather than infer support. Public pool users can use the
 factory-gated quoter and exact-input router ABI fragments. Confidential pool
 discovery reports `encrypted-transaction-event-v1`: current COTI testnet requires
-one encrypted transaction per fee-tier candidate because fresh MPC execution is
-rejected under `eth_call`.
+paid MPC transactions because fresh MPC execution is rejected under `eth_call`.
+The currently recorded v2 deployment has only the paid per-pool transaction, so
+it remains the primary working quote path there. Once the canonical router in
+this version passes final verification and is freshly deployed, one router
+transaction across all initialized v1 fee tiers becomes preferred and per-pool
+transactions remain as a direct compatibility path.
 
 The SDK also validates privacy-minimal lock and launchpad migration records.
 Those records contain only public pool/participant identity, disposition, lock
@@ -22,9 +26,9 @@ identity and immutable configuration only.
 See `docs/INTEGRATION_EXAMPLE.md` for discovery, current routing gates, public
 execution and launchpad indexing boundaries.
 
-The current authoritative COTI testnet addresses, deployment transactions,
-runtime codehashes, compiler settings and exact source commit are published once
-in `deployments/coti-testnet-latest.json`. Integrations should pin and validate
+Authoritative COTI testnet addresses, deployment transactions, runtime
+codehashes, compiler settings and exact source commit are published only in a
+reviewed immutable `deployments/coti-testnet-<commit>.json` record. Integrations should pin and validate
 that manifest's factory, fee vault and protocol version rather than copying
 address constants into multiple SDK modules. The manifest is testnet-only and is
 not a mainnet registry.
@@ -66,12 +70,28 @@ implementation.
 
 Current COTI nodes reject MPC precompile execution under `eth_call`; raw stored
 ciphertext `OnBoard` is the first isolated failing primitive, and pre-stored
-encrypted constants do not remove that requirement. A walletless
-backend can operate a dedicated non-custodial COTI quote identity, submit a fresh
-pool-bound encrypted request, decrypt only its result, and compare verified
-canonical candidates with `selectBestConfidentialPoolQuote`. Every evaluation
-must carry the same exact process-local `amountIn`, request ID and direction so
-results for different inputs cannot be compared accidentally. That identity must
-not hold user funds or sign swaps. Integrators must disclose quote latency/cost,
-use fresh user-bound inputs for execution, and never substitute zero minimum
-output or a public reserve approximation.
+encrypted constants do not remove that requirement. Verify the configured
+router with `verifyConfidentialBestExecutionRouter` before using it. Then use
+`getConfidentialBestExecutionEncryptionBinding` with the official COTI wallet,
+followed by `buildVerifiedConfidentialBestQuoteTransaction` or
+`buildVerifiedConfidentialBestSwapTransaction`. Result events must be bound to
+that verified emitter, expected caller and request ID before
+`decryptConfidentialBestExecutionResult` is called. Verification is chain-bound,
+and decryption requires the adapter to fetch the authentic submitted transaction
+and successful receipt by the expected transaction hash, then verify the exact
+submitted calldata, router result log and a fresh canonical-pool lookup. Application code cannot
+provide a caller-authored transaction or receipt as provenance evidence.
+
+Addresses and runtime codehashes supplied to router verification must come from
+the reviewed deployment record, not an indexer response. The RPC adapter is an
+explicit trusted chain-data boundary. If one RPC is not trusted, use the wallet
+provider or an independent quorum; a single adversarial RPC can fabricate a
+self-consistent chain view and is outside what ordinary JSON-RPC reads can prove.
+
+A walletless backend can operate a dedicated non-custodial COTI quote identity
+and submit one fresh router-bound best-quote request. That identity must not hold
+user funds or sign swaps. Paid per-pool quote transactions remain available as
+a direct compatibility path, but the SDK does not turn caller-authored decrypted
+outputs into execution-grade route evidence. Integrators must disclose quote
+latency/cost, use fresh router/swap-selector-bound inputs for execution, and
+never substitute zero minimum output or a public reserve approximation.
