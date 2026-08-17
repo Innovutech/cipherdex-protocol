@@ -216,19 +216,30 @@ movement.
 
 The disposable 100-bps quote-candidate pool reached eight protocol-fee-bearing
 swaps in each direction. Its immutable collection window matured at Unix time
-`1786842952` (2026-08-16 01:15:52 UTC); the delay was not shortened or bypassed.
-The runner then completed a true full LP exit before collecting both encrypted
-fee aggregates to the fixed vault:
+`1787003908` (2026-08-17 21:58:28 UTC); the delay was not shortened or bypassed.
+The source-bound runner then collected both mature encrypted fee aggregates to
+the fixed disposable vault, created one terminal sub-threshold accrual, and
+completed a true full LP exit:
 
-- full LP exit:
-  `0xb554ccbe3de2b5b97a2cb24bf999eb4a53af66bf8a1005c73a822d3c022d14cc`
-  (3,638,851 gas)
 - encrypted aggregate collection:
-  `0x45ed14a5ac76c4e7a704292984ab61874f3a7400c55fca189ad6ba4536db0caa`
-  (1,650,381 gas)
+  `0xefa08496b7517e172ee5d9386d10232a8870705fb8e1a40b38e579eca90b4be2`
+  (3,195,473 gas)
+- terminal encrypted quote:
+  `0x86d66a508dd49d8a9c92f99126ca80a13c919e108c58e7ba94c50b3b73a9b5cb`
+  (9,079,271 gas)
+- terminal sub-threshold swap:
+  `0x01271751f5f9b6130c246a9761dbcd789be12ebd779abbd5fb48cfa8c9d3a28d`
+  (11,533,684 gas)
+- full LP exit and terminal aggregate deposit:
+  `0x202188516974a3e2979c8cf58ffbeaca122f2b6c9dba000d4cbfa95d90ed3cd7`
+  (11,922,416 gas)
 
-Both public batch counters were zero after collection. No confidential amount
-was decrypted, returned or emitted.
+The disposable pool is `0x0e2de0e8b0e78dbe6b01c8ef311C4C2E8b2CeEFE` and its
+fixed vault is `0x6f61B4D3F040517DA55282aa868b1C658A96d217`. The runner
+verified two exact mature deposits, one terminal deposit on full exit, protocol
+fees excluded from effective reserves, zero final batch counters, zero pool
+token residue and zero owner allowances. No confidential amount was decrypted,
+returned, emitted or written to the public evidence.
 
 ## Compiler size and local gas
 
@@ -278,8 +289,10 @@ router and launchpad migrator, and every deployed runtime against the fresh
 reviewed artifact. The immutable fee-vault beneficiary is
 `0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff`. Historical addresses elsewhere in
 this report remain disposable feasibility or regression evidence. The funded
-end-to-end suite is recorded separately after this deployment manifest and
-report are committed as evidence-only changes.
+end-to-end suite is recorded in
+`evidence/coti-testnet-6f42ea6e8cfb4ace255abd75373769f74b9dec14.json`. It binds
+the four required funded runs, public receipts, runtime artifacts, deployment
+manifest and reviewed runner sources to the canonical source commit.
 
 ## Residual assumptions and remaining gates
 
