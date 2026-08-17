@@ -256,23 +256,23 @@ limit.
 ## Authoritative COTI testnet deployment
 
 The clean source commit
-`1e6e7f0cc63b481bd342793754b18e6f758f4d45` was deployed to COTI testnet
+`6f42ea6e8cfb4ace255abd75373769f74b9dec14` was deployed to COTI testnet
 (`7082400`). The complete public manifest is
-`deployments/coti-testnet-1e6e7f0cc63b481bd342793754b18e6f758f4d45.json`.
+`deployments/coti-testnet-6f42ea6e8cfb4ace255abd75373769f74b9dec14.json`.
 It records 12 unique successful deployment and one-time binding transactions,
 their receipts and gas use, exact constructor or binding inputs, compiler
 settings, runtime codehashes and the resulting immutable relationships.
 
 | Component | Address |
 | --- | --- |
-| CipherDEX fee vault | `0x6212513C1eA7acaC6F7cf93a1646297335696F6E` |
-| Confidential LP-token factory | `0x4680B68f75D10be79C8d75e46E0Ef4e21Ed6773f` |
-| Confidential CPMM factory | `0x5dF9a8d29DFbc3d2a104A71331A064E84956BFc2` |
-| Confidential best-execution router | `0xB4143650e59cEfFd1547dE126061bc8E04ecb1a4` |
-| Confidential launchpad migrator | `0x652bE50eFAc5d885228E473415030A9cBECE5b6b` |
-| Public CPMM factory | `0xCc87b72669A55754411d514CAa6F65c715517013` |
-| Public CPMM quoter | `0x8338211e50bCa736C7770e92f33E2Ff8D59011d6` |
-| Public CPMM router | `0x95110C8fbb9202e1C520c77C5Bf82318a7a5C395` |
+| CipherDEX fee vault | `0x2C25eb4FA72140563d526494e7012d174d6ecb4f` |
+| Confidential LP-token factory | `0xD136bBf345a37a19A723140d9CC4cE1dc6db0734` |
+| Confidential CPMM factory | `0xEBDf156Df675A92Ba86A65d70305F032E2F81ce5` |
+| Confidential best-execution router | `0x10ee264a6d79bA3cf626d6F2Dc5A8C402EF7FAe3` |
+| Confidential launchpad migrator | `0x6fE3A527e1D6215b17a17EB04556FB18fBC4e5c2` |
+| Public CPMM factory | `0x70Ec153a4bd491a3A14C84b9bccc80d70e410b52` |
+| Public CPMM quoter | `0xdf27c70c8198c9fE119C47A28e6Ea6931386a44C` |
+| Public CPMM router | `0x0DcAa92F7eb60B373c6D3970638B9A00136922E8` |
 
 Post-deployment checks confirmed the confidential and public factory bindings
 to the fixed fee vault, the confidential factory binding to the best-execution
