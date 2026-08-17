@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Interface } from "ethers";
 
 import {
   FundedRecoveryJournal,
@@ -18,6 +19,8 @@ const OWNER = `0x${"11".repeat(20)}`;
 const RESOURCE = `0x${"22".repeat(20)}`;
 const TX1 = `0x${"33".repeat(32)}`;
 const TX2 = `0x${"44".repeat(32)}`;
+const TOKEN0 = `0x${"88".repeat(20)}`;
+const TOKEN1 = `0x${"99".repeat(20)}`;
 const DEPLOYMENT = Object.freeze({
   recordPath: `deployments/coti-testnet-${COMMIT}.json`,
   recordSha256: "b".repeat(64),
@@ -61,9 +64,18 @@ describe("funded recovery journal", function () {
     expect((error as Error).message).to.contain(message);
   }
 
+  function recordBroadcast(
+    journal: FundedRecoveryJournal,
+    label: string,
+    hash: string,
+  ): void {
+    journal.recordSubmission(label);
+    journal.recordBroadcast(label, hash);
+  }
+
   it("persists only public recovery evidence and resumes the same identity", function () {
     const journal = open();
-    journal.recordBroadcast("pool creation", TX1);
+    recordBroadcast(journal, "pool creation", TX1);
     journal.recordTransaction(TX1, "mined-success", 123);
     journal.recordResource({
       id: "pool-30",
@@ -92,7 +104,7 @@ describe("funded recovery journal", function () {
 
   it("resumes an awaiting run and resets a terminal fully recovered run", function () {
     const awaiting = open();
-    awaiting.recordBroadcast("pool creation", TX1);
+    recordBroadcast(awaiting, "pool creation", TX1);
     awaiting.recordTransaction(TX1, "mined-success", 123);
     awaiting.recordResource({
       id: "pool-30",
@@ -116,8 +128,8 @@ describe("funded recovery journal", function () {
 
   it("reconciles known receipts and retains absent broadcasts as uncertain", async function () {
     const journal = open();
-    journal.recordBroadcast("known", TX1);
-    journal.recordBroadcast("unknown", TX2);
+    recordBroadcast(journal, "known", TX1);
+    recordBroadcast(journal, "unknown", TX2);
 
     const unresolved = await journal.reconcileTransactions({
       async getTransactionReceipt(hash) {
@@ -163,9 +175,64 @@ describe("funded recovery journal", function () {
     expect(open).to.throw("invalid resource");
   });
 
+  it("persists a hashless submission marker and blocks automatic resume", function () {
+    const journal = open();
+    journal.recordSubmission("uncertain send");
+    expect(journal.pendingSubmissions).to.have.length(1);
+    expect(open).to.throw("uncertain hashless submission");
+  });
+
+  it("requires a durable marker before recording a broadcast", function () {
+    const journal = open();
+    expect(() => journal.recordBroadcast("unmarked", TX1)).to.throw(
+      "without a pending submission marker",
+    );
+    recordBroadcast(journal, "marked", TX1);
+    expect(journal.pendingSubmissions).to.have.length(0);
+  });
+
+  it("rejects reusing a broadcast hash for another operation", function () {
+    const journal = open();
+    recordBroadcast(journal, "first operation", TX1);
+    journal.recordSubmission("second operation");
+
+    expect(() => journal.recordBroadcast("second operation", TX1)).to.throw(
+      "belongs to a different operation",
+    );
+    expect(journal.pendingSubmissions).to.have.length(1);
+    expect(journal.pendingSubmissions[0]?.label).to.equal("second operation");
+    expect(journal.transactions).to.deep.equal([{
+      label: "first operation",
+      hash: TX1,
+      status: "broadcast",
+    }]);
+
+    journal.recordSubmission("first operation");
+    expect(() => journal.recordBroadcast("first operation", TX1)).not.to.throw();
+    expect(journal.pendingSubmissions.map(({ label }) => label)).to.deep.equal([
+      "second operation",
+    ]);
+  });
+
+  it("binds observed mined transaction evidence to its operation label", function () {
+    const journal = open();
+    journal.recordObservedMinedTransaction("first operation", TX1, 123);
+
+    expect(() => journal.recordObservedMinedTransaction(
+      "second operation",
+      TX1,
+      123,
+    )).to.throw("conflicts with the journal");
+    expect(() => journal.recordObservedMinedTransaction(
+      "first operation",
+      TX1,
+      123,
+    )).not.to.throw();
+  });
+
   it("accepts only an owner-created direct deployment bound to the journal chain", async function () {
     const journal = open();
-    journal.recordBroadcast("probe deployment", TX1);
+    recordBroadcast(journal, "probe deployment", TX1);
     journal.recordTransaction(TX1, "mined-success", 123);
     journal.recordResource({
       id: "probe",
@@ -208,16 +275,29 @@ describe("funded recovery journal", function () {
   it("requires factory-created resources to be identified by the bound creator's receipt log", async function () {
     const factory = `0x${"66".repeat(20)}`;
     const unrelatedEmitter = `0x${"77".repeat(20)}`;
-    const encodedResource = `0x${"00".repeat(12)}${RESOURCE.slice(2)}`;
+    const poolFactoryInterface = new Interface([
+      "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
+    ]);
+    const encodedEvent = poolFactoryInterface.encodeEventLog(
+      poolFactoryInterface.getEvent("PoolCreated")!,
+      [TOKEN0, TOKEN1, 18, 6, 30, RESOURCE],
+    );
     const journal = open();
-    journal.recordBroadcast("pool creation", TX1);
+    recordBroadcast(journal, "pool creation", TX1);
     journal.recordTransaction(TX1, "mined-success", 123);
     journal.recordResource({
       id: "pool-30",
       kind: "confidential-pool",
       address: RESOURCE,
       creationTransactionHash: TX1,
-      metadata: { factoryAddress: factory, feeBps: 30 },
+      metadata: {
+        factoryAddress: factory,
+        token0Address: TOKEN0,
+        token1Address: TOKEN1,
+        decimals0: 18,
+        decimals1: 6,
+        feeBps: 30,
+      },
     });
     const provider = {
       async getCode() { return "0x6000"; },
@@ -229,7 +309,7 @@ describe("funded recovery journal", function () {
           status: 1,
           blockNumber: 123,
           contractAddress: null,
-          logs: [{ address: factory, topics: [TX2], data: encodedResource }],
+          logs: [{ address: factory, topics: encodedEvent.topics, data: encodedEvent.data }],
         };
       },
     };
@@ -242,10 +322,10 @@ describe("funded recovery journal", function () {
           status: 1,
           blockNumber: 123,
           contractAddress: null,
-          logs: [{ address: unrelatedEmitter, topics: [TX2], data: encodedResource }],
+          logs: [{ address: unrelatedEmitter, topics: encodedEvent.topics, data: encodedEvent.data }],
         };
       },
-    }), "receipt does not identify the resource");
+    }), "pool creation event is missing or ambiguous");
 
     await expectRejected(verifyRecoveryResourceCreation(journal, journal.resources[0], {
       ...provider,
@@ -257,9 +337,38 @@ describe("funded recovery journal", function () {
           status: 1,
           blockNumber: 123,
           contractAddress: null,
-          logs: [{ address: unrelatedEmitter, topics: [TX2], data: encodedResource }],
+          logs: [{ address: unrelatedEmitter, topics: encodedEvent.topics, data: encodedEvent.data }],
         };
       },
-    }), "created by an unbound contract");
+    }), "pool creator is not the bound factory");
+
+    await expectRejected(verifyRecoveryResourceCreation(journal, journal.resources[0], {
+      ...provider,
+      async getTransactionReceipt() {
+        return {
+          status: 1,
+          blockNumber: 123,
+          contractAddress: null,
+          logs: [{
+            address: factory,
+            topics: [TX2],
+            data: `0x${"00".repeat(12)}${RESOURCE.slice(2)}`,
+          }],
+        };
+      },
+    }), "pool creation event is missing or ambiguous");
+
+    await expectRejected(verifyRecoveryResourceCreation(journal, journal.resources[0], {
+      ...provider,
+      async getTransactionReceipt() {
+        const log = { address: factory, topics: encodedEvent.topics, data: encodedEvent.data };
+        return {
+          status: 1,
+          blockNumber: 123,
+          contractAddress: null,
+          logs: [log, log],
+        };
+      },
+    }), "pool creation event is missing or ambiguous");
   });
 });

@@ -20,6 +20,7 @@ import {
   transactionHashFromError,
   UnknownBroadcastOutcomeError,
 } from "./testnet-transaction-evidence";
+import { trustedGitExecutable } from "./trusted-git";
 
 const execFileAsync = promisify(execFile);
 
@@ -170,9 +171,10 @@ async function deployAndReport<T extends BaseContract>(
 }
 
 async function requireCleanSourceCommit(): Promise<string> {
+  const git = trustedGitExecutable();
   const [head, status] = await Promise.all([
-    execFileAsync("git", ["rev-parse", "--verify", "HEAD"]),
-    execFileAsync("git", ["status", "--porcelain=v1", "--untracked-files=all"]),
+    execFileAsync(git, ["rev-parse", "--verify", "HEAD"]),
+    execFileAsync(git, ["status", "--porcelain=v1", "--untracked-files=all"]),
   ]);
   const commit = head.stdout.trim();
   if (!/^[0-9a-f]{40}$/i.test(commit)) {

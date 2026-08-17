@@ -240,7 +240,7 @@ function reserveOutForExactQuote(
 
 async function submit(
   label: string,
-  operation: Promise<{ hash: string; wait(): Promise<TransactionReceipt | null> }>,
+  operation: () => Promise<{ hash: string; wait(): Promise<TransactionReceipt | null> }>,
 ): Promise<Submitted> {
   stage = label;
   const started = Date.now();
@@ -248,14 +248,17 @@ async function submit(
   try {
     evidence = await requireMinedSuccess(
       label,
-      () => operation,
+      operation,
       (hash) => ethers.provider.getTransactionReceipt(hash),
       (hash) => journal().recordBroadcast(label, hash),
+      () => journal().recordSubmission(label),
     );
   } catch (error) {
     const hash = transactionHashFromError(error);
     if (hash) {
-      journal().recordBroadcast(label, hash);
+      if (!journal().transactions.some((transaction) =>
+        transaction.hash.toLowerCase() === hash.toLowerCase()
+      )) journal().recordBroadcast(label, hash);
       journal().recordTransaction(
         hash,
         error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
@@ -283,12 +286,12 @@ async function deployContract(
   let contract: any;
   const transaction = await submit(
     `${name} deployment`,
-    (async () => {
+    async () => {
       contract = await factory.deploy(...args, { gasLimit });
       const deploymentTx = contract.deploymentTransaction();
       if (!deploymentTx) throw new Error(`${name} deployment transaction unavailable`);
       return deploymentTx;
-    })(),
+    },
   );
   if (!contract) {
     throw new Error(`${name} deployment mined without a contract handle; do not retry automatically`);
@@ -308,6 +311,7 @@ async function expectFailure(
     operation,
     (hash) => ethers.provider.getTransactionReceipt(hash),
     (hash) => journal().recordBroadcast(label, hash),
+    () => journal().recordSubmission(label),
   );
   journal().recordTransaction(evidence.transactionHash, "mined-failure", evidence.receipt.blockNumber);
   console.log(`${label}: rejected onchain tx=${evidence.transactionHash}`);
@@ -356,7 +360,7 @@ async function setExactAllowance(
     const zero = await wallet.encryptValue256(0n, tokenAddress, selector);
     await submit(
       `${label} reset`,
-      token.approve(spender, zero, { gasLimit: CALL_GAS_LIMIT }),
+      () => token.approve(spender, zero, { gasLimit: CALL_GAS_LIMIT }),
     );
   }
   if (amount !== 0n) {
@@ -367,7 +371,7 @@ async function setExactAllowance(
     );
     await submit(
       label,
-      token.approve(spender, encryptedAmount, { gasLimit: CALL_GAS_LIMIT }),
+      () => token.approve(spender, encryptedAmount, { gasLimit: CALL_GAS_LIMIT }),
     );
   }
 }
@@ -511,7 +515,7 @@ async function createPool(
 ): Promise<PoolContext> {
   const creation = await submit(
     `create canonical ${feeBps} bps pool`,
-    factory.createPool(
+    () => factory.createPool(
       tokenA,
       tokenB,
       decimalsA,
@@ -541,6 +545,8 @@ async function createPool(
       factoryAddress: ethersLibrary.getAddress(String(factory.target)),
       token0Address: context.token0Address,
       token1Address: context.token1Address,
+      decimals0: context.token0Decimals,
+      decimals1: context.token1Decimals,
       feeBps,
     },
   });
@@ -600,7 +606,7 @@ async function initializePool(
   ]);
   await submit(
     `initialize canonical ${context.feeBps} bps pool`,
-    context.pool.addLiquidity(
+    () => context.pool.addLiquidity(
       input0,
       input1,
       minimum,
@@ -651,7 +657,7 @@ async function removeAllLiquidity(
   ]);
   await submit(
     `full cleanup exit for ${context.feeBps} bps pool`,
-    context.pool.removeLiquidity(
+    () => context.pool.removeLiquidity(
       encryptedShares,
       encryptedMinimum0,
       encryptedMinimum1,
@@ -799,7 +805,7 @@ async function requestBestQuote(
   ]);
   const transaction = await submit(
     label,
-    router.requestBestQuoteExactInput(
+    () => router.requestBestQuoteExactInput(
       tokenIn,
       tokenOut,
       input,
@@ -998,7 +1004,7 @@ async function swapWithRollbackProof(
   );
   const transaction = await submit(
     label,
-    router.swapBestExactInput(
+    () => router.swapBestExactInput(
       tokenIn,
       tokenOut,
       input,
@@ -1251,7 +1257,7 @@ async function main(): Promise<void> {
   const factory = factoryDeployment.contract;
   await submit(
     "bind disposable confidential fee vault",
-    feeVaultDeployment.contract.setConfidentialFactory(factoryDeployment.address, {
+    () => feeVaultDeployment.contract.setConfidentialFactory(factoryDeployment.address, {
       gasLimit: 500_000n,
     }),
   );
@@ -1263,7 +1269,7 @@ async function main(): Promise<void> {
   );
   await submit(
     "bind disposable best-execution router",
-    factory.setBestExecutionRouter(routerDeployment.address, {
+    () => factory.setBestExecutionRouter(routerDeployment.address, {
       gasLimit: 500_000n,
     }),
   );

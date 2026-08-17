@@ -292,6 +292,53 @@ const LAUNCHPAD_MIGRATION_METADATA_FIELDS = Object.freeze([
   "lockId",
   "unlockTime",
 ]);
+const CONFIDENTIAL_BEST_EXECUTION_ROUTER_POLICY_FIELDS = Object.freeze([
+  "expectedChainId",
+  "expectedFactory",
+  "expectedFactoryRuntimeCodehash",
+  "expectedRouter",
+  "expectedRouterRuntimeCodehash",
+  "expectedFactoryProtocolVersion",
+  "expectedRouterProtocolVersion",
+]);
+const CONFIDENTIAL_BEST_EXECUTION_RESULT_EXPECTATION_FIELDS = Object.freeze([
+  "operation",
+  "caller",
+  "requestId",
+  "tokenIn",
+  "tokenOut",
+  "transactionHash",
+  "transactionData",
+]);
+const CONFIDENTIAL_POOL_POLICY_FIELDS = Object.freeze([
+  "expectedChainId",
+  "expectedFactory",
+  "expectedFeeVault",
+  "expectedProtocolVersion",
+  "expectedLPTokenFactory",
+  "expectedLPTokenFactoryRuntimeCodehash",
+]);
+const PUBLIC_POOL_POLICY_FIELDS = Object.freeze([
+  "expectedChainId",
+  "expectedFactory",
+  "expectedFeeVault",
+  "expectedProtocolVersion",
+]);
+const LAUNCHPAD_MIGRATION_EXPECTATION_FIELDS = Object.freeze([
+  "transactionHash",
+  "metadata",
+]);
+const LAUNCHPAD_MIGRATION_POLICY_FIELDS = Object.freeze([
+  "expectedChainId",
+  "expectedFactory",
+  "expectedFactoryRuntimeCodehash",
+  "expectedMigrator",
+  "expectedMigratorRuntimeCodehash",
+  "expectedFeeVault",
+  "expectedFactoryProtocolVersion",
+  "expectedPoolProtocolVersion",
+  "expectedMigratorProtocolVersion",
+]);
 
 /** Returns descriptors only for an exact plain own-data-property schema. */
 const exactOwnDataDescriptors = (
@@ -1091,6 +1138,17 @@ const ownDataValue = (
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 };
 
+const snapshotExactOwnRecord = <T extends object>(
+  value: unknown,
+  fields: readonly string[],
+): T | undefined => {
+  const descriptors = exactOwnDataDescriptors(value, fields);
+  if (!descriptors) return undefined;
+  return Object.freeze(Object.fromEntries(
+    fields.map((field) => [field, ownDataValue(descriptors, field)]),
+  )) as T;
+};
+
 const snapshotFeePolicy = (value: unknown): unknown => {
   const descriptors = exactOwnDataDescriptors(value, FEE_POLICY_FIELDS);
   if (!descriptors) return undefined;
@@ -1351,19 +1409,23 @@ export async function verifyConfidentialBestExecutionRouter(
   policy: ConfidentialBestExecutionRouterVerificationPolicy,
   adapter: ConfidentialBestExecutionRouterVerificationAdapter,
 ): Promise<VerifiedConfidentialBestExecutionRouter> {
+  const policySnapshot = snapshotExactOwnRecord<
+    ConfidentialBestExecutionRouterVerificationPolicy
+  >(policy, CONFIDENTIAL_BEST_EXECUTION_ROUTER_POLICY_FIELDS);
   if (
+    !policySnapshot ||
     !isAddressLike(router) ||
-    !Number.isSafeInteger(policy.expectedChainId) ||
-    policy.expectedChainId <= 0 ||
-    !isAddressLike(policy.expectedFactory) ||
-    !isBytes32(policy.expectedFactoryRuntimeCodehash) ||
-    !isAddressLike(policy.expectedRouter) ||
-    !sameAddress(router, policy.expectedRouter) ||
-    !isBytes32(policy.expectedRouterRuntimeCodehash) ||
-    !Number.isSafeInteger(policy.expectedFactoryProtocolVersion) ||
-    policy.expectedFactoryProtocolVersion <= 0 ||
-    !Number.isSafeInteger(policy.expectedRouterProtocolVersion) ||
-    policy.expectedRouterProtocolVersion <= 0
+    !Number.isSafeInteger(policySnapshot.expectedChainId) ||
+    policySnapshot.expectedChainId <= 0 ||
+    !isAddressLike(policySnapshot.expectedFactory) ||
+    !isBytes32(policySnapshot.expectedFactoryRuntimeCodehash) ||
+    !isAddressLike(policySnapshot.expectedRouter) ||
+    !sameAddress(router, policySnapshot.expectedRouter) ||
+    !isBytes32(policySnapshot.expectedRouterRuntimeCodehash) ||
+    !Number.isSafeInteger(policySnapshot.expectedFactoryProtocolVersion) ||
+    policySnapshot.expectedFactoryProtocolVersion <= 0 ||
+    !Number.isSafeInteger(policySnapshot.expectedRouterProtocolVersion) ||
+    policySnapshot.expectedRouterProtocolVersion <= 0
   ) {
     throw new TypeError("Invalid confidential best-execution verification policy");
   }
@@ -1389,9 +1451,9 @@ export async function verifyConfidentialBestExecutionRouter(
     ] = await Promise.all([
       adapter.readChainId(),
       adapter.getCode(router),
-      adapter.getCode(policy.expectedFactory),
-      adapter.readFactoryProtocolVersion(policy.expectedFactory),
-      adapter.readFactoryBestExecutionRouter(policy.expectedFactory),
+      adapter.getCode(policySnapshot.expectedFactory),
+      adapter.readFactoryProtocolVersion(policySnapshot.expectedFactory),
+      adapter.readFactoryBestExecutionRouter(policySnapshot.expectedFactory),
       adapter.readRouterProtocolVersion(router),
       adapter.readRouterFactory(router),
     ]);
@@ -1407,19 +1469,19 @@ export async function verifyConfidentialBestExecutionRouter(
   const factoryProtocolVersion = toSafeChainNumber(factoryProtocolVersionValue);
   const routerProtocolVersion = toSafeChainNumber(routerProtocolVersionValue);
   if (
-    chainId !== policy.expectedChainId ||
+    chainId !== policySnapshot.expectedChainId ||
     !hasDeployedCode(routerCode) ||
     !hasDeployedCode(factoryCode) ||
     !isBytes32(routerRuntimeCodehash) ||
     !isBytes32(factoryRuntimeCodehash) ||
     routerRuntimeCodehash.toLowerCase() !==
-      policy.expectedRouterRuntimeCodehash.toLowerCase() ||
+      policySnapshot.expectedRouterRuntimeCodehash.toLowerCase() ||
     factoryRuntimeCodehash.toLowerCase() !==
-      policy.expectedFactoryRuntimeCodehash.toLowerCase() ||
-    factoryProtocolVersion !== policy.expectedFactoryProtocolVersion ||
-    routerProtocolVersion !== policy.expectedRouterProtocolVersion ||
+      policySnapshot.expectedFactoryRuntimeCodehash.toLowerCase() ||
+    factoryProtocolVersion !== policySnapshot.expectedFactoryProtocolVersion ||
+    routerProtocolVersion !== policySnapshot.expectedRouterProtocolVersion ||
     !sameAddress(configuredRouter, router) ||
-    !sameAddress(routerFactory, policy.expectedFactory)
+    !sameAddress(routerFactory, policySnapshot.expectedFactory)
   ) {
     throw new TypeError("Confidential best-execution router verification failed");
   }
@@ -1428,7 +1490,7 @@ export async function verifyConfidentialBestExecutionRouter(
     chainId,
     router,
     routerRuntimeCodehash,
-    factory: policy.expectedFactory,
+    factory: policySnapshot.expectedFactory,
     factoryRuntimeCodehash,
     factoryProtocolVersion,
     routerProtocolVersion,
@@ -1449,13 +1511,19 @@ export async function decryptConfidentialBestExecutionResult(
   if (!verifiedConfidentialBestExecutionRouters.has(router)) {
     throw new TypeError("Unverified confidential best-execution router");
   }
+  const expectationSnapshot = snapshotExactOwnRecord<
+    ConfidentialBestExecutionResultExpectation
+  >(expectation, CONFIDENTIAL_BEST_EXECUTION_RESULT_EXPECTATION_FIELDS);
+  if (!expectationSnapshot) {
+    throw new TypeError("Invalid confidential best-execution result expectation");
+  }
 
   let transaction: ConfidentialBestExecutionTransactionEvidence | null;
   let receipt: ConfidentialBestExecutionReceiptEvidence | null;
   try {
     [transaction, receipt] = await Promise.all([
-      adapter.getTransaction(expectation.transactionHash),
-      adapter.getTransactionReceipt(expectation.transactionHash),
+      adapter.getTransaction(expectationSnapshot.transactionHash),
+      adapter.getTransactionReceipt(expectationSnapshot.transactionHash),
     ]);
   } catch (error) {
     throw new TypeError("Unable to fetch confidential best-execution transaction evidence", {
@@ -1467,7 +1535,7 @@ export async function decryptConfidentialBestExecutionResult(
   }
   const decoded = decodeConfidentialBestExecutionResultEvidence(
     router,
-    expectation,
+    expectationSnapshot,
     transaction,
     receipt,
   );
@@ -1479,8 +1547,8 @@ export async function decryptConfidentialBestExecutionResult(
       adapter.readChainId(),
       adapter.getCanonicalPool(
         router.factory,
-        expectation.tokenIn,
-        expectation.tokenOut,
+        expectationSnapshot.tokenIn,
+        expectationSnapshot.tokenOut,
         decoded.selectedFeeBps,
       ),
     ]);
@@ -1514,21 +1582,26 @@ export async function verifyConfidentialPoolDiscovery(
   adapter: ConfidentialPoolVerificationAdapter,
 ): Promise<VerifiedConfidentialPoolDiscovery> {
   const discoverySnapshot = snapshotConfidentialPoolDiscovery(value);
+  const policySnapshot = snapshotExactOwnRecord<ConfidentialPoolVerificationPolicy>(
+    policy,
+    CONFIDENTIAL_POOL_POLICY_FIELDS,
+  );
   if (!isConfidentialPoolDiscovery(discoverySnapshot)) {
     throw new TypeError("Invalid confidential pool discovery shape");
   }
   const discovery = discoverySnapshot;
   if (
-    !Number.isSafeInteger(policy.expectedChainId) ||
-    policy.expectedChainId <= 0 ||
-    !isAddressLike(policy.expectedFactory) ||
-    !isAddressLike(policy.expectedFeeVault) ||
-    !isAddressLike(policy.expectedLPTokenFactory) ||
-    !/^0x[0-9a-f]{64}$/iu.test(policy.expectedLPTokenFactoryRuntimeCodehash) ||
-    !Number.isSafeInteger(policy.expectedProtocolVersion) ||
-    policy.expectedProtocolVersion <= 0 ||
-    discovery.protocolVersion !== policy.expectedProtocolVersion ||
-    !sameAddress(discovery.feeVault, policy.expectedFeeVault)
+    !policySnapshot ||
+    !Number.isSafeInteger(policySnapshot.expectedChainId) ||
+    policySnapshot.expectedChainId <= 0 ||
+    !isAddressLike(policySnapshot.expectedFactory) ||
+    !isAddressLike(policySnapshot.expectedFeeVault) ||
+    !isAddressLike(policySnapshot.expectedLPTokenFactory) ||
+    !/^0x[0-9a-f]{64}$/iu.test(policySnapshot.expectedLPTokenFactoryRuntimeCodehash) ||
+    !Number.isSafeInteger(policySnapshot.expectedProtocolVersion) ||
+    policySnapshot.expectedProtocolVersion <= 0 ||
+    discovery.protocolVersion !== policySnapshot.expectedProtocolVersion ||
+    !sameAddress(discovery.feeVault, policySnapshot.expectedFeeVault)
   ) {
     throw new TypeError("Confidential pool discovery violates verification policy");
   }
@@ -1563,25 +1636,25 @@ export async function verifyConfidentialPoolDiscovery(
       poolState,
     ] = await Promise.all([
       adapter.readChainId(),
-      adapter.getCode(policy.expectedFactory),
+      adapter.getCode(policySnapshot.expectedFactory),
       adapter.getCode(discovery.pool),
-      adapter.readFactoryProtocolVersion(policy.expectedFactory),
-      adapter.readFactoryLPTokenFactory(policy.expectedFactory),
-      adapter.readFactoryLPTokenFactoryRuntimeCodehash(policy.expectedFactory),
-      adapter.getCode(policy.expectedLPTokenFactory),
-      adapter.isFactoryPrivateTokenApproved(policy.expectedFactory, discovery.token0),
-      adapter.isFactoryPrivateTokenApproved(policy.expectedFactory, discovery.token1),
-      adapter.isFactoryPool(policy.expectedFactory, discovery.pool),
-      adapter.getCanonicalPool(policy.expectedFactory, discovery),
+      adapter.readFactoryProtocolVersion(policySnapshot.expectedFactory),
+      adapter.readFactoryLPTokenFactory(policySnapshot.expectedFactory),
+      adapter.readFactoryLPTokenFactoryRuntimeCodehash(policySnapshot.expectedFactory),
+      adapter.getCode(policySnapshot.expectedLPTokenFactory),
+      adapter.isFactoryPrivateTokenApproved(policySnapshot.expectedFactory, discovery.token0),
+      adapter.isFactoryPrivateTokenApproved(policySnapshot.expectedFactory, discovery.token1),
+      adapter.isFactoryPool(policySnapshot.expectedFactory, discovery.pool),
+      adapter.getCanonicalPool(policySnapshot.expectedFactory, discovery),
       adapter.readPoolState(discovery.pool),
     ]);
     [lpTokenCode, lpTokenIssued] = await Promise.all([
       adapter.getCode(poolState.lpToken),
       adapter.isLPTokenIssued(
-        policy.expectedLPTokenFactory,
+        policySnapshot.expectedLPTokenFactory,
         discovery.pool,
         poolState.lpToken,
-        policy.expectedFactory,
+        policySnapshot.expectedFactory,
       ),
     ]);
   } catch (error) {
@@ -1597,19 +1670,19 @@ export async function verifyConfidentialPoolDiscovery(
   const feeBps = toSafeChainNumber(poolState.feeBps);
 
   if (
-    chainId !== policy.expectedChainId ||
+    chainId !== policySnapshot.expectedChainId ||
     !hasDeployedCode(factoryCode) ||
     !hasDeployedCode(poolCode) ||
-    !sameAddress(factoryLPTokenFactory, policy.expectedLPTokenFactory) ||
+    !sameAddress(factoryLPTokenFactory, policySnapshot.expectedLPTokenFactory) ||
     factoryLPTokenFactoryRuntimeCodehash.toLowerCase() !==
-      policy.expectedLPTokenFactoryRuntimeCodehash.toLowerCase() ||
+      policySnapshot.expectedLPTokenFactoryRuntimeCodehash.toLowerCase() ||
     !hasDeployedCode(lpTokenFactoryCode) ||
     adapter.hashRuntimeCode(lpTokenFactoryCode).toLowerCase() !==
-      policy.expectedLPTokenFactoryRuntimeCodehash.toLowerCase() ||
+      policySnapshot.expectedLPTokenFactoryRuntimeCodehash.toLowerCase() ||
     !token0Approved ||
     !token1Approved ||
     !factoryRecognizesPool ||
-    factoryVersion !== policy.expectedProtocolVersion ||
+    factoryVersion !== policySnapshot.expectedProtocolVersion ||
     poolVersion !== discovery.protocolVersion ||
     privacyMode !== discovery.privacyMode ||
     !sameAddress(canonicalPool, discovery.pool) ||
@@ -1619,7 +1692,7 @@ export async function verifyConfidentialPoolDiscovery(
     token1Decimals !== discovery.token1Decimals ||
     feeBps !== discovery.feeBps ||
     !sameAddress(poolState.feeVault, discovery.feeVault) ||
-    !sameAddress(poolState.feeVault, policy.expectedFeeVault) ||
+    !sameAddress(poolState.feeVault, policySnapshot.expectedFeeVault) ||
     !isAddressLike(poolState.lpToken) ||
     !hasDeployedCode(lpTokenCode) ||
     !lpTokenIssued
@@ -1631,7 +1704,7 @@ export async function verifyConfidentialPoolDiscovery(
     chainId,
     disclosureSchemaVersion: discovery.disclosureSchemaVersion,
     protocolVersion: discovery.protocolVersion,
-    factory: policy.expectedFactory,
+    factory: policySnapshot.expectedFactory,
     pool: discovery.pool,
     token0: discovery.token0,
     token1: discovery.token1,
@@ -1691,19 +1764,24 @@ export async function verifyPublicPoolDiscovery(
   adapter: PublicPoolVerificationAdapter,
 ): Promise<VerifiedPublicPoolDiscovery> {
   const discoverySnapshot = snapshotPublicPoolDiscovery(value);
+  const policySnapshot = snapshotExactOwnRecord<PublicPoolVerificationPolicy>(
+    policy,
+    PUBLIC_POOL_POLICY_FIELDS,
+  );
   if (!isPublicPoolDiscovery(discoverySnapshot)) {
     throw new TypeError("Invalid public pool discovery shape");
   }
   const discovery = discoverySnapshot;
   if (
-    !Number.isSafeInteger(policy.expectedChainId) ||
-    policy.expectedChainId <= 0 ||
-    !isAddressLike(policy.expectedFactory) ||
-    !isAddressLike(policy.expectedFeeVault) ||
-    !Number.isSafeInteger(policy.expectedProtocolVersion) ||
-    policy.expectedProtocolVersion <= 0 ||
-    discovery.protocolVersion !== policy.expectedProtocolVersion ||
-    !sameAddress(discovery.feeVault, policy.expectedFeeVault)
+    !policySnapshot ||
+    !Number.isSafeInteger(policySnapshot.expectedChainId) ||
+    policySnapshot.expectedChainId <= 0 ||
+    !isAddressLike(policySnapshot.expectedFactory) ||
+    !isAddressLike(policySnapshot.expectedFeeVault) ||
+    !Number.isSafeInteger(policySnapshot.expectedProtocolVersion) ||
+    policySnapshot.expectedProtocolVersion <= 0 ||
+    discovery.protocolVersion !== policySnapshot.expectedProtocolVersion ||
+    !sameAddress(discovery.feeVault, policySnapshot.expectedFeeVault)
   ) {
     throw new TypeError("Public pool discovery violates verification policy");
   }
@@ -1726,11 +1804,11 @@ export async function verifyPublicPoolDiscovery(
       poolState,
     ] = await Promise.all([
       adapter.readChainId(),
-      adapter.getCode(policy.expectedFactory),
+      adapter.getCode(policySnapshot.expectedFactory),
       adapter.getCode(discovery.pool),
-      adapter.readFactoryProtocolVersion(policy.expectedFactory),
-      adapter.isFactoryPool(policy.expectedFactory, discovery.pool),
-      adapter.getCanonicalPool(policy.expectedFactory, discovery),
+      adapter.readFactoryProtocolVersion(policySnapshot.expectedFactory),
+      adapter.isFactoryPool(policySnapshot.expectedFactory, discovery.pool),
+      adapter.getCanonicalPool(policySnapshot.expectedFactory, discovery),
       adapter.readPoolState(discovery.pool),
     ]);
   } catch (error) {
@@ -1746,11 +1824,11 @@ export async function verifyPublicPoolDiscovery(
   const feeBps = toSafeChainNumber(poolState.feeBps);
 
   if (
-    chainId !== policy.expectedChainId ||
+    chainId !== policySnapshot.expectedChainId ||
     !hasDeployedCode(factoryCode) ||
     !hasDeployedCode(poolCode) ||
     !factoryRecognizesPool ||
-    factoryVersion !== policy.expectedProtocolVersion ||
+    factoryVersion !== policySnapshot.expectedProtocolVersion ||
     poolVersion !== discovery.protocolVersion ||
     privacyMode !== discovery.privacyMode ||
     !sameAddress(canonicalPool, discovery.pool) ||
@@ -1760,7 +1838,7 @@ export async function verifyPublicPoolDiscovery(
     token1Decimals !== discovery.token1Decimals ||
     feeBps !== discovery.feeBps ||
     !sameAddress(poolState.feeVault, discovery.feeVault) ||
-    !sameAddress(poolState.feeVault, policy.expectedFeeVault)
+    !sameAddress(poolState.feeVault, policySnapshot.expectedFeeVault)
   ) {
     throw new TypeError("Public pool provenance verification failed");
   }
@@ -1769,7 +1847,7 @@ export async function verifyPublicPoolDiscovery(
     chainId,
     disclosureSchemaVersion: discovery.disclosureSchemaVersion,
     protocolVersion: discovery.protocolVersion,
-    factory: policy.expectedFactory,
+    factory: policySnapshot.expectedFactory,
     pool: discovery.pool,
     token0: discovery.token0,
     token1: discovery.token1,
@@ -1928,32 +2006,35 @@ export async function verifyLaunchpadMigrationMetadata(
   policy: LaunchpadMigrationVerificationPolicy,
   adapter: LaunchpadMigrationVerificationAdapter,
 ): Promise<VerifiedLaunchpadMigrationMetadata> {
-  const expectationDescriptors = exactOwnDataDescriptors(
+  const expectationSnapshot = snapshotExactOwnRecord<LaunchpadMigrationEvidenceExpectation>(
     expectation,
-    ["transactionHash", "metadata"],
+    LAUNCHPAD_MIGRATION_EXPECTATION_FIELDS,
   );
-  const transactionHash = expectationDescriptors
-    ? ownDataValue(expectationDescriptors, "transactionHash")
-    : undefined;
-  const metadataSnapshot = expectationDescriptors
-    ? snapshotLaunchpadMigrationMetadata(ownDataValue(expectationDescriptors, "metadata"))
+  const policySnapshot = snapshotExactOwnRecord<LaunchpadMigrationVerificationPolicy>(
+    policy,
+    LAUNCHPAD_MIGRATION_POLICY_FIELDS,
+  );
+  const transactionHash = expectationSnapshot?.transactionHash;
+  const metadataSnapshot = expectationSnapshot
+    ? snapshotLaunchpadMigrationMetadata(expectationSnapshot.metadata)
     : undefined;
   if (
     !isBytes32(transactionHash) ||
     !isLaunchpadMigrationMetadata(metadataSnapshot) ||
-    !Number.isSafeInteger(policy.expectedChainId) ||
-    policy.expectedChainId <= 0 ||
-    !isAddressLike(policy.expectedFactory) ||
-    !isBytes32(policy.expectedFactoryRuntimeCodehash) ||
-    !isAddressLike(policy.expectedMigrator) ||
-    !isBytes32(policy.expectedMigratorRuntimeCodehash) ||
-    !isAddressLike(policy.expectedFeeVault) ||
-    !Number.isSafeInteger(policy.expectedFactoryProtocolVersion) ||
-    policy.expectedFactoryProtocolVersion <= 0 ||
-    !Number.isSafeInteger(policy.expectedPoolProtocolVersion) ||
-    policy.expectedPoolProtocolVersion <= 0 ||
-    !Number.isSafeInteger(policy.expectedMigratorProtocolVersion) ||
-    policy.expectedMigratorProtocolVersion <= 0
+    !policySnapshot ||
+    !Number.isSafeInteger(policySnapshot.expectedChainId) ||
+    policySnapshot.expectedChainId <= 0 ||
+    !isAddressLike(policySnapshot.expectedFactory) ||
+    !isBytes32(policySnapshot.expectedFactoryRuntimeCodehash) ||
+    !isAddressLike(policySnapshot.expectedMigrator) ||
+    !isBytes32(policySnapshot.expectedMigratorRuntimeCodehash) ||
+    !isAddressLike(policySnapshot.expectedFeeVault) ||
+    !Number.isSafeInteger(policySnapshot.expectedFactoryProtocolVersion) ||
+    policySnapshot.expectedFactoryProtocolVersion <= 0 ||
+    !Number.isSafeInteger(policySnapshot.expectedPoolProtocolVersion) ||
+    policySnapshot.expectedPoolProtocolVersion <= 0 ||
+    !Number.isSafeInteger(policySnapshot.expectedMigratorProtocolVersion) ||
+    policySnapshot.expectedMigratorProtocolVersion <= 0
   ) {
     throw new TypeError("Invalid launchpad migration verification input");
   }
@@ -1989,13 +2070,13 @@ export async function verifyLaunchpadMigrationMetadata(
       adapter.readChainId(),
       adapter.getTransaction(transactionHash),
       adapter.getTransactionReceipt(transactionHash),
-      adapter.getCode(policy.expectedFactory),
-      adapter.getCode(policy.expectedMigrator),
-      adapter.readFactoryProtocolVersion(policy.expectedFactory),
-      adapter.readFactoryBootstrapAdapter(policy.expectedFactory),
-      adapter.isFactoryPool(policy.expectedFactory, metadata.pool),
-      adapter.readMigratorProtocolVersion(policy.expectedMigrator),
-      adapter.readMigratorFactory(policy.expectedMigrator),
+      adapter.getCode(policySnapshot.expectedFactory),
+      adapter.getCode(policySnapshot.expectedMigrator),
+      adapter.readFactoryProtocolVersion(policySnapshot.expectedFactory),
+      adapter.readFactoryBootstrapAdapter(policySnapshot.expectedFactory),
+      adapter.isFactoryPool(policySnapshot.expectedFactory, metadata.pool),
+      adapter.readMigratorProtocolVersion(policySnapshot.expectedMigrator),
+      adapter.readMigratorFactory(policySnapshot.expectedMigrator),
       adapter.readPoolState(metadata.pool),
     ]);
     factoryRuntimeCodehash = adapter.hashRuntimeCode(factoryCode);
@@ -2017,27 +2098,27 @@ export async function verifyLaunchpadMigrationMetadata(
   const token1Decimals = toSafeChainNumber(poolState.token1Decimals);
   const feeBps = toSafeChainNumber(poolState.feeBps);
   if (
-    chainId !== policy.expectedChainId ||
-    transactionChainId !== policy.expectedChainId ||
+    chainId !== policySnapshot.expectedChainId ||
+    transactionChainId !== policySnapshot.expectedChainId ||
     !hasDeployedCode(factoryCode) ||
     !hasDeployedCode(migratorCode) ||
-    factoryRuntimeCodehash.toLowerCase() !== policy.expectedFactoryRuntimeCodehash.toLowerCase() ||
-    migratorRuntimeCodehash.toLowerCase() !== policy.expectedMigratorRuntimeCodehash.toLowerCase() ||
-    factoryVersion !== policy.expectedFactoryProtocolVersion ||
-    migratorVersion !== policy.expectedMigratorProtocolVersion ||
-    poolVersion !== policy.expectedPoolProtocolVersion ||
+    factoryRuntimeCodehash.toLowerCase() !== policySnapshot.expectedFactoryRuntimeCodehash.toLowerCase() ||
+    migratorRuntimeCodehash.toLowerCase() !== policySnapshot.expectedMigratorRuntimeCodehash.toLowerCase() ||
+    factoryVersion !== policySnapshot.expectedFactoryProtocolVersion ||
+    migratorVersion !== policySnapshot.expectedMigratorProtocolVersion ||
+    poolVersion !== policySnapshot.expectedPoolProtocolVersion ||
     privacyMode !== PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP ||
-    !sameAddress(configuredMigrator, policy.expectedMigrator) ||
-    !sameAddress(migratorFactory, policy.expectedFactory) ||
+    !sameAddress(configuredMigrator, policySnapshot.expectedMigrator) ||
+    !sameAddress(migratorFactory, policySnapshot.expectedFactory) ||
     !factoryRecognizesPool ||
-    !sameAddress(poolState.feeVault, policy.expectedFeeVault) ||
+    !sameAddress(poolState.feeVault, policySnapshot.expectedFeeVault) ||
     token0Decimals === undefined ||
     token1Decimals === undefined ||
     feeBps === undefined ||
     !isBytes32(transaction.hash) ||
     transaction.hash.toLowerCase() !== transactionHash.toLowerCase() ||
     !sameAddress(transaction.from, metadata.creator) ||
-    !sameAddress(transaction.to, policy.expectedMigrator) ||
+    !sameAddress(transaction.to, policySnapshot.expectedMigrator) ||
     !isBytes32(receipt.transactionHash) ||
     receipt.transactionHash.toLowerCase() !== transactionHash.toLowerCase() ||
     toSafeChainNumber(receipt.status) !== 1
@@ -2048,7 +2129,7 @@ export async function verifyLaunchpadMigrationMetadata(
   let canonicalPool: string;
   try {
     canonicalPool = await adapter.getCanonicalPool(
-      policy.expectedFactory,
+      policySnapshot.expectedFactory,
       poolState.token0,
       poolState.token1,
       token0Decimals,
@@ -2064,7 +2145,7 @@ export async function verifyLaunchpadMigrationMetadata(
 
   const migrationLogs = matchingLogs(
     receipt.logs,
-    policy.expectedMigrator,
+    policySnapshot.expectedMigrator,
     LAUNCHPAD_MIGRATION_TOPIC,
   );
   if (migrationLogs.length !== 1) {
@@ -2102,7 +2183,7 @@ export async function verifyLaunchpadMigrationMetadata(
 
   const dispositionLogs = matchingLogs(
     receipt.logs,
-    policy.expectedMigrator,
+    policySnapshot.expectedMigrator,
     LAUNCHPAD_LOCK_DISPOSITION_TOPIC,
   );
   if (dispositionLogs.length !== (usesDisposition ? 1 : 0)) {
@@ -2171,8 +2252,8 @@ export async function verifyLaunchpadMigrationMetadata(
     ...metadata,
     chainId,
     transactionHash,
-    factory: policy.expectedFactory,
-    migrator: policy.expectedMigrator,
+    factory: policySnapshot.expectedFactory,
+    migrator: policySnapshot.expectedMigrator,
   }) as VerifiedLaunchpadMigrationMetadata;
   verifiedLaunchpadMigrationMetadata.add(verified);
   return verified;

@@ -128,14 +128,15 @@ const requiredUInt = (name: string, fallback?: number): number => {
 
 const submit = async (
   label: string,
-  transaction: Promise<{ hash: string; wait(): Promise<any> }>,
+  operation: () => Promise<{ hash: string; wait(): Promise<any> }>,
 ): Promise<Submitted> => {
   const started = Date.now();
   const evidence = await requireMinedSuccess(
     label,
-    () => transaction,
+    operation,
     (hash) => hardhatEthers.provider.getTransactionReceipt(hash),
     (hash) => journal().recordBroadcast(label, hash),
+    () => journal().recordSubmission(label),
   );
   journal().recordTransaction(
     evidence.transactionHash,
@@ -157,12 +158,12 @@ const deployFunded = async (
   let contract: any;
   const submitted = await submit(
     label,
-    (async () => {
+    async () => {
       contract = await operation();
       const transaction = contract.deploymentTransaction();
       if (!transaction) throw new Error(`${label} transaction unavailable`);
       return transaction;
-    })(),
+    },
   );
   if (!contract) {
     throw new Error(`${label} mined without a contract handle; do not retry automatically`);
@@ -187,6 +188,7 @@ const expectMinedFailure = async (
     operation,
     (hash) => hardhatEthers.provider.getTransactionReceipt(hash),
     (hash) => journal().recordBroadcast(label, hash),
+    () => journal().recordSubmission(label),
   );
   journal().recordTransaction(
     evidence.transactionHash,
@@ -251,11 +253,12 @@ async function clearPrivateAllowance(
   if (await readPrivateAllowance(token, await wallet.getAddress(), spender, wallet) === 0n) return;
   const selector = token.interface.getFunction("approve")?.selector;
   if (!selector) throw new Error("launchpad recovery approval selector unavailable");
+  const zeroApproval = await wallet.encryptValue256(0n, tokenAddress, selector);
   await submit(
     label,
-    token.approve(
+    () => token.approve(
       spender,
-      await wallet.encryptValue256(0n, tokenAddress, selector),
+      zeroApproval,
       { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },
     ),
   );
@@ -357,13 +360,9 @@ async function recoverLaunchpadResources(): Promise<void> {
         transaction.hash.toLowerCase() === creationTransactionHash.toLowerCase()
       );
       if (!journaledCreation) {
-        recoveryJournal.recordBroadcast(
+        recoveryJournal.recordObservedMinedTransaction(
           "atomic launchpad migration recovery",
           creationTransactionHash,
-        );
-        recoveryJournal.recordTransaction(
-          creationTransactionHash,
-          "mined-success",
           creationReceipt.blockNumber,
         );
       } else if (journaledCreation.status !== "mined-success") {
@@ -448,12 +447,27 @@ async function recoverLaunchpadResources(): Promise<void> {
     if (shares > 0n) {
       const selector = pool.interface.getFunction("removeLiquidity")?.selector;
       if (!selector) throw new Error("launchpad recovery remove-liquidity selector unavailable");
+      const encryptedShares = await recoveryWallet.encryptValue256(
+        shares,
+        poolResource.address,
+        selector,
+      );
+      const encryptedMinimum0 = await recoveryWallet.encryptValue256(
+        1n,
+        poolResource.address,
+        selector,
+      );
+      const encryptedMinimum1 = await recoveryWallet.encryptValue256(
+        1n,
+        poolResource.address,
+        selector,
+      );
       await submit(
         "full disposable launchpad-pool exit",
-        pool.removeLiquidity(
-          await recoveryWallet.encryptValue256(shares, poolResource.address, selector),
-          await recoveryWallet.encryptValue256(1n, poolResource.address, selector),
-          await recoveryWallet.encryptValue256(1n, poolResource.address, selector),
+        () => pool.removeLiquidity(
+          encryptedShares,
+          encryptedMinimum0,
+          encryptedMinimum1,
           BigInt(Math.floor(Date.now() / 1000) + 600),
           { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },
         ),
@@ -658,7 +672,7 @@ async function main(): Promise<void> {
   await verifyDeployedRuntimeArtifact("ConfidentialCPMMFactory", factoryAddress);
   await submit(
     "confidential fee-vault factory binding",
-    feeVault.setConfidentialFactory(factoryAddress, {
+    () => feeVault.setConfidentialFactory(factoryAddress, {
       gasLimit: FEE_VAULT_BIND_GAS_LIMIT,
     }),
   );
@@ -678,7 +692,7 @@ async function main(): Promise<void> {
   await verifyDeployedRuntimeArtifact("ConfidentialLaunchpadMigrator", migratorAddress);
   await submit(
     "launchpad adapter binding",
-    factory.setBootstrapAdapter(migratorAddress, {
+    () => factory.setBootstrapAdapter(migratorAddress, {
       gasLimit: LAUNCHPAD_ADAPTER_BIND_GAS_LIMIT,
     }),
   );
@@ -755,19 +769,19 @@ async function main(): Promise<void> {
   const approval0 = await wallet.encryptValue256(amount0, canonicalToken0, approveSelector0);
   const approval1 = await wallet.encryptValue256(amount1, canonicalToken1, approveSelector1);
   stage = "token0 launchpad approval reset";
-  await submit(stage, token0.approve(migratorAddress, zeroApproval0, {
+  await submit(stage, () => token0.approve(migratorAddress, zeroApproval0, {
     gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
   }));
   stage = "token1 launchpad approval reset";
-  await submit(stage, token1.approve(migratorAddress, zeroApproval1, {
+  await submit(stage, () => token1.approve(migratorAddress, zeroApproval1, {
     gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
   }));
   stage = "token0 launchpad approval";
-  await submit(stage, token0.approve(migratorAddress, approval0, {
+  await submit(stage, () => token0.approve(migratorAddress, approval0, {
     gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
   }));
   stage = "token1 launchpad approval";
-  await submit(stage, token1.approve(migratorAddress, approval1, {
+  await submit(stage, () => token1.approve(migratorAddress, approval1, {
     gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
   }));
 
@@ -907,7 +921,7 @@ async function main(): Promise<void> {
   stage = "atomic launchpad migration";
   const migration = await submit(
     stage,
-    disposition === undefined
+    () => disposition === undefined
       ? migrator.migrate(
           migrationRequest,
           { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },

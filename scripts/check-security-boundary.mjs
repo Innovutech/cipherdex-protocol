@@ -470,9 +470,25 @@ for (const required of [
   "targetPolicy.funded",
   "targetPolicy.environment",
   "runtimeEnvironment.CIPHERDEX_SOURCE_COMMIT = sourceCommit",
+  "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath",
 ]) {
   if (!freshRunnerSource.includes(required)) {
     throw new Error(`Fresh Hardhat runner omits credential-boundary control: ${required}`);
+  }
+}
+for (const path of [
+  "scripts/deploy-testnet.ts",
+  "scripts/funded-deployment-binding.ts",
+  "scripts/funded-suite-evidence.ts",
+  "scripts/testnet-deployment-provenance.ts",
+  "scripts/testnet-quote-call-probe.ts",
+]) {
+  const source = await readFile(path, "utf8");
+  if (!source.includes("trustedGitExecutable")) {
+    throw new Error(`${path}: deployment Git use is not bound to the trusted executable`);
+  }
+  if (/(?:execFileAsync|execFileSync|spawnSync)\(\s*["']git["']/.test(source)) {
+    throw new Error(`${path}: resolves Git through an attacker-controlled search path`);
   }
 }
 if (
@@ -513,8 +529,13 @@ for (const fragment of [
   "getCanonicalPool(",
   "getTransaction(",
   "getTransactionReceipt(",
-  "adapter.getTransaction(expectation.transactionHash)",
-  "adapter.getTransactionReceipt(expectation.transactionHash)",
+  "adapter.getTransaction(expectationSnapshot.transactionHash)",
+  "adapter.getTransactionReceipt(expectationSnapshot.transactionHash)",
+  "CONFIDENTIAL_BEST_EXECUTION_RESULT_EXPECTATION_FIELDS",
+  "CONFIDENTIAL_BEST_EXECUTION_ROUTER_POLICY_FIELDS",
+  "CONFIDENTIAL_POOL_POLICY_FIELDS",
+  "PUBLIC_POOL_POLICY_FIELDS",
+  "LAUNCHPAD_MIGRATION_POLICY_FIELDS",
 ]) {
   if (!sdkSource.includes(fragment)) {
     throw new Error("SDK omits canonical best-execution target or result binding");
@@ -707,14 +728,17 @@ for (const required of [
   "targetArtifactLabel",
   "requirement.selectors.includes(transaction.selector.toLowerCase())",
   "creationTransactionHash",
+  "verifyRecoveryResourceCreation(",
+  "journal.pendingSubmissions.length !== 0",
 ]) {
   if (!fundedEvidenceSource.includes(required)) {
     throw new Error(`Funded evidence omits required provenance control: ${required}`);
   }
 }
 for (const required of [
-  "cipherdex.funded-run-evidence/v2",
+  "cipherdex.funded-run-evidence/v3",
   "funded run cannot produce evidence with unresolved transactions",
+  "funded run cannot produce evidence with pending submissions",
   "funded evidence lacks a selector-bound semantic transaction",
 ]) {
   if (!fundedEvidenceRawSource.includes(required)) {

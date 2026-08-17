@@ -13,6 +13,7 @@ import {
   verifyDeployedRuntimeArtifactWithProvenance,
   type RuntimeArtifactProvenance,
 } from "./runtime-artifact";
+import { trustedGitExecutable } from "./trusted-git";
 
 const execFileAsync = promisify(execFile);
 const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
@@ -100,8 +101,9 @@ export async function listTouchedPathsAcrossCommitRange(
   if (!SOURCE_COMMIT_PATTERN.test(sourceCommit)) {
     throw new Error("source commit for history audit is invalid");
   }
+  const git = trustedGitExecutable(process.env, cwd);
   const commitsResult = await execute(
-    "git",
+    git,
     ["rev-list", "--reverse", "--topo-order", "--ancestry-path", `${sourceCommit}..${headCommit}`],
     { cwd },
   );
@@ -116,7 +118,7 @@ export async function listTouchedPathsAcrossCommitRange(
   const touched = new Set<string>();
   for (const commit of commits) {
     const result = await execute(
-      "git",
+      git,
       [
         "diff-tree",
         "--root",
@@ -176,10 +178,11 @@ async function defaultReadSourceState(
   sourceCommitIsAncestor: boolean;
   changedPathsSinceSource: readonly string[];
 }>> {
+  const git = trustedGitExecutable(process.env, cwd);
   const [head, status] = await Promise.all([
-    execFileAsync("git", ["rev-parse", "--verify", "HEAD"], { cwd }),
+    execFileAsync(git, ["rev-parse", "--verify", "HEAD"], { cwd }),
     execFileAsync(
-      "git",
+      git,
       ["status", "--porcelain=v1", "--untracked-files=all", "--", "."],
       { cwd },
     ),
@@ -188,7 +191,7 @@ async function defaultReadSourceState(
   let recordTracked = true;
   try {
     await execFileAsync(
-      "git",
+      git,
       ["ls-files", "--error-unmatch", "--", allowedRecordPath],
       { cwd },
     );
@@ -200,7 +203,7 @@ async function defaultReadSourceState(
   if (recordTracked) {
     try {
       await execFileAsync(
-        "git",
+        git,
         ["diff", "--quiet", "--no-ext-diff", "HEAD", "--", allowedRecordPath],
         { cwd },
       );
@@ -212,7 +215,7 @@ async function defaultReadSourceState(
   let sourceCommitIsAncestor = true;
   try {
     await execFileAsync(
-      "git",
+      git,
       ["merge-base", "--is-ancestor", sourceCommit, "HEAD"],
       { cwd },
     );

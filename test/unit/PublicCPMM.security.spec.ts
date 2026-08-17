@@ -463,6 +463,64 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     expect(await burnable.balanceOf(poolAddress)).to.equal(remainingClaim);
   });
 
+  it("lets LPs burn stranded shares after hostile tokens destroy both reserves", async function () {
+    const [owner, secondLp] = await ethers.getSigners();
+    const tokenA = await (
+      await ethers.getContractFactory("ExternallyBurnableERC20")
+    ).deploy("Burnable A", "BURA", 18);
+    const tokenB = await (
+      await ethers.getContractFactory("ExternallyBurnableERC20")
+    ).deploy("Burnable B", "BURB", 18);
+    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      18,
+      30,
+      await vault.getAddress(),
+    );
+    await pool.waitForDeployment();
+
+    for (const signer of [owner, secondLp]) {
+      await tokenA.mint(signer.address, 10_000n);
+      await tokenB.mint(signer.address, 10_000n);
+      await tokenA.connect(signer).approve(await pool.getAddress(), 10_000n);
+      await tokenB.connect(signer).approve(await pool.getAddress(), 10_000n);
+      await pool.connect(signer).addLiquidity(
+        10_000n,
+        10_000n,
+        1n,
+        0n,
+        ethers.MaxUint256,
+        MAX_DEADLINE,
+      );
+    }
+
+    const poolAddress = await pool.getAddress();
+    await tokenA.burnFrom(poolAddress, await tokenA.balanceOf(poolAddress));
+    await tokenB.burnFrom(poolAddress, await tokenB.balanceOf(poolAddress));
+
+    await expect(
+      pool.removeLiquidity(await pool.shares(owner.address), 1n, 0n, MAX_DEADLINE),
+    ).to.be.revertedWithCustomError(pool, "InsufficientLiquidity");
+
+    const ownerShares = await pool.shares(owner.address);
+    await expect(pool.removeLiquidity(ownerShares, 0n, 0n, MAX_DEADLINE))
+      .to.emit(pool, "LiquidityRemoved")
+      .withArgs(owner.address, 0n, 0n, ownerShares);
+    expect(await pool.initialized()).to.equal(true);
+
+    const finalShares = await pool.shares(secondLp.address);
+    await expect(
+      pool.connect(secondLp).removeLiquidity(finalShares, 0n, 0n, MAX_DEADLINE),
+    ).to.emit(pool, "LiquidityRemoved")
+      .withArgs(secondLp.address, 0n, 0n, finalShares);
+    expect(await pool.totalShares()).to.equal(0n);
+    expect(await pool.initialized()).to.equal(false);
+  });
+
   it("accounts the measured vault credit when an outbound tax burns protocol-owned fees", async function () {
     const [owner, trader] = await ethers.getSigners();
     const taxed = await (

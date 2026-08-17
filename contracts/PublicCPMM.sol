@@ -310,7 +310,11 @@ contract PublicCPMM is CipherDEXFeePolicy {
         _reconcileProtocolFeeLosses();
 
         (uint256 reserve0, uint256 reserve1) = _effectiveReserves();
-        if (reserve0 == 0 && reserve1 == 0) revert InsufficientLiquidity();
+        if (
+            reserve0 == 0 &&
+            reserve1 == 0 &&
+            (minAmount0 != 0 || minAmount1 != 0)
+        ) revert InsufficientLiquidity();
         bool fullExit = shareInput == totalShares;
         uint256 nominalAmount0 = fullExit
             ? reserve0

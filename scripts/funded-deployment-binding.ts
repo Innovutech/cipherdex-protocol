@@ -5,6 +5,7 @@ import { relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { VerifiedTestnetDeploymentRecord } from "./testnet-deployment-provenance";
+import { trustedGitExecutable } from "./trusted-git";
 
 const execFileAsync = promisify(execFile);
 const COMMIT = /^[0-9a-f]{40}$/;
@@ -51,7 +52,7 @@ export async function createFundedDeploymentBinding(
 ): Promise<FundedDeploymentBinding> {
   const recordPath = relative(resolve(cwd), resolve(deployment.path)).replaceAll("\\", "/");
   const manifest = await execFileAsync(
-    "git",
+    trustedGitExecutable(process.env, cwd),
     ["log", "-1", "--format=%H", "--", recordPath],
     { cwd },
   );

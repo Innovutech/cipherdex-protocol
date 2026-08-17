@@ -117,6 +117,7 @@ async function submit(
       operation,
       (hash) => ethers.provider.getTransactionReceipt(hash),
       (hash) => journal().recordBroadcast(label, hash),
+      () => journal().recordSubmission(label),
     );
     journal().recordTransaction(
       evidence.transactionHash,
@@ -127,7 +128,9 @@ async function submit(
   } catch (error) {
     const hash = transactionHashFromError(error);
     if (hash) {
-      journal().recordBroadcast(label, hash);
+      if (!journal().transactions.some((transaction) =>
+        transaction.hash.toLowerCase() === hash.toLowerCase()
+      )) journal().recordBroadcast(label, hash);
       journal().recordTransaction(
         hash,
         error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",

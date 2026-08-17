@@ -8,7 +8,12 @@ import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { getAddress, keccak256, toUtf8Bytes } from "ethers";
 
-import { FundedRecoveryJournal } from "./funded-recovery-journal";
+import {
+  FundedRecoveryJournal,
+  isRecoveryResourceMetadata,
+  verifyRecoveryResourceCreation,
+  type RecoveryResource,
+} from "./funded-recovery-journal";
 import {
   sameFundedDeploymentBinding,
   validateFundedDeploymentBinding,
@@ -19,7 +24,7 @@ import {
   type RuntimeArtifactProvenance,
 } from "./runtime-artifact";
 
-const SCHEMA = "cipherdex.funded-run-evidence/v2" as const;
+const SCHEMA = "cipherdex.funded-run-evidence/v3" as const;
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 const SOURCE_COMMIT = /^[0-9a-f]{40}$/;
 const LABEL = /^[a-zA-Z0-9][a-zA-Z0-9 .:_+\-/()]{0,159}$/;
@@ -250,6 +255,7 @@ export type FundedRunEvidence = Readonly<{
     kind: string;
     address: string;
     creationTransactionHash: string;
+    metadata: Readonly<Record<string, string | number | boolean>>;
   }>[];
   assertions: readonly string[];
   outcome: "passed";
@@ -511,7 +517,8 @@ function parseEvidence(value: unknown): FundedRunEvidence {
       typeof resource.id !== "string" ||
       typeof resource.kind !== "string" ||
       typeof resource.address !== "string"
-      || typeof resource.creationTransactionHash !== "string"
+      || typeof resource.creationTransactionHash !== "string" ||
+      !isRecoveryResourceMetadata(resource.metadata)
     ) throw new Error("funded run evidence has an invalid recovered resource");
     requireLabel(resource.id, "resource id");
     requireLabel(resource.kind, "resource kind");
@@ -607,22 +614,19 @@ export async function verifyFundedRunEvidence(
     ) throw new Error(`funded evidence receipt changed: ${transaction.label}`);
   }
   for (const resource of parsed.recoveredResources) {
-    const transaction = parsed.transactions.find((candidate) =>
-      candidate.hash === resource.creationTransactionHash.toLowerCase()
+    await verifyRecoveryResourceCreation(
+      {
+        identity: { owner: parsed.owner, chainId: parsed.chainId },
+        transactions: parsed.transactions.map((transaction) => ({
+          label: transaction.label,
+          hash: transaction.hash,
+          status: transaction.status === 1 ? "mined-success" : "mined-failure",
+          blockNumber: transaction.blockNumber,
+        })),
+      },
+      { ...resource, recovered: true } satisfies RecoveryResource,
+      provider,
     );
-    if (!transaction || transaction.status !== 1) {
-      throw new Error(`funded resource creation is not proven: ${resource.id}`);
-    }
-    const addressFragment = resource.address.slice(2).toLowerCase();
-    const receipt = await provider.getTransactionReceipt(transaction.hash);
-    if (!receipt) throw new Error(`funded resource receipt is unavailable: ${resource.id}`);
-    const createdDirectly = transaction.contractAddress?.toLowerCase() === resource.address.toLowerCase();
-    const referencedByLogs = receipt.logs.some((log) =>
-      [...log.topics, log.data].some((value) => value.toLowerCase().includes(addressFragment))
-    );
-    if (!createdDirectly && !referencedByLogs) {
-      throw new Error(`funded resource creation receipt does not identify resource: ${resource.id}`);
-    }
   }
 }
 
@@ -644,6 +648,9 @@ export async function writeFundedRunEvidence(input: Readonly<{
   }
   if (input.journal.activeResources.length !== 0) {
     throw new Error("funded run cannot produce evidence before resource recovery");
+  }
+  if (input.journal.pendingSubmissions.length !== 0) {
+    throw new Error("funded run cannot produce evidence with pending submissions");
   }
   if (input.journal.transactions.some((transaction) =>
     transaction.status !== "mined-success" && transaction.status !== "mined-failure"
@@ -729,6 +736,9 @@ export async function writeFundedRunEvidence(input: Readonly<{
   if (assertions.length === 0 || new Set(assertions).size !== assertions.length) {
     throw new Error("funded evidence requires unique assertion labels");
   }
+  for (const resource of input.journal.resources) {
+    await verifyRecoveryResourceCreation(input.journal, resource, input.provider);
+  }
   requireRunnerPolicy(identity.runner, configuration, artifacts, assertions, transactions);
   const evidence = parseEvidence({
     schema: SCHEMA,
@@ -747,6 +757,7 @@ export async function writeFundedRunEvidence(input: Readonly<{
       kind: resource.kind,
       address: resource.address,
       creationTransactionHash: resource.creationTransactionHash,
+      metadata: resource.metadata,
     })),
     assertions,
     outcome: "passed",

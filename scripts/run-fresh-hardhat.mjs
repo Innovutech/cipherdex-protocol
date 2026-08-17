@@ -261,4 +261,5 @@ const runtimeEnvironment = selectedEnvironment([
   ...targetPolicy.environment,
 ]);
 runtimeEnvironment.CIPHERDEX_SOURCE_COMMIT = sourceCommit;
+runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath;
 runHardhat(["run", "--no-compile", target, ...targetArguments], runtimeEnvironment);

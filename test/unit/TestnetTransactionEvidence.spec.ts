@@ -143,25 +143,29 @@ describe("funded testnet transaction evidence", function () {
     expect((sendError as UnknownBroadcastOutcomeError).transactionHash).to.equal(hash);
   });
 
-  it("records the broadcast before waiting for a receipt", async function () {
+  it("records submission before send and broadcast before receipt waiting", async function () {
     const order: string[] = [];
     const result = await requireMinedSuccess(
       "funded action",
-      async () => ({
-        hash,
-        wait: async () => {
-          order.push("wait");
-          return successfulReceipt;
-        },
-      }),
+      async () => {
+        order.push("operation");
+        return {
+          hash,
+          wait: async () => {
+            order.push("wait");
+            return successfulReceipt;
+          },
+        };
+      },
       async () => null,
       (transactionHash) => {
         expect(transactionHash).to.equal(hash);
-        order.push("journal");
+        order.push("broadcast");
       },
+      () => { order.push("submission"); },
     );
     expect(result.transactionHash).to.equal(hash);
-    expect(order).to.deep.equal(["journal", "wait"]);
+    expect(order).to.deep.equal(["submission", "operation", "broadcast", "wait"]);
   });
 
   it("fails closed with the known hash when broadcast journaling fails", async function () {

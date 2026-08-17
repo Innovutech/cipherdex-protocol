@@ -119,8 +119,21 @@ for (const required of [
   "targetPolicy.funded",
   "targetPolicy.environment",
   "runtimeEnvironment.CIPHERDEX_SOURCE_COMMIT = sourceCommit",
+  "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath",
 ]) {
   assert.ok(freshRunnerSource.includes(required));
+}
+const trustedGitConsumers = [
+  "scripts/deploy-testnet.ts",
+  "scripts/funded-deployment-binding.ts",
+  "scripts/funded-suite-evidence.ts",
+  "scripts/testnet-deployment-provenance.ts",
+  "scripts/testnet-quote-call-probe.ts",
+];
+for (const path of trustedGitConsumers) {
+  const source = readFileSync(path, "utf8");
+  assert.match(source, /trustedGitExecutable/);
+  assert.doesNotMatch(source, /(?:execFileAsync|execFileSync|spawnSync)\(\s*["']git["']/);
 }
 assert.doesNotMatch(
   freshRunnerSource,

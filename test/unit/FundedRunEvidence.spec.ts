@@ -47,6 +47,7 @@ describe("funded run evidence", function () {
       deployment,
       directory,
     });
+    journal.recordSubmission("mock deployment");
     journal.recordBroadcast("mock deployment", transaction!.hash);
     journal.recordTransaction(transaction!.hash, "mined-success", receipt!.blockNumber);
     journal.recordResource({
@@ -87,6 +88,7 @@ describe("funded run evidence", function () {
       kind: "disposable-contract",
       address,
       creationTransactionHash: transaction!.hash,
+      metadata: { contractName: "MockERC20" },
     }]);
     expect(JSON.parse(readFileSync(result.path, "utf8"))).to.deep.equal(evidence);
     await verifyFundedRunEvidence(evidence, ethers.provider);
@@ -107,6 +109,7 @@ describe("funded run evidence", function () {
       },
       directory,
     });
+    journal.recordSubmission("unknown transaction");
     journal.recordBroadcast("unknown transaction", `0x${"12".repeat(32)}`);
     journal.markRun("passed");
 
@@ -165,6 +168,43 @@ describe("funded run evidence", function () {
     expect((error as Error).message).to.contain("marked passed");
   });
 
+  it("refuses evidence while a hashless submission remains pending", async function () {
+    const [owner] = await ethers.getSigners();
+    const sourceCommit = "e".repeat(40);
+    const journal = FundedRecoveryJournal.open({
+      runner: "evidence-test",
+      sourceCommit,
+      chainId: 31_337,
+      owner: owner.address,
+      deployment: {
+        recordPath: `deployments/coti-testnet-${sourceCommit}.json`,
+        recordSha256: "1".repeat(64),
+        manifestCommit: "2".repeat(40),
+        sourceCommit,
+      },
+      directory,
+    });
+    journal.recordSubmission("hashless operation");
+    journal.markRun("passed");
+
+    let error: unknown;
+    try {
+      await writeFundedRunEvidence({
+        journal,
+        provider: ethers.provider,
+        participants: [owner.address],
+        configuration: { chainId: 31_337, privacyMode: "test", protocolVersion: 1 },
+        artifacts: [],
+        assertions: ["deployment mined", "resource recovered"],
+        directory: join(directory, "evidence"),
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).to.be.instanceOf(Error);
+    expect((error as Error).message).to.contain("pending submissions");
+  });
+
   it("rejects tampered participants, targets, and semantic assertions", async function () {
     const [owner] = await ethers.getSigners();
     const factory = await ethers.getContractFactory("MockERC20");
@@ -186,6 +226,7 @@ describe("funded run evidence", function () {
       },
       directory,
     });
+    journal.recordSubmission("mock deployment");
     journal.recordBroadcast("mock deployment", transaction.hash);
     journal.recordTransaction(transaction.hash, "mined-success", receipt!.blockNumber);
     journal.recordResource({

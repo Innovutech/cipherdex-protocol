@@ -12,6 +12,7 @@ import {
   requireMinedSuccess,
   safeTestnetErrorSummary,
 } from "./testnet-transaction-evidence";
+import { trustedGitExecutable } from "./trusted-git";
 
 const execFileAsync = promisify(execFile);
 const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
@@ -36,13 +37,14 @@ type MinedEvidence = Readonly<{
 
 async function assertCleanCommittedSource(): Promise<string> {
   const cwd = process.cwd();
+  const git = trustedGitExecutable(process.env, cwd);
   const [head, status] = await Promise.all([
-    execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+    execFileAsync(git, ["rev-parse", "--verify", "HEAD"], {
       cwd,
       encoding: "utf8",
     }),
     execFileAsync(
-      "git",
+      git,
       ["status", "--porcelain=v1", "--untracked-files=all", "--", "."],
       { cwd, encoding: "utf8" },
     ),
@@ -55,7 +57,7 @@ async function assertCleanCommittedSource(): Promise<string> {
     throw new Error("quote-call probe requires a clean committed worktree");
   }
   await execFileAsync(
-    "git",
+    git,
     [
       "ls-files",
       "--error-unmatch",

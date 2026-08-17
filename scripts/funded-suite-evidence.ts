@@ -16,6 +16,7 @@ import {
   validateFundedDeploymentBinding,
   type FundedDeploymentBinding,
 } from "./funded-deployment-binding";
+import { trustedGitExecutable } from "./trusted-git";
 
 const SCHEMA = "cipherdex.funded-suite-evidence/v2" as const;
 const SOURCE_COMMIT = /^[0-9a-f]{40}$/;
@@ -140,9 +141,10 @@ export async function verifyFundedSuiteSources(
   cwd = process.cwd(),
 ): Promise<void> {
   const parsed = parseSuite(suite);
+  const git = trustedGitExecutable(process.env, cwd);
   for (const run of parsed.runs) {
     const result = await execFileAsync(
-      "git",
+      git,
       ["show", `${parsed.sourceCommit}:${run.runnerSource}`],
       { cwd, encoding: "buffer", maxBuffer: 5_000_000 },
     );

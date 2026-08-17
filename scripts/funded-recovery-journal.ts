@@ -6,6 +6,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { Interface, getAddress } from "ethers";
 
 import {
   sameFundedDeploymentBinding,
@@ -13,7 +14,13 @@ import {
   type FundedDeploymentBinding,
 } from "./funded-deployment-binding";
 
-const SCHEMA = "cipherdex.funded-recovery/v2" as const;
+const SCHEMA = "cipherdex.funded-recovery/v3" as const;
+const POOL_FACTORY_INTERFACE = new Interface([
+  "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
+]);
+const LAUNCHPAD_MIGRATOR_INTERFACE = new Interface([
+  "event LaunchpadMigration(address indexed creator,address indexed pool)",
+]);
 
 export type RecoveryTransactionStatus =
   | "broadcast"
@@ -28,6 +35,11 @@ export type RecoveryTransaction = Readonly<{
   blockNumber?: number;
 }>;
 
+export type PendingSubmission = Readonly<{
+  label: string;
+  startedAt: string;
+}>;
+
 export type RecoveryResource = Readonly<{
   id: string;
   kind: string;
@@ -35,6 +47,11 @@ export type RecoveryResource = Readonly<{
   creationTransactionHash: string;
   recovered: boolean;
   metadata: Readonly<Record<string, string | number | boolean>>;
+}>;
+
+export type RecoveryJournalProvenance = Readonly<{
+  identity: Readonly<{ owner: string; chainId: number }>;
+  transactions: readonly RecoveryTransaction[];
 }>;
 
 type RecoveryState = {
@@ -47,6 +64,7 @@ type RecoveryState = {
   startedAt: string;
   updatedAt: string;
   runStatus: "active" | "awaiting-maturity" | "passed" | "failed" | "recovery-failed";
+  pendingSubmissions: PendingSubmission[];
   transactions: RecoveryTransaction[];
   resources: RecoveryResource[];
 };
@@ -100,7 +118,7 @@ function isIsoTimestamp(value: unknown): value is string {
 }
 
 export async function verifyRecoveryResourceCreation(
-  journal: FundedRecoveryJournal,
+  journal: RecoveryJournalProvenance,
   resource: RecoveryResource,
   provider: RecoveryProvenanceLookup,
 ): Promise<void> {
@@ -124,32 +142,93 @@ export async function verifyRecoveryResourceCreation(
     code === "0x"
   ) throw new Error("funded recovery resource creation provenance is invalid");
 
-  const directCreation = transaction.to === null &&
-    receipt.contractAddress?.toLowerCase() === resource.address.toLowerCase();
-  const addressFragment = resource.address.slice(2).toLowerCase();
-  const logCreation = transaction.to !== null && (receipt.logs ?? []).some((log) =>
-    log.address.toLowerCase() === transaction.to?.toLowerCase() &&
-    [...log.topics, log.data].some((value) => value.toLowerCase().includes(addressFragment))
-  );
-  if (!directCreation && !logCreation) {
-    throw new Error("funded recovery creation receipt does not identify the resource");
+  if (
+    resource.kind === "best-execution-probe" ||
+    resource.kind === "launchpad-stack" ||
+    resource.kind === "disposable-contract"
+  ) {
+    if (
+      transaction.to !== null ||
+      receipt.contractAddress === undefined ||
+      receipt.contractAddress === null ||
+      getAddress(receipt.contractAddress) !== getAddress(resource.address)
+    ) {
+      throw new Error("funded recovery direct deployment provenance is invalid");
+    }
+    return;
   }
 
-  if (transaction.to !== null) {
-    const allowedCreators = Object.entries(resource.metadata)
-      .filter(([key, value]) =>
-        typeof value === "string" &&
-        isAddress(value) &&
-        /(?:factory|migrator)Address$/i.test(key)
-      )
-      .map(([, value]) => String(value).toLowerCase());
-    if (!allowedCreators.includes(transaction.to.toLowerCase())) {
-      throw new Error("funded recovery resource was created by an unbound contract");
+  if (resource.kind === "confidential-pool" || resource.kind === "fee-collection-pool") {
+    const factoryAddress = requiredMetadataAddress(resource, "factoryAddress");
+    if (transaction.to === null || getAddress(transaction.to) !== factoryAddress) {
+      throw new Error("funded recovery pool creator is not the bound factory");
     }
+    const matches = (receipt.logs ?? []).flatMap((log) => {
+      if (getAddress(log.address) !== factoryAddress) return [];
+      try {
+        const parsed = POOL_FACTORY_INTERFACE.parseLog({ topics: [...log.topics], data: log.data });
+        return parsed?.name === "PoolCreated" ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    }).filter((event) =>
+      getAddress(String(event.args.token0)) === requiredMetadataAddress(resource, "token0Address") &&
+      getAddress(String(event.args.token1)) === requiredMetadataAddress(resource, "token1Address") &&
+      Number(event.args.token0Decimals) === requiredMetadataInteger(resource, "decimals0") &&
+      Number(event.args.token1Decimals) === requiredMetadataInteger(resource, "decimals1") &&
+      Number(event.args.feeBps) === requiredMetadataInteger(resource, "feeBps") &&
+      getAddress(String(event.args.pool)) === getAddress(resource.address)
+    );
+    if (matches.length !== 1) {
+      throw new Error("funded recovery pool creation event is missing or ambiguous");
+    }
+    return;
   }
+
+  if (resource.kind === "launchpad-pool") {
+    const migratorAddress = requiredMetadataAddress(resource, "migratorAddress");
+    if (transaction.to === null || getAddress(transaction.to) !== migratorAddress) {
+      throw new Error("funded recovery launchpad creator is not the bound migrator");
+    }
+    const matches = (receipt.logs ?? []).flatMap((log) => {
+      if (getAddress(log.address) !== migratorAddress) return [];
+      try {
+        const parsed = LAUNCHPAD_MIGRATOR_INTERFACE.parseLog({
+          topics: [...log.topics],
+          data: log.data,
+        });
+        return parsed?.name === "LaunchpadMigration" ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    }).filter((event) =>
+      getAddress(String(event.args.creator)) === getAddress(journal.identity.owner) &&
+      getAddress(String(event.args.pool)) === getAddress(resource.address)
+    );
+    if (matches.length !== 1) {
+      throw new Error("funded recovery launchpad migration event is missing or ambiguous");
+    }
+    return;
+  }
+
+  throw new Error(`unsupported funded recovery resource kind: ${resource.kind}`);
 }
 
-function isMetadata(
+function requiredMetadataAddress(resource: RecoveryResource, key: string): string {
+  const value = resource.metadata[key];
+  if (!isAddress(value)) throw new Error(`funded recovery resource lacks ${key}`);
+  return getAddress(value);
+}
+
+function requiredMetadataInteger(resource: RecoveryResource, key: string): number {
+  const value = resource.metadata[key];
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`funded recovery resource lacks ${key}`);
+  }
+  return value;
+}
+
+export function isRecoveryResourceMetadata(
   value: unknown,
 ): value is Readonly<Record<string, string | number | boolean>> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -179,6 +258,7 @@ function parseState(value: unknown): RecoveryState {
     !isIsoTimestamp(state.startedAt) ||
     !isIsoTimestamp(state.updatedAt) ||
     !RUN_STATUSES.includes(state.runStatus as (typeof RUN_STATUSES)[number]) ||
+    !Array.isArray(state.pendingSubmissions) ||
     !Array.isArray(state.transactions) ||
     !Array.isArray(state.resources)
   ) {
@@ -187,6 +267,14 @@ function parseState(value: unknown): RecoveryState {
   const deployment = validateFundedDeploymentBinding(state.deployment);
   if (deployment.sourceCommit !== state.sourceCommit.toLowerCase()) {
     throw new Error("funded recovery journal deployment source mismatch");
+  }
+  for (const submission of state.pendingSubmissions) {
+    if (
+      !submission ||
+      typeof submission.label !== "string" ||
+      submission.label.length === 0 ||
+      !isIsoTimestamp(submission.startedAt)
+    ) throw new Error("funded recovery journal has an invalid pending submission");
   }
   for (const transaction of state.transactions) {
     if (
@@ -211,7 +299,7 @@ function parseState(value: unknown): RecoveryState {
       !isAddress(resource.address) ||
       !isHash(resource.creationTransactionHash) ||
       typeof resource.recovered !== "boolean" ||
-      !isMetadata(resource.metadata)
+      !isRecoveryResourceMetadata(resource.metadata)
     ) throw new Error("funded recovery journal has an invalid resource");
     const creationTransaction = state.transactions.find((transaction) =>
       transaction.hash.toLowerCase() === resource.creationTransactionHash.toLowerCase()
@@ -268,6 +356,11 @@ export class FundedRecoveryJournal {
         existing.owner.toLowerCase() !== input.owner.toLowerCase() ||
         !sameFundedDeploymentBinding(existing.deployment, deployment)
       ) throw new Error("funded recovery journal identity mismatch");
+      if (existing.pendingSubmissions.length > 0) {
+        throw new Error(
+          "funded recovery journal contains an uncertain hashless submission; manual recovery is required",
+        );
+      }
       const hasActiveResources = existing.resources.some((resource) => !resource.recovered);
       const hasUnresolvedTransactions = existing.transactions.some((transaction) =>
         transaction.status === "broadcast" || transaction.status === "outcome-unknown"
@@ -295,6 +388,7 @@ export class FundedRecoveryJournal {
       startedAt: now,
       updatedAt: now,
       runStatus: "active",
+      pendingSubmissions: [],
       transactions: [],
       resources: [],
     };
@@ -332,6 +426,10 @@ export class FundedRecoveryJournal {
     return this.state.transactions.map((transaction) => Object.freeze({ ...transaction }));
   }
 
+  get pendingSubmissions(): readonly PendingSubmission[] {
+    return this.state.pendingSubmissions.map((submission) => Object.freeze({ ...submission }));
+  }
+
   get activeResources(): readonly RecoveryResource[] {
     return this.resources.filter((resource) => !resource.recovered);
   }
@@ -340,13 +438,52 @@ export class FundedRecoveryJournal {
     return this.state.runStatus;
   }
 
+  recordSubmission(label: string): void {
+    if (!label) throw new Error("invalid funded submission label");
+    if (this.state.pendingSubmissions.some((submission) => submission.label === label)) {
+      throw new Error("funded submission is already pending");
+    }
+    this.state.pendingSubmissions.push({ label, startedAt: new Date().toISOString() });
+    this.persist();
+  }
+
   recordBroadcast(label: string, hash: string): void {
     if (!label || !isHash(hash)) throw new Error("invalid funded transaction evidence");
+    const pendingIndex = this.state.pendingSubmissions.findIndex(
+      (submission) => submission.label === label,
+    );
+    if (pendingIndex < 0) {
+      throw new Error("funded transaction was broadcast without a pending submission marker");
+    }
     const existing = this.state.transactions.find(
       (transaction) => transaction.hash.toLowerCase() === hash.toLowerCase(),
     );
-    if (existing) return;
-    this.state.transactions.push({ label, hash, status: "broadcast" });
+    if (existing && existing.label !== label) {
+      throw new Error("funded transaction hash belongs to a different operation");
+    }
+    if (!existing) this.state.transactions.push({ label, hash, status: "broadcast" });
+    this.state.pendingSubmissions.splice(pendingIndex, 1);
+    this.persist();
+  }
+
+  recordObservedMinedTransaction(label: string, hash: string, blockNumber: number): void {
+    if (!label || !isHash(hash) || !Number.isSafeInteger(blockNumber) || blockNumber < 0) {
+      throw new Error("invalid observed funded transaction evidence");
+    }
+    const existing = this.state.transactions.find(
+      (transaction) => transaction.hash.toLowerCase() === hash.toLowerCase(),
+    );
+    if (existing) {
+      if (
+        existing.label !== label
+        || existing.status !== "mined-success"
+        || existing.blockNumber !== blockNumber
+      ) {
+        throw new Error("observed funded transaction conflicts with the journal");
+      }
+      return;
+    }
+    this.state.transactions.push({ label, hash, status: "mined-success", blockNumber });
     this.persist();
   }
 
@@ -376,7 +513,7 @@ export class FundedRecoveryJournal {
       !resource.kind ||
       !isAddress(resource.address) ||
       !isHash(resource.creationTransactionHash) ||
-      !isMetadata(resource.metadata)
+      !isRecoveryResourceMetadata(resource.metadata)
     ) {
       throw new Error("invalid funded recovery resource");
     }
@@ -415,7 +552,9 @@ export class FundedRecoveryJournal {
     id: string,
     metadata: Readonly<Record<string, string | number | boolean>>,
   ): void {
-    if (!isMetadata(metadata)) throw new Error("invalid funded recovery metadata update");
+    if (!isRecoveryResourceMetadata(metadata)) {
+      throw new Error("invalid funded recovery metadata update");
+    }
     const index = this.state.resources.findIndex((resource) => resource.id === id);
     if (index < 0) throw new Error("unknown funded recovery resource");
     this.state.resources[index] = {

@@ -467,6 +467,22 @@ describe("stable SDK surface", function () {
     );
     expect(mutableExpectation.transactionHash).to.equal(alternateHash);
     expect(hashSnapshotVerified.transactionHash).to.equal(transactionHash);
+
+    const mutablePolicy = { ...policy };
+    const policySnapshotVerified = await verifyLaunchpadMigrationMetadata(
+      { transactionHash, metadata: creatorHeldMetadata },
+      mutablePolicy,
+      {
+        ...creatorHeldAdapter,
+        readChainId: async () => {
+          mutablePolicy.expectedFactory = token0;
+          mutablePolicy.expectedMigrator = token1;
+          return chainId;
+        },
+      },
+    );
+    expect(policySnapshotVerified.factory).to.equal(factory);
+    expect(policySnapshotVerified.migrator).to.equal(migrator);
   });
 
   it("builds immutable caller-encrypted best quote and swap calls", function () {
@@ -619,6 +635,29 @@ describe("stable SDK surface", function () {
       },
       adapter,
     );
+    const mutableRouterPolicy = {
+      expectedChainId: chainId,
+      expectedFactory: factory,
+      expectedFactoryRuntimeCodehash: deployedCodehash,
+      expectedRouter: routerAddress,
+      expectedRouterRuntimeCodehash: deployedCodehash,
+      expectedFactoryProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      expectedRouterProtocolVersion: CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
+    };
+    const snapshottedRouter = await verifyConfidentialBestExecutionRouter(
+      routerAddress,
+      mutableRouterPolicy,
+      {
+        ...adapter,
+        readChainId: async () => {
+          mutableRouterPolicy.expectedFactory = caller;
+          mutableRouterPolicy.expectedRouter = caller;
+          return BigInt(chainId);
+        },
+      },
+    );
+    expect(snapshottedRouter.factory).to.equal(factory);
+    expect(snapshottedRouter.router).to.equal(routerAddress);
     const tokenIn = "0x0000000000000000000000000000000000000011";
     const tokenOut = "0x0000000000000000000000000000000000000022";
     const amountIn = {
@@ -723,6 +762,19 @@ describe("stable SDK surface", function () {
         decryptionAdapter,
       ),
     ).to.equal(42n);
+    const mutableResultExpectation = { ...expectation };
+    expect(await decryptConfidentialBestExecutionResult(
+      verified,
+      mutableResultExpectation,
+      {
+        ...decryptionAdapter,
+        getTransaction: async (hash: string) => {
+          mutableResultExpectation.transactionHash = ZeroHash;
+          mutableResultExpectation.tokenIn = caller;
+          return decryptionAdapter.getTransaction(hash);
+        },
+      },
+    )).to.equal(42n);
 
     for (const overrides of [
       { readChainId: async () => BigInt(chainId + 1) },
@@ -1127,6 +1179,27 @@ describe("stable SDK surface", function () {
     );
     expect(snapshottedDiscovery.pool).to.equal(slowDiscovery.pool);
     expect(dynamicPoolReads).to.equal(0);
+    const mutableConfidentialPolicy = {
+      expectedChainId: chainId,
+      expectedFactory: factory,
+      expectedFeeVault: feeVault,
+      expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      expectedLPTokenFactory: lpTokenFactory,
+      expectedLPTokenFactoryRuntimeCodehash: lpTokenFactoryRuntimeCodehash,
+    };
+    const policySnapshotVerified = await verifyConfidentialPoolDiscovery(
+      slowDiscovery,
+      mutableConfidentialPolicy,
+      adapter(slowDiscovery, {
+        readChainId: async () => {
+          mutableConfidentialPolicy.expectedFactory = slowDiscovery.token0;
+          mutableConfidentialPolicy.expectedFeeVault = slowDiscovery.token1;
+          return BigInt(chainId);
+        },
+      }),
+    );
+    expect(policySnapshotVerified.factory).to.equal(factory);
+    expect(policySnapshotVerified.feeVault).to.equal(feeVault);
     expect(await verify(slowDiscovery)).to.deep.include({
       pool: slowDiscovery.pool,
       feeBps: slowDiscovery.feeBps,
@@ -1211,6 +1284,21 @@ describe("stable SDK surface", function () {
     const verified = await verifyPublicPoolDiscovery(discovery, policy, adapter);
     expect(verified.factory).to.equal(factory);
     expect(Object.isFrozen(verified)).to.equal(true);
+    const mutablePublicPolicy = { ...policy };
+    const policySnapshotVerified = await verifyPublicPoolDiscovery(
+      discovery,
+      mutablePublicPolicy,
+      {
+        ...adapter,
+        readChainId: async () => {
+          mutablePublicPolicy.expectedFactory = discovery.token0;
+          mutablePublicPolicy.expectedFeeVault = discovery.token1;
+          return BigInt(chainId);
+        },
+      },
+    );
+    expect(policySnapshotVerified.factory).to.equal(factory);
+    expect(policySnapshotVerified.feeVault).to.equal(feeVault);
 
     for (const overrides of [
       { readChainId: async () => BigInt(chainId + 1) },

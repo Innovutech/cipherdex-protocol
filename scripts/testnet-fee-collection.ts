@@ -208,16 +208,17 @@ function reconstructModel(
 
 async function submit(
   label: string,
-  operation: Promise<{ hash: string; wait(): Promise<TransactionReceipt | null> }>,
+  operation: () => Promise<{ hash: string; wait(): Promise<TransactionReceipt | null> }>,
 ): Promise<Submitted> {
   stage = label;
   const started = Date.now();
   try {
     const evidence = await requireMinedSuccess(
       label,
-      () => operation,
+      operation,
       (hash) => ethers.provider.getTransactionReceipt(hash),
       (hash) => journal().recordBroadcast(label, hash),
+      () => journal().recordSubmission(label),
     );
     journal().recordTransaction(
       evidence.transactionHash,
@@ -232,7 +233,9 @@ async function submit(
   } catch (error) {
     const hash = transactionHashFromError(error);
     if (hash) {
-      journal().recordBroadcast(label, hash);
+      if (!journal().transactions.some((transaction) =>
+        transaction.hash.toLowerCase() === hash.toLowerCase()
+      )) journal().recordBroadcast(label, hash);
       journal().recordTransaction(
         hash,
         error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
@@ -251,12 +254,12 @@ async function deployContract(
   let contract: any;
   const evidence = await submit(
     `${contractName} disposable deployment`,
-    (async () => {
+    async () => {
       contract = await factory.deploy(...args, TX_OVERRIDES);
       const transaction = contract.deploymentTransaction();
       if (!transaction) throw new Error(`${contractName} deployment transaction unavailable`);
       return transaction;
-    })(),
+    },
   );
   if (!contract) throw new Error(`${contractName} deployment handle unavailable`);
   const address = ethers.getAddress(await contract.getAddress());
@@ -288,20 +291,22 @@ async function setPrivateAllowance(
 ): Promise<void> {
   const selector = token.interface.getFunction("approve")?.selector;
   if (!selector) throw new Error("private approval selector unavailable");
+  const zeroApproval = await wallet.encryptValue256(0n, tokenAddress, selector);
   await submit(
     `${label} approval reset`,
-    token.approve(
+    () => token.approve(
       poolAddress,
-      await wallet.encryptValue256(0n, tokenAddress, selector),
+      zeroApproval,
       TX_OVERRIDES,
     ),
   );
   if (amount > 0n) {
+    const encryptedAmount = await wallet.encryptValue256(amount, tokenAddress, selector);
     await submit(
       `${label} approval`,
-      token.approve(
+      () => token.approve(
         poolAddress,
-        await wallet.encryptValue256(amount, tokenAddress, selector),
+        encryptedAmount,
         TX_OVERRIDES,
       ),
     );
@@ -319,10 +324,11 @@ async function requestPrivateQuote(
   if (!selector) throw new Error("transactional quote selector unavailable");
   const requestId = ethers.keccak256(ethers.randomBytes(32));
   const caller = await wallet.getAddress();
+  const encryptedAmount = await wallet.encryptValue256(amountIn, stack.poolAddress, selector);
   const evidence = await submit(
     label,
-    stack.pool.requestQuoteExactInput(
-      await wallet.encryptValue256(amountIn, stack.poolAddress, selector),
+    () => stack.pool.requestQuoteExactInput(
+      encryptedAmount,
       zeroForOne,
       requestId,
       TX_OVERRIDES,
@@ -483,11 +489,11 @@ async function createDisposableStack(
   );
   const bind = await submit(
     "bind disposable fee vault",
-    feeVault.contract.setConfidentialFactory(factory.address, TX_OVERRIDES),
+    () => feeVault.contract.setConfidentialFactory(factory.address, TX_OVERRIDES),
   );
   const poolCreation = await submit(
     "create disposable 100 bps fee pool",
-    factory.contract.createPool(
+    () => factory.contract.createPool(
       tokenAAddress,
       tokenBAddress,
       Number(decimalsA),
@@ -525,6 +531,7 @@ async function createDisposableStack(
       token1Address: ethers.getAddress(String(token1Address)),
       decimals0: Number(decimals0),
       decimals1: Number(decimals1),
+      feeBps: Number(FEE_BPS),
       feeVaultTx: feeVault.transactionHash,
       lpFactoryTx: lpFactory.transactionHash,
       factoryTx: factory.transactionHash,
@@ -559,12 +566,17 @@ async function removeAllLiquidity(
   }
   const selector = stack.pool.interface.getFunction("removeLiquidity")?.selector;
   if (!selector) throw new Error("remove-liquidity selector unavailable");
+  const [encryptedShares, encryptedMinimum0, encryptedMinimum1] = await Promise.all([
+    wallet.encryptValue256(shares, stack.poolAddress, selector),
+    wallet.encryptValue256(minimum0, stack.poolAddress, selector),
+    wallet.encryptValue256(minimum1, stack.poolAddress, selector),
+  ]);
   const evidence = await submit(
     "full disposable fee-pool exit",
-    stack.pool.removeLiquidity(
-      await wallet.encryptValue256(shares, stack.poolAddress, selector),
-      await wallet.encryptValue256(minimum0, stack.poolAddress, selector),
-      await wallet.encryptValue256(minimum1, stack.poolAddress, selector),
+    () => stack.pool.removeLiquidity(
+      encryptedShares,
+      encryptedMinimum0,
+      encryptedMinimum1,
       BigInt(Math.floor(Date.now() / 1000) + 600),
       TX_OVERRIDES,
     ),
@@ -758,14 +770,21 @@ async function main(): Promise<void> {
       stack.decimals1,
       false,
     );
+    const encryptedLiquidity = await Promise.all([
+      wallet.encryptValue256(liquidity0, stack.poolAddress, selector),
+      wallet.encryptValue256(liquidity1, stack.poolAddress, selector),
+      wallet.encryptValue256(bounds.minShares, stack.poolAddress, selector),
+      wallet.encryptValue256(bounds.minPriceX18, stack.poolAddress, selector),
+      wallet.encryptValue256(bounds.maxPriceX18, stack.poolAddress, selector),
+    ]);
     await submit(
       "initialize disposable fee pool",
-      stack.pool.addLiquidity(
-        await wallet.encryptValue256(liquidity0, stack.poolAddress, selector),
-        await wallet.encryptValue256(liquidity1, stack.poolAddress, selector),
-        await wallet.encryptValue256(bounds.minShares, stack.poolAddress, selector),
-        await wallet.encryptValue256(bounds.minPriceX18, stack.poolAddress, selector),
-        await wallet.encryptValue256(bounds.maxPriceX18, stack.poolAddress, selector),
+      () => stack.pool.addLiquidity(
+        encryptedLiquidity[0],
+        encryptedLiquidity[1],
+        encryptedLiquidity[2],
+        encryptedLiquidity[3],
+        encryptedLiquidity[4],
         false,
         BigInt(Math.floor(Date.now() / 1000) + 600),
         TX_OVERRIDES,
@@ -789,11 +808,15 @@ async function main(): Promise<void> {
         `fee token0 quote ${index + 1}/${needed0}`,
       );
       applyModeledSwap(model, swap0, true, quote);
+      const encryptedSwap0 = await Promise.all([
+        wallet.encryptValue256(swap0, stack.poolAddress, swapSelector),
+        wallet.encryptValue256(minimumWithSlippage(quote), stack.poolAddress, swapSelector),
+      ]);
       await submit(
         `fee token0 swap ${index + 1}/${needed0}`,
-        stack.pool.swapExactInput(
-          await wallet.encryptValue256(swap0, stack.poolAddress, swapSelector),
-          await wallet.encryptValue256(minimumWithSlippage(quote), stack.poolAddress, swapSelector),
+        () => stack.pool.swapExactInput(
+          encryptedSwap0[0],
+          encryptedSwap0[1],
           true,
           BigInt(Math.floor(Date.now() / 1000) + 600),
           TX_OVERRIDES,
@@ -809,11 +832,15 @@ async function main(): Promise<void> {
         `fee token1 quote ${index + 1}/${needed1}`,
       );
       applyModeledSwap(model, swap1, false, quote);
+      const encryptedSwap1 = await Promise.all([
+        wallet.encryptValue256(swap1, stack.poolAddress, swapSelector),
+        wallet.encryptValue256(minimumWithSlippage(quote), stack.poolAddress, swapSelector),
+      ]);
       await submit(
         `fee token1 swap ${index + 1}/${needed1}`,
-        stack.pool.swapExactInput(
-          await wallet.encryptValue256(swap1, stack.poolAddress, swapSelector),
-          await wallet.encryptValue256(minimumWithSlippage(quote), stack.poolAddress, swapSelector),
+        () => stack.pool.swapExactInput(
+          encryptedSwap1[0],
+          encryptedSwap1[1],
           false,
           BigInt(Math.floor(Date.now() / 1000) + 600),
           TX_OVERRIDES,
@@ -838,7 +865,7 @@ async function main(): Promise<void> {
 
   const collection = await submit(
     "mature confidential protocol fee collection",
-    stack.pool.collectProtocolFees(true, true, TX_OVERRIDES),
+    () => stack.pool.collectProtocolFees(true, true, TX_OVERRIDES),
   );
   const deposits = collection.receipt.logs.flatMap((log) => {
     if (log.address.toLowerCase() !== stack.feeVaultAddress.toLowerCase()) return [];
@@ -879,15 +906,19 @@ async function main(): Promise<void> {
     "terminal sub-threshold fee quote",
   );
   applyModeledSwap(model, swap0, true, terminalQuote);
+  const encryptedTerminalSwap = await Promise.all([
+    wallet.encryptValue256(swap0, stack.poolAddress, swapSelector),
+    wallet.encryptValue256(
+      minimumWithSlippage(terminalQuote),
+      stack.poolAddress,
+      swapSelector,
+    ),
+  ]);
   await submit(
     "terminal sub-threshold fee swap",
-    stack.pool.swapExactInput(
-      await wallet.encryptValue256(swap0, stack.poolAddress, swapSelector),
-      await wallet.encryptValue256(
-        minimumWithSlippage(terminalQuote),
-        stack.poolAddress,
-        swapSelector,
-      ),
+    () => stack.pool.swapExactInput(
+      encryptedTerminalSwap[0],
+      encryptedTerminalSwap[1],
       true,
       BigInt(Math.floor(Date.now() / 1000) + 600),
       TX_OVERRIDES,

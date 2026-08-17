@@ -139,6 +139,7 @@ async function requireMinedStatus<TReceipt extends ReceiptLike>(
   operation: () => Promise<TransactionLike<TReceipt>>,
   getReceipt: (transactionHash: string) => Promise<TReceipt | null>,
   onBroadcast?: (transactionHash: string) => void | Promise<void>,
+  onSubmission?: () => void | Promise<void>,
 ): Promise<Readonly<{ transactionHash: string; receipt: TReceipt }>> {
   const validate = (
     transactionHash: string,
@@ -173,6 +174,7 @@ async function requireMinedStatus<TReceipt extends ReceiptLike>(
   };
 
   let transaction: TransactionLike<TReceipt>;
+  await onSubmission?.();
   try {
     transaction = await operation();
   } catch (error) {
@@ -225,8 +227,9 @@ export async function requireMinedSuccess<TReceipt extends ReceiptLike>(
   operation: () => Promise<TransactionLike<TReceipt>>,
   getReceipt: (transactionHash: string) => Promise<TReceipt | null>,
   onBroadcast?: (transactionHash: string) => void | Promise<void>,
+  onSubmission?: () => void | Promise<void>,
 ): Promise<Readonly<{ transactionHash: string; receipt: TReceipt }>> {
-  return requireMinedStatus(label, 1, operation, getReceipt, onBroadcast);
+  return requireMinedStatus(label, 1, operation, getReceipt, onBroadcast, onSubmission);
 }
 
 export async function requireMinedFailure<TReceipt extends ReceiptLike>(
@@ -234,6 +237,7 @@ export async function requireMinedFailure<TReceipt extends ReceiptLike>(
   operation: () => Promise<TransactionLike<TReceipt>>,
   getReceipt: (transactionHash: string) => Promise<TReceipt | null>,
   onBroadcast?: (transactionHash: string) => void | Promise<void>,
+  onSubmission?: () => void | Promise<void>,
 ): Promise<Readonly<{ transactionHash: string; receipt: TReceipt }>> {
-  return requireMinedStatus(label, 0, operation, getReceipt, onBroadcast);
+  return requireMinedStatus(label, 0, operation, getReceipt, onBroadcast, onSubmission);
 }
