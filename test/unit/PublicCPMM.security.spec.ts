@@ -1,6 +1,10 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployFeeVault } from "../helpers/deployFeeVault";
+import {
+  createPublicPool,
+  deployPublicFactory,
+} from "../helpers/deployPublicFactory";
 
 const MAX_DEADLINE = 0xffffffff;
 
@@ -38,17 +42,15 @@ async function deployPublicPool() {
   await token0.waitForDeployment();
   await token1.waitForDeployment();
 
-  const vault = await deployFeeVault();
-  const poolFactory = await ethers.getContractFactory("PublicCPMM");
-  const pool = await poolFactory.deploy(
+  const { factory } = await deployPublicFactory();
+  const pool = await createPublicPool(
+    factory,
     await token0.getAddress(),
     await token1.getAddress(),
     18,
     18,
     30,
-    await vault.getAddress(),
   );
-  await pool.waitForDeployment();
 
   const amount0 = 1_000_000_000n;
   const amount1 = 1_000_000_000n;
@@ -123,16 +125,15 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     const token1 = await tokenFactory.deploy("Wide Token 1", "W1", 18);
     await token0.waitForDeployment();
     await token1.waitForDeployment();
-    const vault = await deployFeeVault();
-    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+    const { factory } = await deployPublicFactory();
+    const pool = await createPublicPool(
+      factory,
       await token0.getAddress(),
       await token1.getAddress(),
       18,
       18,
       30,
-      await vault.getAddress(),
     );
-    await pool.waitForDeployment();
     await token0.mint(owner.address, ethers.MaxUint256);
     await token1.mint(owner.address, ethers.MaxUint256);
     await token0.approve(await pool.getAddress(), ethers.MaxUint256);
@@ -322,16 +323,15 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     const token0 = await tokenFactory.deploy("Token 0", "TK0", 18);
     const token1 = await tokenFactory.deploy("Token 1", "TK1", 18);
     await Promise.all([token0.waitForDeployment(), token1.waitForDeployment()]);
-    const vault = await deployFeeVault();
-    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+    const { vault, factory } = await deployPublicFactory();
+    const pool = await createPublicPool(
+      factory,
       await token0.getAddress(),
       await token1.getAddress(),
       18,
       18,
       30,
-      await vault.getAddress(),
     );
-    await pool.waitForDeployment();
 
     await token0.mint(owner.address, 30_000n);
     await token1.mint(owner.address, 20_000n);
@@ -340,9 +340,18 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await token1.approve(await pool.getAddress(), ethers.MaxUint256);
     await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
 
+    const token0IsPoolToken0 = (await pool.token0()).toLowerCase() ===
+      (await token0.getAddress()).toLowerCase();
     await token0.connect(trader).approve(await pool.getAddress(), 10_000n);
-    await pool.connect(trader).swapExactInput(10_000n, 0n, true, MAX_DEADLINE);
-    const accruedProtocolFee = await pool.protocolFees0();
+    await pool.connect(trader).swapExactInput(
+      10_000n,
+      0n,
+      token0IsPoolToken0,
+      MAX_DEADLINE,
+    );
+    const accruedProtocolFee = token0IsPoolToken0
+      ? await pool.protocolFees0()
+      : await pool.protocolFees1();
     expect(accruedProtocolFee).to.be.greaterThan(0n);
 
     await pool.removeLiquidity(await pool.totalShares(), 0n, 0n, MAX_DEADLINE);
@@ -353,7 +362,9 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
 
     expect(await token0.balanceOf(await vault.getAddress())).to.equal(1n);
-    expect(await pool.protocolFees0()).to.equal(accruedProtocolFee);
+    expect(
+      token0IsPoolToken0 ? await pool.protocolFees0() : await pool.protocolFees1(),
+    ).to.equal(accruedProtocolFee);
     const [reserve0, reserve1] = await pool.effectiveReserves();
     expect(reserve0).to.equal(10_000n);
     expect(reserve1).to.equal(10_000n);
@@ -422,16 +433,15 @@ describe("PublicCPMM adversarial and differential coverage", function () {
       await ethers.getContractFactory("MockERC20")
     ).deploy("Paired Token", "PAIR", 18);
     await Promise.all([taxed.waitForDeployment(), paired.waitForDeployment()]);
-    const vault = await deployFeeVault();
-    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+    const { vault, factory } = await deployPublicFactory();
+    const pool = await createPublicPool(
+      factory,
       await taxed.getAddress(),
       await paired.getAddress(),
       18,
       18,
       30,
-      await vault.getAddress(),
     );
-    await pool.waitForDeployment();
     const poolAddress = await pool.getAddress();
     await taxed.setTaxedSender(poolAddress);
 
@@ -442,17 +452,77 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await paired.approve(poolAddress, 10_000n);
     await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
     await taxed.connect(trader).approve(poolAddress, 10_000n);
-    await pool.connect(trader).swapExactInput(10_000n, 0n, true, MAX_DEADLINE);
+    const taxedIsToken0 = (await pool.token0()).toLowerCase() ===
+      (await taxed.getAddress()).toLowerCase();
+    await pool.connect(trader).swapExactInput(
+      10_000n,
+      0n,
+      taxedIsToken0,
+      MAX_DEADLINE,
+    );
 
-    const claimBefore = await pool.protocolFees0();
+    const claimBefore = taxedIsToken0
+      ? await pool.protocolFees0()
+      : await pool.protocolFees1();
     const poolBalanceBefore = await taxed.balanceOf(poolAddress);
     const vaultBalanceBefore = await taxed.balanceOf(await vault.getAddress());
     expect(claimBefore).to.be.greaterThan(0n);
 
-    await expect(pool.collectProtocolFees(true, false))
-      .to.be.revertedWithCustomError(pool, "TransferAmountMismatch");
-    expect(await pool.protocolFees0()).to.equal(claimBefore);
+    await expect(pool.collectProtocolFees(taxedIsToken0, !taxedIsToken0))
+      .to.be.revertedWithCustomError(vault, "PublicTransferAmountMismatch");
+    expect(taxedIsToken0 ? await pool.protocolFees0() : await pool.protocolFees1())
+      .to.equal(claimBefore);
     expect(await taxed.balanceOf(poolAddress)).to.equal(poolBalanceBefore);
     expect(await taxed.balanceOf(await vault.getAddress())).to.equal(vaultBalanceBefore);
+  });
+
+  it("collects a selected fee side without reading the unselected token", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const healthy = await (await ethers.getContractFactory("MockERC20")).deploy(
+      "Healthy Token",
+      "GOOD",
+      18,
+    );
+    const reverting = await (
+      await ethers.getContractFactory("RevertingBalanceERC20")
+    ).deploy("Reverting Token", "BAD");
+    await Promise.all([healthy.waitForDeployment(), reverting.waitForDeployment()]);
+    const { vault, factory } = await deployPublicFactory();
+    const pool = await createPublicPool(
+      factory,
+      await healthy.getAddress(),
+      await reverting.getAddress(),
+      18,
+      18,
+      30,
+    );
+
+    const poolAddress = await pool.getAddress();
+    const healthyIsToken0 = (await pool.token0()).toLowerCase() ===
+      (await healthy.getAddress()).toLowerCase();
+    const initial = 10_000_000n;
+    await healthy.mint(owner.address, initial * 2n);
+    await reverting.mint(owner.address, initial * 2n);
+    await healthy.mint(trader.address, 1_000_000n);
+    await healthy.approve(poolAddress, initial);
+    await reverting.approve(poolAddress, initial);
+    await healthy.connect(trader).approve(poolAddress, 1_000_000n);
+    await pool.addLiquidity(initial, initial, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+    await pool.connect(trader).swapExactInput(
+      1_000_000n,
+      0n,
+      healthyIsToken0,
+      MAX_DEADLINE,
+    );
+
+    const accrued = healthyIsToken0
+      ? await pool.protocolFees0()
+      : await pool.protocolFees1();
+    expect(accrued).to.be.greaterThan(0n);
+    await reverting.setRevertBalanceReads(true);
+
+    await expect(pool.collectProtocolFees(healthyIsToken0, !healthyIsToken0))
+      .to.emit(pool, "ProtocolFeeCollected")
+      .withArgs(await healthy.getAddress(), await vault.getAddress(), accrued, accrued);
   });
 });

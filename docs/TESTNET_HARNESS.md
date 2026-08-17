@@ -63,9 +63,15 @@ Run the funded production-router gate:
 npm run testnet:best-execution
 ```
 
-The runner deploys a fresh fee vault, private LP-token factory, confidential
-factory and production `ConfidentialBestExecutionRouter`, binds the router once,
-and creates canonical 5, 30 and 100 bps pools. It validates:
+The runner first verifies the complete commit-bound deployment provenance,
+on-chain bindings and reviewed private-token instances from
+`COTI_DEPLOYMENT_RECORD`. It does not mutate those configured contracts. It then
+deploys runtime-verified disposable instances of the same fee vault, LP-token
+factory, confidential factory and production `ConfidentialBestExecutionRouter`,
+binds them exactly as the deployment runner does, and creates canonical 5, 30
+and 100 bps candidates only in that disposable factory. The deployment record
+must already be reviewed and tracked in a separate evidence commit, and the
+worktree must be completely clean. It validates:
 
 - two- and three-candidate GT reuse, private comparison and deterministic ties;
 - absent, uninitialized and encrypted-invalid candidate isolation;
@@ -74,17 +80,24 @@ and creates canonical 5, 30 and 100 bps pools. It validates:
 - encrypted slippage failure with complete rollback;
 - exact input escrow, selected-pool-only allowance and settlement parity;
 - zero router residue and zero candidate allowances after success;
-- both directions and every approved v1 tier.
+- both directions and every approved v1 tier;
+- true full exits from every candidate, zero pool balances/allowances/shares and
+  only the modeled protocol-fee delta remaining outside the test identity.
 
 The validated COTI testnet benchmark was 16,872,645 gas for a two-candidate paid
 best quote and 29,530,376 gas for quote-plus-swap; three candidates used
 25,247,841 and 38,236,748 gas respectively. The reverse three-candidate swap
 used 37,903,897 gas. These are testnet observations, not fixed gas promises.
-The runner prints only public contract/transaction/gas data.
+The runner prints only public contract/transaction/gas data. The benchmark above
+must be replaced with observations from the final freshly deployed source before
+completion; it is not evidence for an uncommitted working tree.
 
 `npm run testnet:best-execution-feasibility` remains the lower-level disposable
 probe proving transaction-scoped GT lifetime across contracts. It is not a
-deployable router or a substitute for the production gate.
+deployable router or a substitute for the production gate. Because the probe
+moves funded private assets, it runs only after the clean source deployment and
+separate evidence commit. It verifies the complete tracked deployment and exact
+reviewed token instances before constructing token contracts or deploying probes.
 
 ## Full confidential scenario
 
@@ -99,6 +112,11 @@ runner deploys a fresh fee vault and confidential factory, creates two canonical
 fee-tier pools for the same pair, and initializes both at independently supplied
 ratios. The second LP joins the primary pool proportionally, and local decrypted
 balance checks prove that only rounded-up proportional deposits were accepted.
+Before any deployment or token approval, the runner verifies the tracked
+`COTI_DEPLOYMENT_RECORD`, a completely clean source/evidence state, the configured
+canonical factory and vault, and exact membership of both token instances in the
+record's reviewed list. The fresh stack is disposable test evidence, not a
+replacement canonical deployment.
 
 This regression scenario deliberately exercises the currently proven paid
 per-pool quote path: a separate quote EOA/AES identity submits one encrypted
@@ -141,7 +159,9 @@ Run the atomic canonical bootstrap proof separately:
 npm run testnet:launchpad
 ```
 
-It deploys a fresh factory and migrator, sends one encrypted raw token unit to
+It first verifies the tracked deployment, clean source/evidence state, and exact
+reviewed token instances. It then deploys and runtime-verifies a disposable fresh
+factory and migrator, sends one encrypted raw token unit to
 the predicted CREATE2 pool address before deployment, creates exact encrypted
 creator allowances and normalized price bounds, then executes canonical pool
 resolution, migrator escrow, pool allowances, exact pool pulls and bootstrap
@@ -166,9 +186,13 @@ npm run testnet:fee-collection
 
 The runner brings each token-side batch to eight successful swaps. If the
 immutable one-hour window has not elapsed, it reports only the public `readyAt`
-time and exits. A later run performs a full LP exit before collecting both
-encrypted fee aggregates, proving that LP withdrawal cannot consume
-protocol-owned fees. The vault's separate 24-hour sweep delay remains intact.
+time and fails without claiming collection. A later run deposits both mature
+encrypted aggregates into the fixed vault, then performs one new token0 swap and
+a full LP exit. The exit must deposit that one-swap terminal encrypted fee into
+the same vault epoch before clearing counters, proving that LP withdrawal cannot
+consume protocol-owned fees and sub-threshold fees cannot be stranded. Vault
+sweeping remains separately gated by fixed 24-hour epochs, two-epoch maturity and
+an eight-swap aggregate minimum.
 Each swap minimum is derived from a fresh paid encrypted quote using
 `COTI_TESTNET_SLIPPAGE_BPS`; the eventual full exit requires explicit positive
 `COTI_FEE_TEST_REMOVE_MIN0/1` values.

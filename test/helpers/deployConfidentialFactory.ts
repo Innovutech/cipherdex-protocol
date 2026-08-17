@@ -30,6 +30,7 @@ export async function deployConfidentialFactory() {
     approvedCodehashes,
   );
   await factory.waitForDeployment();
+  await vault.setConfidentialFactory(await factory.getAddress());
 
   return {
     approvedCodehash,

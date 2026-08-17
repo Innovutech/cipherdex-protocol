@@ -14,7 +14,27 @@ import "./PrivateLPToken.sol";
  * caller allowed to bind an LP token exactly once.
  */
 contract PrivateLPTokenFactory {
+    mapping(address => address) public poolByToken;
+    mapping(address => address) public issuerByToken;
+
+    event PrivateLPTokenIssued(
+        address indexed pool,
+        address indexed token,
+        address indexed issuer
+    );
+
     function create(address pool) external returns (address token) {
         token = address(new PrivateLPToken(pool));
+        poolByToken[token] = pool;
+        issuerByToken[token] = msg.sender;
+        emit PrivateLPTokenIssued(pool, token, msg.sender);
+    }
+
+    function isIssuedToken(
+        address pool,
+        address token,
+        address issuer
+    ) external view returns (bool) {
+        return poolByToken[token] == pool && issuerByToken[token] == issuer;
     }
 }

@@ -1,6 +1,6 @@
 const TRANSACTION_HASH = /^0x[0-9a-fA-F]{64}$/;
 
-type ReceiptLike = Readonly<{ status: number | null }>;
+type ReceiptLike = Readonly<{ hash: string; status: number | null }>;
 type TransactionLike<TReceipt extends ReceiptLike> = Readonly<{
   hash: string;
   wait(): Promise<TReceipt | null>;
@@ -144,6 +144,19 @@ async function requireMinedStatus<TReceipt extends ReceiptLike>(
     receipt: TReceipt | null,
     cause?: unknown,
   ): Readonly<{ transactionHash: string; receipt: TReceipt }> => {
+    if (
+      !TRANSACTION_HASH.test(transactionHash) ||
+      (receipt && (
+        !TRANSACTION_HASH.test(receipt.hash) ||
+        receipt.hash.toLowerCase() !== transactionHash.toLowerCase()
+      ))
+    ) {
+      throw new UnknownBroadcastOutcomeError(
+        label,
+        TRANSACTION_HASH.test(transactionHash) ? transactionHash : undefined,
+        cause,
+      );
+    }
     if (receipt?.status === expectedStatus) {
       return Object.freeze({ transactionHash, receipt });
     }
@@ -163,16 +176,7 @@ async function requireMinedStatus<TReceipt extends ReceiptLike>(
     transaction = await operation();
   } catch (error) {
     const possibleHash = transactionHashFromError(error);
-    if (!possibleHash) {
-      throw new UnknownBroadcastOutcomeError(label, undefined, error);
-    }
-    try {
-      return validate(possibleHash, await getReceipt(possibleHash), error);
-    } catch (receiptError) {
-      if (receiptError instanceof MinedTransactionStatusError) throw receiptError;
-      if (receiptError instanceof UnknownBroadcastOutcomeError) throw receiptError;
-      throw new UnknownBroadcastOutcomeError(label, possibleHash, receiptError);
-    }
+    throw new UnknownBroadcastOutcomeError(label, possibleHash, error);
   }
 
   let receipt: TReceipt | null = null;

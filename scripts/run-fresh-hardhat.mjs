@@ -8,6 +8,7 @@ const ALLOWED_TARGETS = new Map([
   ["scripts/testnet-best-execution.ts", ["--network", "cotiTestnet"]],
   ["scripts/testnet-fee-collection.ts", ["--network", "cotiTestnet"]],
   ["scripts/testnet-preflight.ts", ["--network", "cotiTestnet"]],
+  ["scripts/testnet-quote-call-probe.ts", ["--network", "cotiTestnet"]],
 ]);
 
 const [target, ...targetArguments] = process.argv.slice(2);

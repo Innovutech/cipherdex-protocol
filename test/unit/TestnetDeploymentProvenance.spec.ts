@@ -1,15 +1,29 @@
 import { expect } from "chai";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import type { RuntimeArtifactProvenance } from "../../scripts/runtime-artifact";
-import { verifyConfiguredTestnetDeployment } from "../../scripts/testnet-deployment-provenance";
+import {
+  assertReviewedPrivateTokens,
+  verifyConfiguredTestnetDeployment,
+  type VerifiedTestnetDeploymentRecord,
+} from "../../scripts/testnet-deployment-provenance";
+
+const execFileAsync = promisify(execFile);
 
 describe("configured testnet deployment provenance", function () {
   const sourceCommit = "ab".repeat(20);
+  const evidenceCommit = "cd".repeat(20);
   const address = `0x${"12".repeat(20)}`;
+  const reviewedToken = `0x${"78".repeat(20)}`;
   const runtimeCodehash = `0x${"34".repeat(32)}`;
+  const canonicalDeployments = Object.freeze([Object.freeze({
+    key: "confidentialFactory",
+    contractName: "ConfidentialCPMMFactory",
+  })]);
   const artifact: RuntimeArtifactProvenance = Object.freeze({
     contractName: "ConfidentialCPMMFactory",
     sourceName: "contracts/ConfidentialCPMMFactory.sol",
@@ -25,25 +39,33 @@ describe("configured testnet deployment provenance", function () {
     }),
   });
 
+  function deploymentRecord(commit = sourceCommit): Record<string, any> {
+    return {
+      schemaVersion: 2,
+      status: "complete",
+      network: "cotiTestnet",
+      chainId: "7082400",
+      sourceCommit: commit,
+      contracts: {
+        confidentialFactory: {
+          address,
+          runtimeCodehash,
+          reviewedPrivateTokens: [reviewedToken],
+        },
+      },
+      compiler: {
+        ConfidentialCPMMFactory: artifact,
+      },
+    };
+  }
+
   async function fixture(
     mutate: (record: Record<string, any>) => void = () => undefined,
   ): Promise<Readonly<{ cwd: string; relativePath: string }>> {
     const cwd = await mkdtemp(join(tmpdir(), "cipherdex-provenance-"));
     await mkdir(join(cwd, "deployments"));
     const relativePath = `deployments/coti-testnet-${sourceCommit}.json`;
-    const record: Record<string, any> = {
-      schemaVersion: 2,
-      status: "complete",
-      network: "cotiTestnet",
-      chainId: "7082400",
-      sourceCommit,
-      contracts: {
-        confidentialFactory: { address, runtimeCodehash },
-      },
-      compiler: {
-        ConfidentialCPMMFactory: artifact,
-      },
-    };
+    const record = deploymentRecord();
     mutate(record);
     await writeFile(join(cwd, relativePath), `${JSON.stringify(record)}\n`, { mode: 0o600 });
     return Object.freeze({ cwd, relativePath });
@@ -64,27 +86,65 @@ describe("configured testnet deployment provenance", function () {
       }],
       cwd,
       {
-        readSourceState: async () => ({
-          commit: options.commit ?? sourceCommit,
+        readSourceState: async (_cwd, recordPath) => ({
+          headCommit: options.commit ?? evidenceCommit,
           dirty: options.dirty ?? false,
+          recordTracked: true,
+          recordMatchesHead: true,
+          sourceCommitIsAncestor: true,
+          changedPathsSinceSource: [recordPath],
         }),
         verifyRuntime: async () => options.actual ?? artifact,
+        verifyTransactions: async () => undefined,
+        canonicalDeployments,
       },
     );
   }
 
-  it("binds a complete manifest to clean source, configured address, artifact and codehash", async function () {
+  it("binds a tracked evidence manifest to its source, address, artifact and codehash", async function () {
     const { cwd, relativePath } = await fixture();
     try {
-      const record = await verify(cwd, relativePath) as { sourceCommit: string };
+      const record = await verify(cwd, relativePath) as {
+        sourceCommit: string;
+        evidenceCommit: string;
+      };
       expect(record.sourceCommit).to.equal(sourceCommit);
+      expect(record.evidenceCommit).to.equal(evidenceCommit);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  it("rejects dirty source and a different current commit", async function () {
-    for (const options of [{ dirty: true }, { commit: "cd".repeat(20) }]) {
+  it("fails closed when a funded runner selects an unreviewed private-token instance", async function () {
+    const { cwd, relativePath } = await fixture();
+    try {
+      const record = await verify(cwd, relativePath) as VerifiedTestnetDeploymentRecord;
+      expect(() => assertReviewedPrivateTokens(record, [reviewedToken.toUpperCase()]))
+        .to.not.throw();
+      expect(() => assertReviewedPrivateTokens(record, [`0x${"90".repeat(20)}`]))
+        .to.throw("absent from the reviewed deployment record");
+      expect(() => assertReviewedPrivateTokens(record, []))
+        .to.throw("requires at least one token");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed reviewed private-token lists", async function () {
+    const { cwd, relativePath } = await fixture((record) => {
+      record.contracts.confidentialFactory.reviewedPrivateTokens = ["not-an-address"];
+    });
+    try {
+      const record = await verify(cwd, relativePath) as VerifiedTestnetDeploymentRecord;
+      expect(() => assertReviewedPrivateTokens(record, [reviewedToken]))
+        .to.throw("must be a non-empty address list");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a dirty worktree and an invalid evidence commit", async function () {
+    for (const options of [{ dirty: true }, { commit: "not-a-commit" }]) {
       const { cwd, relativePath } = await fixture();
       try {
         let message = "";
@@ -93,10 +153,255 @@ describe("configured testnet deployment provenance", function () {
         } catch (error) {
           message = error instanceof Error ? error.message : String(error);
         }
-        expect(message).to.match(/clean source worktree|current HEAD/);
+        expect(message).to.match(/completely clean worktree|full Git commit/);
       } finally {
         await rm(cwd, { recursive: true, force: true });
       }
+    }
+  });
+
+  it("rejects untracked, modified, non-descendant and incomplete evidence", async function () {
+    const cases = [
+      {
+        sourceState: {
+          headCommit: evidenceCommit,
+          dirty: false,
+          recordTracked: false,
+          recordMatchesHead: false,
+          sourceCommitIsAncestor: true,
+          changedPathsSinceSource: [] as string[],
+        },
+        expected: /Git-tracked evidence/,
+      },
+      {
+        sourceState: {
+          headCommit: evidenceCommit,
+          dirty: false,
+          recordTracked: true,
+          recordMatchesHead: false,
+          sourceCommitIsAncestor: true,
+          changedPathsSinceSource: [] as string[],
+        },
+        expected: /Git-tracked evidence/,
+      },
+      {
+        sourceState: {
+          headCommit: evidenceCommit,
+          dirty: false,
+          recordTracked: true,
+          recordMatchesHead: true,
+          sourceCommitIsAncestor: false,
+          changedPathsSinceSource: [] as string[],
+        },
+        expected: /not an ancestor/,
+      },
+      {
+        sourceState: {
+          headCommit: evidenceCommit,
+          dirty: false,
+          recordTracked: true,
+          recordMatchesHead: true,
+          sourceCommitIsAncestor: true,
+          changedPathsSinceSource: ["docs/VERIFICATION_REPORT.md"],
+        },
+        expected: /not added by a post-source evidence commit/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const { cwd, relativePath } = await fixture();
+      try {
+        let message = "";
+        try {
+          await verifyConfiguredTestnetDeployment(
+            relativePath,
+            { getCode: async () => "0x00" },
+            [{
+              recordKey: "confidentialFactory",
+              contractName: "ConfidentialCPMMFactory",
+              address,
+            }],
+            cwd,
+            {
+              readSourceState: async () => testCase.sourceState,
+              verifyRuntime: async () => artifact,
+              verifyTransactions: async () => undefined,
+              canonicalDeployments,
+            },
+          );
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).to.match(testCase.expected);
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("allows only the tracked manifest and verification report after the source commit", async function () {
+    const { cwd, relativePath } = await fixture();
+    try {
+      await verifyConfiguredTestnetDeployment(
+        relativePath,
+        { getCode: async () => "0x00" },
+        [{
+          recordKey: "confidentialFactory",
+          contractName: "ConfidentialCPMMFactory",
+          address,
+        }],
+        cwd,
+        {
+          readSourceState: async () => ({
+            headCommit: evidenceCommit,
+            dirty: false,
+            recordTracked: true,
+            recordMatchesHead: true,
+            sourceCommitIsAncestor: true,
+            changedPathsSinceSource: [relativePath, "docs/VERIFICATION_REPORT.md"],
+          }),
+          verifyRuntime: async () => artifact,
+          verifyTransactions: async () => undefined,
+          canonicalDeployments,
+        },
+      );
+
+      let message = "";
+      try {
+        await verifyConfiguredTestnetDeployment(
+          relativePath,
+          { getCode: async () => "0x00" },
+          [{
+            recordKey: "confidentialFactory",
+            contractName: "ConfidentialCPMMFactory",
+            address,
+          }],
+          cwd,
+          {
+            readSourceState: async () => ({
+              headCommit: evidenceCommit,
+              dirty: false,
+              recordTracked: true,
+              recordMatchesHead: true,
+              sourceCommitIsAncestor: true,
+              changedPathsSinceSource: [relativePath, "scripts/testnet-scenario.ts"],
+            }),
+            verifyRuntime: async () => artifact,
+            verifyTransactions: async () => undefined,
+            canonicalDeployments,
+          },
+        );
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).to.include("post-source executable or unauthorized change");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an ignored working-tree manifest and accepts the same record only after an evidence commit", async function () {
+    const cwd = await mkdtemp(join(tmpdir(), "cipherdex-provenance-git-"));
+    try {
+      await mkdir(join(cwd, "deployments"));
+      await mkdir(join(cwd, "docs"));
+      await writeFile(join(cwd, ".gitignore"), "deployments/*.json\n", "utf8");
+      await writeFile(join(cwd, "source.txt"), "reviewed source\n", "utf8");
+      await execFileAsync("git", ["init"], { cwd });
+      await execFileAsync("git", ["config", "user.email", "cipherdex-test@example.invalid"], { cwd });
+      await execFileAsync("git", ["config", "user.name", "CipherDEX Test"], { cwd });
+      await execFileAsync("git", ["add", ".gitignore", "source.txt"], { cwd });
+      await execFileAsync("git", ["commit", "-m", "source"], { cwd });
+      const source = (await execFileAsync(
+        "git",
+        ["rev-parse", "--verify", "HEAD"],
+        { cwd },
+      )).stdout.trim().toLowerCase();
+      const relativePath = `deployments/coti-testnet-${source}.json`;
+      const recordBody = `${JSON.stringify(deploymentRecord(source), null, 2)}\n`;
+      await writeFile(join(cwd, relativePath), recordBody, "utf8");
+
+      let message = "";
+      try {
+        await verifyConfiguredTestnetDeployment(
+          relativePath,
+          { getCode: async () => "0x00" },
+          [{
+            recordKey: "confidentialFactory",
+            contractName: "ConfidentialCPMMFactory",
+            address,
+          }],
+          cwd,
+          {
+            verifyRuntime: async () => artifact,
+            verifyTransactions: async () => undefined,
+            canonicalDeployments,
+          },
+        );
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).to.include("Git-tracked evidence");
+
+      await writeFile(
+        join(cwd, "docs", "VERIFICATION_REPORT.md"),
+        "# Test deployment evidence\n",
+        "utf8",
+      );
+      await execFileAsync(
+        "git",
+        ["add", "-f", relativePath, "docs/VERIFICATION_REPORT.md"],
+        { cwd },
+      );
+      await execFileAsync("git", ["commit", "-m", "evidence"], { cwd });
+      const evidence = (await execFileAsync(
+        "git",
+        ["rev-parse", "--verify", "HEAD"],
+        { cwd },
+      )).stdout.trim().toLowerCase();
+
+      const verified = await verifyConfiguredTestnetDeployment(
+        relativePath,
+        { getCode: async () => "0x00" },
+        [{
+          recordKey: "confidentialFactory",
+          contractName: "ConfidentialCPMMFactory",
+          address,
+        }],
+        cwd,
+        {
+          verifyRuntime: async () => artifact,
+          verifyTransactions: async () => undefined,
+          canonicalDeployments,
+        },
+      );
+      expect(verified.sourceCommit).to.equal(source);
+      expect(verified.evidenceCommit).to.equal(evidence);
+
+      await writeFile(join(cwd, relativePath), `${recordBody}\n`, "utf8");
+      message = "";
+      try {
+        await verifyConfiguredTestnetDeployment(
+          relativePath,
+          { getCode: async () => "0x00" },
+          [{
+            recordKey: "confidentialFactory",
+            contractName: "ConfidentialCPMMFactory",
+            address,
+          }],
+          cwd,
+          {
+            verifyRuntime: async () => artifact,
+            verifyTransactions: async () => undefined,
+            canonicalDeployments,
+          },
+        );
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).to.match(/completely clean worktree|Git-tracked evidence/);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
     }
   });
 

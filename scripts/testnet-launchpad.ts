@@ -13,6 +13,12 @@ import {
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
+import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
+import {
+  assertReviewedPrivateTokens,
+  requiredTestnetDeploymentRecordPath,
+  verifyConfiguredTestnetDeployment,
+} from "./testnet-deployment-provenance";
 import {
   requireMinedFailure,
   requireMinedSuccess,
@@ -29,6 +35,7 @@ const MIGRATOR_ABI = [
 const FEE_VAULT_DEPLOY_GAS_LIMIT = 1_000_000n;
 const PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
+const FEE_VAULT_BIND_GAS_LIMIT = 250_000n;
 const LAUNCHPAD_MIGRATOR_DEPLOY_GAS_LIMIT = 2_500_000n;
 const LAUNCHPAD_ADAPTER_BIND_GAS_LIMIT = 250_000n;
 const gasLimitText = process.env.COTI_TESTNET_GAS_LIMIT?.trim() ?? "30000000";
@@ -36,6 +43,7 @@ if (!/^\d+$/.test(gasLimitText) || BigInt(gasLimitText) === 0n) {
   throw new Error("COTI_TESTNET_GAS_LIMIT must be a positive integer");
 }
 const COTI_TESTNET_TX_GAS_LIMIT = BigInt(gasLimitText);
+const EXPECTED_CHAIN_ID = 7_082_400n;
 
 let stage = "configuration";
 
@@ -184,12 +192,53 @@ async function main(): Promise<void> {
 
   const tokenA = requiredAddress("COTI_TOKEN0");
   const tokenB = requiredAddress("COTI_TOKEN1");
+  const configuredFactory = requiredAddress("COTI_FACTORY");
+  const configuredFeeVault = requiredAddress("COTI_FEE_VAULT");
+  const network = await hardhatEthers.provider.getNetwork();
+  if (network.chainId !== EXPECTED_CHAIN_ID) {
+    throw new Error(`expected COTI testnet ${EXPECTED_CHAIN_ID}, received ${network.chainId}`);
+  }
+  stage = "reviewed deployment provenance";
+  const deploymentRecord = await verifyConfiguredTestnetDeployment(
+    requiredTestnetDeploymentRecordPath(),
+    hardhatEthers.provider,
+    [
+      {
+        recordKey: "confidentialFactory",
+        contractName: "ConfidentialCPMMFactory",
+        address: configuredFactory,
+      },
+      {
+        recordKey: "feeVault",
+        contractName: "CipherDEXFeeVault",
+        address: configuredFeeVault,
+      },
+    ],
+  );
+  assertReviewedPrivateTokens(deploymentRecord, [tokenA, tokenB]);
   const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
     hardhatEthers.provider,
     [tokenA, tokenB],
   );
   const decimalsA = requiredUInt("COTI_TOKEN0_DECIMALS");
   const decimalsB = requiredUInt("COTI_TOKEN1_DECIMALS");
+  stage = "onchain private-token decimal validation";
+  const tokenARead = new Contract(tokenA, PRIVATE_ERC20_TESTNET_ABI, hardhatEthers.provider);
+  const tokenBRead = new Contract(tokenB, PRIVATE_ERC20_TESTNET_ABI, hardhatEthers.provider);
+  const [onchainDecimalsAValue, onchainDecimalsBValue] = await Promise.all([
+    tokenARead.decimals(),
+    tokenBRead.decimals(),
+  ]);
+  const onchainDecimalsA = Number(onchainDecimalsAValue);
+  const onchainDecimalsB = Number(onchainDecimalsBValue);
+  if (
+    decimalsA > 18 ||
+    decimalsB > 18 ||
+    onchainDecimalsA !== decimalsA ||
+    onchainDecimalsB !== decimalsB
+  ) {
+    throw new Error("configured private-token decimals do not match reviewed onchain metadata");
+  }
   const feeBps = requiredUInt("COTI_LAUNCHPAD_FEE_BPS", 30);
   const suppliedAmountA = optionalBigInt(
     "COTI_LAUNCHPAD_AMOUNT0",
@@ -241,10 +290,15 @@ async function main(): Promise<void> {
     "fee vault deployment",
     () => feeVaultFactory.deploy(walletAddress, { gasLimit: FEE_VAULT_DEPLOY_GAS_LIMIT }),
   );
+  await verifyDeployedRuntimeArtifact("CipherDEXFeeVault", await feeVault.getAddress());
   const privateLpFactory = await hardhatEthers.getContractFactory("PrivateLPTokenFactory", deployer);
   const lpTokenFactory = await deployFunded(
     "private LP token factory deployment",
     () => privateLpFactory.deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT }),
+  );
+  await verifyDeployedRuntimeArtifact(
+    "PrivateLPTokenFactory",
+    await lpTokenFactory.getAddress(),
   );
   const factoryFactory = await hardhatEthers.getContractFactory("ConfidentialCPMMFactory", deployer);
   const factory = await deployFunded(
@@ -257,6 +311,16 @@ async function main(): Promise<void> {
     ),
   );
   const factoryAddress = await factory.getAddress();
+  await verifyDeployedRuntimeArtifact("ConfidentialCPMMFactory", factoryAddress);
+  await submit(
+    "confidential fee-vault factory binding",
+    feeVault.setConfidentialFactory(factoryAddress, {
+      gasLimit: FEE_VAULT_BIND_GAS_LIMIT,
+    }),
+  );
+  if ((await feeVault.confidentialFactory()).toLowerCase() !== factoryAddress.toLowerCase()) {
+    throw new Error("fee vault did not bind the confidential factory");
+  }
 
   const migratorFactory = await hardhatEthers.getContractFactory("ConfidentialLaunchpadMigrator", deployer);
   const migratorDeployment = await deployFunded(
@@ -266,6 +330,7 @@ async function main(): Promise<void> {
     }),
   );
   const migratorAddress = await migratorDeployment.getAddress();
+  await verifyDeployedRuntimeArtifact("ConfidentialLaunchpadMigrator", migratorAddress);
   await submit(
     "launchpad adapter binding",
     factory.setBootstrapAdapter(migratorAddress, {
@@ -276,8 +341,8 @@ async function main(): Promise<void> {
   if ((await factory.bootstrapAdapter()).toLowerCase() !== migratorAddress.toLowerCase()) {
     throw new Error("factory did not bind the launchpad adapter");
   }
-  console.log(`factory deployed: ${factoryAddress}`);
-  console.log(`launchpad migrator deployed: ${migratorAddress}`);
+  console.log(`disposable launchpad factory deployed: ${factoryAddress}`);
+  console.log(`disposable launchpad migrator deployed: ${migratorAddress}`);
 
   const token0 = new Contract(canonicalToken0, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const token1 = new Contract(canonicalToken1, PRIVATE_ERC20_TESTNET_ABI, wallet);
@@ -371,7 +436,6 @@ async function main(): Promise<void> {
   const minSharesInput = await wallet.encryptValue256(minShares, migratorAddress, migrateSelector);
   const minPriceInput = await wallet.encryptValue256(minPrice, migratorAddress, migrateSelector);
   const maxPriceInput = await wallet.encryptValue256(maxPrice, migratorAddress, migrateSelector);
-  const network = await hardhatEthers.provider.getNetwork();
   const withDisposition = disposition !== undefined;
   const signAuthorization = (
     signedAmount0: typeof input0,

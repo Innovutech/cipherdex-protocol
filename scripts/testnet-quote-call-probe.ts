@@ -1,11 +1,21 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import { TransactionReceipt } from "ethers";
+import type { TransactionReceipt } from "ethers";
 import { ethers } from "hardhat";
+import {
+  verifyDeployedRuntimeArtifactWithProvenance,
+  type RuntimeArtifactProvenance,
+} from "./runtime-artifact";
 import {
   requireMinedSuccess,
   safeTestnetErrorSummary,
 } from "./testnet-transaction-evidence";
 
+const execFileAsync = promisify(execFile);
+const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
+const COTI_TESTNET_CHAIN_ID = 7_082_400n;
 const RESERVE0 = 1_000_000n;
 const RESERVE1 = 2_000_000n;
 const INPUT = 10_000n;
@@ -18,6 +28,48 @@ type ProbeResult = {
   supported: boolean;
   reason?: string;
 };
+
+type MinedEvidence = Readonly<{
+  transactionHash: string;
+  receipt: TransactionReceipt;
+}>;
+
+async function assertCleanCommittedSource(): Promise<string> {
+  const cwd = process.cwd();
+  const [head, status] = await Promise.all([
+    execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+      cwd,
+      encoding: "utf8",
+    }),
+    execFileAsync(
+      "git",
+      ["status", "--porcelain=v1", "--untracked-files=all", "--", "."],
+      { cwd, encoding: "utf8" },
+    ),
+  ]);
+  const sourceCommit = head.stdout.trim();
+  if (!SOURCE_COMMIT_PATTERN.test(sourceCommit)) {
+    throw new Error("quote-call probe requires a committed source revision");
+  }
+  if (status.stdout.trim().length > 0) {
+    throw new Error("quote-call probe requires a clean committed worktree");
+  }
+  await execFileAsync(
+    "git",
+    [
+      "ls-files",
+      "--error-unmatch",
+      "--",
+      "scripts/testnet-quote-call-probe.ts",
+      "contracts/mocks/MpcQuoteCallProbe.sol",
+      "scripts/runtime-artifact.ts",
+      "hardhat.config.ts",
+      "package-lock.json",
+    ],
+    { cwd, encoding: "utf8" },
+  );
+  return sourceCommit.toLowerCase();
+}
 
 function requiredPrivateKey(name: string): string {
   const value = process.env[name]?.trim();
@@ -51,6 +103,17 @@ async function submit(
 }
 
 async function main(): Promise<void> {
+  stage = "source provenance";
+  const sourceCommit = await assertCleanCommittedSource();
+
+  stage = "network provenance";
+  const network = await ethers.provider.getNetwork();
+  if (network.chainId !== COTI_TESTNET_CHAIN_ID) {
+    throw new Error(
+      `quote-call probe requires COTI testnet chain ${COTI_TESTNET_CHAIN_ID.toString()}`,
+    );
+  }
+
   stage = "quote identity initialization";
   const quoteKey = requiredPrivateKey("COTI_QUOTE_PRIVATE_KEY");
   const quoteAesKey = requiredAesKey("COTI_QUOTE_AES_KEY");
@@ -61,7 +124,7 @@ async function main(): Promise<void> {
   stage = "probe deployment";
   const factory = await ethers.getContractFactory("MpcQuoteCallProbe");
   let probe: any;
-  await submit("probe deployment", async () => {
+  const deploymentEvidence = await submit("probe deployment", async () => {
     probe = await factory.deploy(RESERVE0, RESERVE1, quoteAddress, {
       gasLimit: 10_000_000n,
     });
@@ -73,6 +136,12 @@ async function main(): Promise<void> {
     throw new Error("probe deployment mined without a contract handle; do not retry automatically");
   }
   const probeAddress = await probe.getAddress();
+  stage = "probe runtime provenance";
+  const runtimeProvenance = await verifyDeployedRuntimeArtifactWithProvenance(
+    "MpcQuoteCallProbe",
+    probeAddress,
+    ethers.provider,
+  );
   const quoteProbe = probe.connect(quoteWallet);
   console.log(`MPC quote-call probe deployed: ${probeAddress}`);
 
@@ -244,7 +313,9 @@ async function main(): Promise<void> {
     throw new Error("ciphertext-only storage reads unexpectedly failed");
   }
 
-  if (publicQuoteSupported || storedConstantQuoteSupported || encryptedQuoteSupported) {
+  const gaslessQuoteSupported =
+    publicQuoteSupported || storedConstantQuoteSupported || encryptedQuoteSupported;
+  if (gaslessQuoteSupported) {
     console.log(
       "COTI testnet probe passed: at least one gasless confidential quote path is viable",
     );
@@ -253,6 +324,29 @@ async function main(): Promise<void> {
       "COTI testnet probe passed: ciphertext storage reads work, but the isolated MPC quote paths are unavailable under eth_call",
     );
   }
+
+  const serializeMinedEvidence = (evidence: MinedEvidence) => Object.freeze({
+    transactionHash: evidence.transactionHash,
+    blockNumber: evidence.receipt.blockNumber,
+    gasUsed: evidence.receipt.gasUsed.toString(),
+  });
+  console.log(JSON.stringify(Object.freeze({
+    schema: "cipherdex.testnet-quote-call-probe/v1",
+    sourceCommit,
+    chainId: network.chainId.toString(),
+    probe: Object.freeze({
+      address: probeAddress,
+      runtime: runtimeProvenance satisfies RuntimeArtifactProvenance,
+      deployment: serializeMinedEvidence(deploymentEvidence),
+    }),
+    transactionalControl: serializeMinedEvidence(controlEvidence),
+    calls: Object.freeze(results.map((result) => Object.freeze({ ...result }))),
+    conclusion: Object.freeze({
+      ciphertextStorageReadSupported: ciphertextReadSupported === true,
+      gaslessQuoteSupported,
+      paidPerPoolQuoteRemainsPrimary: true,
+    }),
+  }), null, 2));
 }
 
 void main().catch((error: unknown) => {

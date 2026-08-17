@@ -16,6 +16,15 @@ describe("ConfidentialCPMMFactory", function () {
       await ethers.getContractFactory("PrivateLPTokenFactory")
     ).deploy();
     await lpTokenFactory.waitForDeployment();
+    const wrongHelper = await (
+      await ethers.getContractFactory("MockBootstrapAdapter")
+    ).deploy();
+    await wrongHelper.waitForDeployment();
+    await expect(factory.deploy(
+      await vault.getAddress(),
+      await wrongHelper.getAddress(),
+      [approvedCodehash],
+    )).to.be.revertedWithCustomError(factory, "InvalidLPTokenFactory");
     await expect(factory.deploy(
       await vault.getAddress(),
       await lpTokenFactory.getAddress(),
@@ -50,6 +59,7 @@ describe("ConfidentialCPMMFactory", function () {
     const pool = created?.args.pool as string;
     expect(await factory.isPool(pool)).to.equal(true);
     expect(await factory.feeVault()).to.equal(await vault.getAddress());
+    expect(await vault.confidentialFactory()).to.equal(await factory.getAddress());
     expect(await factory.isApprovedFeeTier(5)).to.equal(true);
     expect(await factory.isApprovedFeeTier(30)).to.equal(true);
     expect(await factory.isApprovedFeeTier(100)).to.equal(true);
@@ -67,6 +77,9 @@ describe("ConfidentialCPMMFactory", function () {
     const [deployer] = await ethers.getSigners();
     const lpTokenFactoryAddress = await factory.lpTokenFactory();
     expect(lpTokenFactoryAddress).to.equal(await lpTokenFactory.getAddress());
+    expect(await factory.PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH()).to.equal(
+      ethers.keccak256(await ethers.provider.getCode(lpTokenFactoryAddress)),
+    );
     expect(await factory.bootstrapAdapter()).to.equal(ethers.ZeroAddress);
     expect(await factory.bestExecutionRouter()).to.equal(ethers.ZeroAddress);
     const [, outsider] = await ethers.getSigners();
@@ -75,6 +88,10 @@ describe("ConfidentialCPMMFactory", function () {
     await lpTokenFactory.connect(outsider).create(pool);
     const decoy = await ethers.getContractAt("PrivateLPToken", decoyAddress);
     expect(await decoy.pool()).to.equal(pool);
+    expect(await lpTokenFactory.isIssuedToken(pool, decoyAddress, outsider.address))
+      .to.equal(true);
+    expect(await lpTokenFactory.isIssuedToken(pool, decoyAddress, await factory.getAddress()))
+      .to.equal(false);
 
     const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
     const migrator = await migratorFactory.deploy(await factory.getAddress());
@@ -139,6 +156,11 @@ describe("ConfidentialCPMMFactory", function () {
     expect(shareTokenAddress).to.not.equal(ethers.ZeroAddress);
     const shareToken = await ethers.getContractAt("PrivateLPToken", shareTokenAddress);
     expect(await shareToken.pool()).to.equal(pool);
+    expect(await lpTokenFactory.isIssuedToken(
+      pool,
+      shareTokenAddress,
+      await factory.getAddress(),
+    )).to.equal(true);
     expect(await shareToken.publicAmountsEnabled()).to.equal(false);
     await expect(shareToken["burn(uint256)"](1n))
       .to.be.revertedWithCustomError(shareToken, "HolderBurnDisabled");

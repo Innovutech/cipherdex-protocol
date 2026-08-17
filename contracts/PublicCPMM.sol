@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./CipherDEXFeePolicy.sol";
+import "./interfaces/IPublicFeeVault.sol";
 
 /**
  * @title PublicCPMM
@@ -79,6 +80,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
     error InvalidPriceBounds();
     error ProtocolFeeAccountingMismatch();
     error NoProtocolFees();
+    error ResidualAllowance();
 
     event SwapExecuted(
         address indexed trader,
@@ -342,20 +344,21 @@ contract PublicCPMM is CipherDEXFeePolicy {
         nonReentrant
         returns (uint256 received0, uint256 received1)
     {
-        _reconcileProtocolFeeLosses();
+        if (collectToken0) _reconcileProtocolFeeLoss(true);
+        if (collectToken1) _reconcileProtocolFeeLoss(false);
         uint256 amount0 = collectToken0 ? protocolFees0 : 0;
         uint256 amount1 = collectToken1 ? protocolFees1 : 0;
         if (amount0 == 0 && amount1 == 0) revert NoProtocolFees();
 
         if (amount0 != 0) {
             protocolFees0 = 0;
-            received0 = _transferOut(IERC20(token0), feeVault, amount0);
+            received0 = _depositPublicOwnedBalance(IERC20(token0), amount0);
             if (received0 != amount0) revert TransferAmountMismatch();
             emit ProtocolFeeCollected(token0, feeVault, amount0, received0);
         }
         if (amount1 != 0) {
             protocolFees1 = 0;
-            received1 = _transferOut(IERC20(token1), feeVault, amount1);
+            received1 = _depositPublicOwnedBalance(IERC20(token1), amount1);
             if (received1 != amount1) revert TransferAmountMismatch();
             emit ProtocolFeeCollected(token1, feeVault, amount1, received1);
         }
@@ -443,25 +446,43 @@ contract PublicCPMM is CipherDEXFeePolicy {
     }
 
     function _reconcileProtocolFeeLosses() internal {
-        uint256 raw0 = IERC20(token0).balanceOf(address(this));
-        if (protocolFees0 > raw0) {
-            uint256 previous0 = protocolFees0;
-            protocolFees0 = raw0;
-            emit ProtocolFeeLossReconciled(token0, previous0, raw0, previous0 - raw0);
-        }
+        _reconcileProtocolFeeLoss(true);
+        _reconcileProtocolFeeLoss(false);
+    }
 
-        uint256 raw1 = IERC20(token1).balanceOf(address(this));
-        if (protocolFees1 > raw1) {
-            uint256 previous1 = protocolFees1;
-            protocolFees1 = raw1;
-            emit ProtocolFeeLossReconciled(token1, previous1, raw1, previous1 - raw1);
+    function _reconcileProtocolFeeLoss(bool token0Side) internal {
+        address token = token0Side ? token0 : token1;
+        uint256 previousClaim = token0Side ? protocolFees0 : protocolFees1;
+        uint256 rawBalance = IERC20(token).balanceOf(address(this));
+        if (previousClaim <= rawBalance) return;
+
+        if (token0Side) {
+            protocolFees0 = rawBalance;
+        } else {
+            protocolFees1 = rawBalance;
         }
+        emit ProtocolFeeLossReconciled(
+            token,
+            previousClaim,
+            rawBalance,
+            previousClaim - rawBalance
+        );
     }
 
     function _sweepUnmanagedBalance(IERC20 token, uint256 amount) internal {
         if (amount == 0) return;
-        uint256 received = _transferOut(token, feeVault, amount);
+        uint256 received = _depositPublicOwnedBalance(token, amount);
         emit UnmanagedBalanceSwept(address(token), feeVault, amount, received);
+    }
+
+    function _depositPublicOwnedBalance(IERC20 token, uint256 amount)
+        internal
+        returns (uint256 received)
+    {
+        token.forceApprove(feeVault, amount);
+        received = IPublicFeeVault(feeVault).depositPublicFees(address(token), amount);
+        token.forceApprove(feeVault, 0);
+        if (token.allowance(address(this), feeVault) != 0) revert ResidualAllowance();
     }
 
     function _transferOut(IERC20 token, address recipient, uint256 amount)

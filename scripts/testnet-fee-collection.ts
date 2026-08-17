@@ -427,48 +427,124 @@ async function main(): Promise<void> {
   stage = "fee collection maturity gate";
   requireFeeCollectionMature(BigInt(latestBlock.timestamp), readyAt);
 
-  if (await pool.initialized()) {
-    const encryptedShares = await pool.myShares.staticCall();
-    const shares = await decryptPrivateValue256(wallet, encryptedShares);
-    if (shares > 0n) {
-      const selector = pool.interface.getFunction("removeLiquidity")?.selector;
-      if (!selector) throw new Error("remove-liquidity selector unavailable");
-      const shareInput = await wallet.encryptValue256(shares, poolAddress, selector);
-      const minimum0 = await wallet.encryptValue256(
-        requiredPositiveRawAmount("COTI_FEE_TEST_REMOVE_MIN0"),
-        poolAddress,
-        selector,
-      );
-      const minimum1 = await wallet.encryptValue256(
-        requiredPositiveRawAmount("COTI_FEE_TEST_REMOVE_MIN1"),
-        poolAddress,
-        selector,
-      );
-      await submit(
-        "full LP exit before protocol fee collection",
-        pool.removeLiquidity(
-          shareInput,
-          minimum0,
-          minimum1,
-          BigInt(Math.floor(Date.now() / 1000) + 600),
-          TX_OVERRIDES,
-        ),
-      );
-      if (await pool.initialized()) throw new Error("full LP exit left the pool initialized");
-    }
-  }
-
-  await submit(
+  const vault = await ethers.getContractAt("CipherDEXFeeVault", feeVault, wallet);
+  const collectionReceipt = await submit(
     "mature confidential protocol fee collection",
     pool.collectProtocolFees(true, true, TX_OVERRIDES),
   );
+  const collectionDeposits = collectionReceipt.logs
+    .filter((log: { address: string }) => log.address.toLowerCase() === feeVault.toLowerCase())
+    .map((log: { topics: readonly string[]; data: string }) => {
+      try {
+        return vault.interface.parseLog(log);
+      } catch {
+        return null;
+      }
+    })
+    .filter((event: any) => event?.name === "ConfidentialFeesDeposited");
+  if (
+    collectionDeposits.length !== 2 ||
+    !collectionDeposits.every((event: any) =>
+      String(event.args.pool).toLowerCase() === poolAddress.toLowerCase() &&
+      BigInt(event.args.aggregatedSwapCount) >= TARGET_SWAP_COUNT
+    )
+  ) {
+    throw new Error("mature fee collection did not produce two canonical vault deposits");
+  }
   if (
     BigInt(await pool.protocolFeeSwapCount0()) !== 0n ||
     BigInt(await pool.protocolFeeSwapCount1()) !== 0n
   ) {
     throw new Error("confidential fee collection did not clear both public batch counters");
   }
-  console.log(`confidential protocol fees collected to fixed vault ${feeVault}`);
+
+  if (!(await pool.initialized())) {
+    throw new Error("terminal-fee proof requires an initialized pool after mature collection");
+  }
+  if (await privateBalance(token0, walletAddress, wallet) < swap0) {
+    throw new Error("terminal-fee proof exceeds the available private token0 balance");
+  }
+  await setPrivateAllowance(token0, token0Address, poolAddress, swap0, wallet, "terminal token0");
+  const terminalSwapSelector = pool.interface.getFunction("swapExactInput")?.selector;
+  if (!terminalSwapSelector) throw new Error("terminal swap selector unavailable");
+  const terminalQuote = await requestPrivateQuote(
+    pool,
+    poolAddress,
+    wallet,
+    swap0,
+    true,
+    "terminal sub-threshold fee quote",
+  );
+  await submit(
+    "terminal sub-threshold fee swap",
+    pool.swapExactInput(
+      await wallet.encryptValue256(swap0, poolAddress, terminalSwapSelector),
+      await wallet.encryptValue256(
+        minimumFromQuote(terminalQuote),
+        poolAddress,
+        terminalSwapSelector,
+      ),
+      true,
+      BigInt(Math.floor(Date.now() / 1000) + 600),
+      TX_OVERRIDES,
+    ),
+  );
+  if (BigInt(await pool.protocolFeeSwapCount0()) !== 1n) {
+    throw new Error("terminal-fee proof did not create one sub-threshold accrual");
+  }
+
+  if (await pool.initialized()) {
+    const encryptedShares = await pool.myShares.staticCall();
+    const shares = await decryptPrivateValue256(wallet, encryptedShares);
+    if (shares <= 0n) throw new Error("terminal-fee proof wallet owns no LP shares");
+    const selector = pool.interface.getFunction("removeLiquidity")?.selector;
+    if (!selector) throw new Error("remove-liquidity selector unavailable");
+    const terminalReceipt = await submit(
+      "full LP exit with terminal protocol fee deposit",
+      pool.removeLiquidity(
+        await wallet.encryptValue256(shares, poolAddress, selector),
+        await wallet.encryptValue256(
+          requiredPositiveRawAmount("COTI_FEE_TEST_REMOVE_MIN0"),
+          poolAddress,
+          selector,
+        ),
+        await wallet.encryptValue256(
+          requiredPositiveRawAmount("COTI_FEE_TEST_REMOVE_MIN1"),
+          poolAddress,
+          selector,
+        ),
+        BigInt(Math.floor(Date.now() / 1000) + 600),
+        TX_OVERRIDES,
+      ),
+    );
+    const terminalDeposits = terminalReceipt.logs
+      .filter((log: { address: string }) => log.address.toLowerCase() === feeVault.toLowerCase())
+      .map((log: { topics: readonly string[]; data: string }) => {
+        try {
+          return vault.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .filter((event: any) => event?.name === "ConfidentialFeesDeposited");
+    if (
+      terminalDeposits.length !== 1 ||
+      String(terminalDeposits[0].args.pool).toLowerCase() !== poolAddress.toLowerCase() ||
+      String(terminalDeposits[0].args.token).toLowerCase() !== token0Address.toLowerCase() ||
+      BigInt(terminalDeposits[0].args.aggregatedSwapCount) !== 1n
+    ) {
+      throw new Error("full exit did not aggregate the one-swap terminal fee into the vault");
+    }
+    if (await pool.initialized()) throw new Error("full LP exit left the pool initialized");
+  }
+
+  if (
+    BigInt(await pool.protocolFeeSwapCount0()) !== 0n ||
+    BigInt(await pool.protocolFeeSwapCount1()) !== 0n
+  ) {
+    throw new Error("terminal fee deposit did not clear both public batch counters");
+  }
+  console.log(`confidential protocol fees aggregated in fixed vault ${feeVault}`);
 }
 
 void main().catch((error: unknown) => {

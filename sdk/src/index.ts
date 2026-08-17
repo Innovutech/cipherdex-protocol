@@ -22,6 +22,9 @@ export const CIPHERDEX_V1_FEE_POLICY = {
     minimumPoolSwapCount: 8,
     minimumPoolDelaySeconds: 3_600,
     minimumVaultSweepDelaySeconds: 86_400,
+    vaultEpochSeconds: 86_400,
+    minimumVaultAggregatedSwapCount: 8,
+    minimumVaultResidenceEpochs: 2,
   } as const,
 } as const;
 
@@ -74,7 +77,7 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "function bootstrapLiquidityWithDisposition(address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)",
   "function removeLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256),(uint256,uint256))",
   "function collectProtocolFees(bool,bool)",
-  "function myShares() returns ((uint256,uint256))",
+  "function myShares() view returns ((uint256,uint256))",
   "function lockInfo(bytes32) view returns (address,uint64,bool,bool)",
   "function lockShares(((uint256,uint256),bytes),uint64,bool,uint64) returns (bytes32)",
   "function unlockShares(bytes32)",
@@ -91,6 +94,7 @@ export const CONFIDENTIAL_CPMM_ABI = [
 export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function PRIVACY_MODE() view returns (uint8)",
+  "function PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH() view returns (bytes32)",
   "function lpTokenFactory() view returns (address)",
   "function feeVault() view returns (address)",
   "function isApprovedPrivateTokenCodehash(bytes32) view returns (bool)",
@@ -116,6 +120,13 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "event PrivateLPTokenCreated(address indexed pool,address indexed token)",
   "event BootstrapAdapterConfigured(address indexed adapter)",
   "event BestExecutionRouterConfigured(address indexed router)",
+] as const;
+
+export const PRIVATE_LP_TOKEN_FACTORY_ABI = [
+  "function poolByToken(address) view returns (address)",
+  "function issuerByToken(address) view returns (address)",
+  "function isIssuedToken(address,address,address) view returns (bool)",
+  "event PrivateLPTokenIssued(address indexed pool,address indexed token,address indexed issuer)",
 ] as const;
 
 export const CONFIDENTIAL_BEST_EXECUTION_POOL_ABI = [
@@ -159,12 +170,31 @@ export const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI = [
 export const CIPHERDEX_FEE_VAULT_ABI = [
   "function beneficiary() view returns (address)",
   "function deployedAt() view returns (uint64)",
+  "function confidentialFactoryConfigurator() view returns (address)",
+  "function confidentialFactory() view returns (address)",
+  "function publicFactory() view returns (address)",
+  "function publicFees(address) view returns (uint256)",
   "function MIN_CONFIDENTIAL_SWEEP_DELAY() view returns (uint64)",
+  "function CONFIDENTIAL_EPOCH_SECONDS() view returns (uint64)",
+  "function MIN_CONFIDENTIAL_AGGREGATED_SWAPS() view returns (uint64)",
+  "function MAX_CONFIDENTIAL_SWEEP_EPOCHS() view returns (uint256)",
+  "function confidentialSwapCountByEpoch(address,uint64) view returns (uint64)",
+  "function nextConfidentialEpochIndex(address) view returns (uint256)",
+  "function confidentialEpochCount(address) view returns (uint256)",
+  "function confidentialEpochAt(address,uint256) view returns (uint64)",
   "function nextConfidentialSweepAt(address) view returns (uint64)",
+  "function setConfidentialFactory(address)",
+  "function setPublicFactory(address)",
+  "function depositPublicFees(address,uint256) returns (uint256)",
+  "function depositConfidentialFees(address,uint256,uint32)",
   "function sweepPublicToken(address) returns (uint256)",
   "function sweepConfidentialToken(address)",
   "event PublicFeesSwept(address indexed token,address indexed beneficiary,uint256 amount)",
-  "event ConfidentialFeesSwept(address indexed token,address indexed beneficiary)",
+  "event PublicFactoryConfigured(address indexed factory)",
+  "event PublicFeesDeposited(address indexed token,address indexed pool,uint256 amount)",
+  "event ConfidentialFeesSwept(address indexed token,address indexed beneficiary,uint64 aggregatedSwapCount)",
+  "event ConfidentialFactoryConfigured(address indexed factory)",
+  "event ConfidentialFeesDeposited(address indexed token,address indexed pool,uint64 indexed epoch,uint32 aggregatedSwapCount)",
 ] as const;
 
 export const LAUNCHPAD_MIGRATOR_EIP712_DOMAIN = {
@@ -196,79 +226,96 @@ const isAddressLike = (value: unknown): value is string =>
 const isBytes32 = (value: unknown): value is string =>
   typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value);
 
-const SENSITIVE_DISCLOSURE_FIELDS = new Set([
-  "reserve0",
-  "reserve1",
-  "reserves",
-  "totalShares",
-  "shares",
-  "balance",
-  "balanceOf",
-  "amountIn",
-  "amountOut",
-  "minAmountOut",
-  "minShares",
-  "ciphertext",
-  "signature",
-  "aesKey",
-  "privateKey",
-  "encryptedInput",
-  "encryptedInputs",
+const FEE_POLICY_FIELDS = Object.freeze([
+  "totalFeeBps",
+  "protocolFeeShareNumerator",
+  "protocolFeeShareDenominator",
+  "lpFeeShareNumerator",
+  "lpFeeShareDenominator",
+  "chargedOn",
+  "extraNativeSwapFee",
+  "confidentialCollection",
+]);
+const CONFIDENTIAL_COLLECTION_FIELDS = Object.freeze([
+  "minimumPoolSwapCount",
+  "minimumPoolDelaySeconds",
+  "minimumVaultSweepDelaySeconds",
+  "vaultEpochSeconds",
+  "minimumVaultAggregatedSwapCount",
+  "minimumVaultResidenceEpochs",
+]);
+const CONFIDENTIAL_POOL_DISCOVERY_FIELDS = Object.freeze([
+  "disclosureSchemaVersion",
+  "protocolVersion",
+  "pool",
+  "token0",
+  "token1",
+  "token0Decimals",
+  "token1Decimals",
+  "feeBps",
+  "feeVault",
+  "feePolicy",
+  "privacyMode",
+  "poolKind",
+  "quoteTransport",
+]);
+const PUBLIC_POOL_DISCOVERY_FIELDS = Object.freeze([
+  "disclosureSchemaVersion",
+  "protocolVersion",
+  "pool",
+  "token0",
+  "token1",
+  "token0Decimals",
+  "token1Decimals",
+  "feeBps",
+  "feeVault",
+  "feePolicy",
+  "privacyMode",
+  "poolKind",
+]);
+const CONFIDENTIAL_LOCK_DISCOVERY_FIELDS = Object.freeze([
+  "disclosureSchemaVersion",
+  "pool",
+  "lockId",
+  "owner",
+  "unlockTime",
+  "permanent",
+  "released",
+]);
+const LAUNCHPAD_MIGRATION_METADATA_FIELDS = Object.freeze([
+  "disclosureSchemaVersion",
+  "creator",
+  "pool",
+  "disposition",
+  "lockId",
+  "unlockTime",
 ]);
 
-const MAX_DISCLOSURE_DEPTH = 32;
-const MAX_DISCLOSURE_NODES = 1_024;
-const MAX_DISCLOSURE_PROPERTIES = 4_096;
-
-/**
- * Rejects private fields and structurally hostile metadata without invoking
- * caller-provided accessors. Validation is deliberately bounded and fails
- * closed when an object graph cannot be inspected safely.
- */
-const containsSensitiveDisclosure = (root: unknown): boolean => {
-  if (!root || typeof root !== "object") return false;
-
-  const seen = new Set<object>();
-  const pending: Array<{ value: object; depth: number }> = [{ value: root, depth: 0 }];
-  let inspectedNodes = 0;
-  let inspectedProperties = 0;
-
+/** Returns descriptors only for an exact plain own-data-property schema. */
+const exactOwnDataDescriptors = (
+  value: unknown,
+  expectedFields: readonly string[],
+): PropertyDescriptorMap | undefined => {
   try {
-    while (pending.length > 0) {
-      const current = pending.pop()!;
-      if (seen.has(current.value)) continue;
-      if (current.depth > MAX_DISCLOSURE_DEPTH) return true;
-      inspectedNodes += 1;
-      if (inspectedNodes > MAX_DISCLOSURE_NODES) return true;
-      seen.add(current.value);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+    const keys = Reflect.ownKeys(value);
+    const expected = new Set(expectedFields);
+    if (
+      keys.length !== expectedFields.length ||
+      keys.some((key) => typeof key !== "string" || !expected.has(key))
+    ) return undefined;
 
-      const prototype = Object.getPrototypeOf(current.value);
-      if (
-        prototype !== Object.prototype &&
-        prototype !== null &&
-        !(Array.isArray(current.value) && prototype === Array.prototype)
-      ) {
-        return true;
-      }
-
-      const keys = Reflect.ownKeys(current.value);
-      inspectedProperties += keys.length;
-      if (inspectedProperties > MAX_DISCLOSURE_PROPERTIES) return true;
-      for (const key of keys) {
-        if (typeof key === "string" && SENSITIVE_DISCLOSURE_FIELDS.has(key)) return true;
-        const descriptor = Object.getOwnPropertyDescriptor(current.value, key);
-        if (!descriptor || descriptor.get || descriptor.set) return true;
-        const nestedValue = descriptor.value;
-        if (nestedValue && typeof nestedValue === "object") {
-          pending.push({ value: nestedValue, depth: current.depth + 1 });
-        }
-      }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const field of expectedFields) {
+      const descriptor = descriptors[field];
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return undefined;
     }
+    return descriptors;
   } catch {
-    return true;
+    return undefined;
   }
-
-  return false;
 };
 
 export const PUBLIC_CPMM_ABI = [
@@ -768,6 +815,7 @@ export type ConfidentialPoolOnchainState = {
   token1Decimals: number | bigint;
   feeBps: number | bigint;
   feeVault: string;
+  lpToken: string;
 };
 
 /**
@@ -779,6 +827,15 @@ export interface ConfidentialPoolVerificationAdapter {
   readChainId(): Promise<number | bigint>;
   getCode(address: string): Promise<string>;
   readFactoryProtocolVersion(factory: string): Promise<number | bigint>;
+  readFactoryLPTokenFactory(factory: string): Promise<string>;
+  readFactoryLPTokenFactoryRuntimeCodehash(factory: string): Promise<string>;
+  hashRuntimeCode(code: string): string;
+  isLPTokenIssued(
+    lpTokenFactory: string,
+    pool: string,
+    lpToken: string,
+    issuer: string,
+  ): Promise<boolean>;
   isFactoryPrivateTokenApproved(factory: string, token: string): Promise<boolean>;
   isFactoryPool(factory: string, pool: string): Promise<boolean>;
   getCanonicalPool(
@@ -793,6 +850,8 @@ export type ConfidentialPoolVerificationPolicy = {
   expectedFactory: string;
   expectedFeeVault: string;
   expectedProtocolVersion: number;
+  expectedLPTokenFactory: string;
+  expectedLPTokenFactoryRuntimeCodehash: string;
 };
 
 export type PublicPoolDiscovery = {
@@ -823,7 +882,7 @@ export type VerifiedPublicPoolDiscovery = Readonly<
   }
 >;
 
-export type PublicPoolOnchainState = ConfidentialPoolOnchainState;
+export type PublicPoolOnchainState = Omit<ConfidentialPoolOnchainState, "lpToken">;
 
 export interface PublicPoolVerificationAdapter {
   readChainId(): Promise<number | bigint>;
@@ -837,7 +896,12 @@ export interface PublicPoolVerificationAdapter {
   readPoolState(pool: string): Promise<PublicPoolOnchainState>;
 }
 
-export type PublicPoolVerificationPolicy = ConfidentialPoolVerificationPolicy;
+export type PublicPoolVerificationPolicy = {
+  expectedChainId: number;
+  expectedFactory: string;
+  expectedFeeVault: string;
+  expectedProtocolVersion: number;
+};
 
 export type ConfidentialLockMetadata = {
   lockId: string;
@@ -870,32 +934,51 @@ function isCipherDEXV1FeePolicy(
   value: unknown,
   totalFeeBps: unknown,
 ): value is CipherDEXV1FeePolicy {
-  if (!value || typeof value !== "object" || typeof totalFeeBps !== "number") return false;
-  const candidate = value as Partial<CipherDEXV1FeePolicy>;
+  if (typeof totalFeeBps !== "number") return false;
+  const descriptors = exactOwnDataDescriptors(value, FEE_POLICY_FIELDS);
+  if (!descriptors) return false;
+  const collectionDescriptors = exactOwnDataDescriptors(
+    ownDataValue(descriptors, "confidentialCollection"),
+    CONFIDENTIAL_COLLECTION_FIELDS,
+  );
+  if (!collectionDescriptors) return false;
   return (
     (CIPHERDEX_V1_FEE_POLICY.approvedTotalFeeBps as readonly number[]).includes(totalFeeBps) &&
-    candidate.totalFeeBps === totalFeeBps &&
-    candidate.protocolFeeShareNumerator === CIPHERDEX_V1_FEE_POLICY.protocolFeeShareNumerator &&
-    candidate.protocolFeeShareDenominator === CIPHERDEX_V1_FEE_POLICY.protocolFeeShareDenominator &&
-    candidate.lpFeeShareNumerator === CIPHERDEX_V1_FEE_POLICY.lpFeeShareNumerator &&
-    candidate.lpFeeShareDenominator === CIPHERDEX_V1_FEE_POLICY.lpFeeShareDenominator &&
-    candidate.chargedOn === CIPHERDEX_V1_FEE_POLICY.chargedOn &&
-    candidate.extraNativeSwapFee === CIPHERDEX_V1_FEE_POLICY.extraNativeSwapFee &&
-    candidate.confidentialCollection?.minimumPoolSwapCount ===
+    ownDataValue(descriptors, "totalFeeBps") === totalFeeBps &&
+    ownDataValue(descriptors, "protocolFeeShareNumerator") ===
+      CIPHERDEX_V1_FEE_POLICY.protocolFeeShareNumerator &&
+    ownDataValue(descriptors, "protocolFeeShareDenominator") ===
+      CIPHERDEX_V1_FEE_POLICY.protocolFeeShareDenominator &&
+    ownDataValue(descriptors, "lpFeeShareNumerator") ===
+      CIPHERDEX_V1_FEE_POLICY.lpFeeShareNumerator &&
+    ownDataValue(descriptors, "lpFeeShareDenominator") ===
+      CIPHERDEX_V1_FEE_POLICY.lpFeeShareDenominator &&
+    ownDataValue(descriptors, "chargedOn") === CIPHERDEX_V1_FEE_POLICY.chargedOn &&
+    ownDataValue(descriptors, "extraNativeSwapFee") ===
+      CIPHERDEX_V1_FEE_POLICY.extraNativeSwapFee &&
+    ownDataValue(collectionDescriptors, "minimumPoolSwapCount") ===
       CIPHERDEX_V1_FEE_POLICY.confidentialCollection.minimumPoolSwapCount &&
-    candidate.confidentialCollection?.minimumPoolDelaySeconds ===
+    ownDataValue(collectionDescriptors, "minimumPoolDelaySeconds") ===
       CIPHERDEX_V1_FEE_POLICY.confidentialCollection.minimumPoolDelaySeconds &&
-    candidate.confidentialCollection?.minimumVaultSweepDelaySeconds ===
-      CIPHERDEX_V1_FEE_POLICY.confidentialCollection.minimumVaultSweepDelaySeconds
+    ownDataValue(collectionDescriptors, "minimumVaultSweepDelaySeconds") ===
+      CIPHERDEX_V1_FEE_POLICY.confidentialCollection.minimumVaultSweepDelaySeconds &&
+    ownDataValue(collectionDescriptors, "vaultEpochSeconds") ===
+      CIPHERDEX_V1_FEE_POLICY.confidentialCollection.vaultEpochSeconds &&
+    ownDataValue(collectionDescriptors, "minimumVaultAggregatedSwapCount") ===
+      CIPHERDEX_V1_FEE_POLICY.confidentialCollection.minimumVaultAggregatedSwapCount &&
+    ownDataValue(collectionDescriptors, "minimumVaultResidenceEpochs") ===
+      CIPHERDEX_V1_FEE_POLICY.confidentialCollection.minimumVaultResidenceEpochs
   );
 }
 
 export function isConfidentialPoolDiscovery(
   value: unknown,
 ): value is ConfidentialPoolDiscovery {
-  if (!value || typeof value !== "object") return false;
-  if (containsSensitiveDisclosure(value)) return false;
-  const candidate = value as Partial<ConfidentialPoolDiscovery>;
+  const descriptors = exactOwnDataDescriptors(value, CONFIDENTIAL_POOL_DISCOVERY_FIELDS);
+  if (!descriptors) return false;
+  const candidate = Object.fromEntries(
+    CONFIDENTIAL_POOL_DISCOVERY_FIELDS.map((field) => [field, ownDataValue(descriptors, field)]),
+  ) as Partial<ConfidentialPoolDiscovery>;
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     candidate.protocolVersion === CIPHERDEX_PROTOCOL_VERSION &&
@@ -933,21 +1016,31 @@ const ownDataValue = (
 };
 
 const snapshotFeePolicy = (value: unknown): unknown => {
-  if (!value || typeof value !== "object") return value;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const descriptors = exactOwnDataDescriptors(value, FEE_POLICY_FIELDS);
+  if (!descriptors) return undefined;
   const collection = ownDataValue(descriptors, "confidentialCollection");
-  let confidentialCollection: unknown = collection;
-  if (collection && typeof collection === "object") {
-    const collectionDescriptors = Object.getOwnPropertyDescriptors(collection);
-    confidentialCollection = {
-      minimumPoolSwapCount: ownDataValue(collectionDescriptors, "minimumPoolSwapCount"),
-      minimumPoolDelaySeconds: ownDataValue(collectionDescriptors, "minimumPoolDelaySeconds"),
-      minimumVaultSweepDelaySeconds: ownDataValue(
-        collectionDescriptors,
-        "minimumVaultSweepDelaySeconds",
-      ),
-    };
-  }
+  const collectionDescriptors = exactOwnDataDescriptors(
+    collection,
+    CONFIDENTIAL_COLLECTION_FIELDS,
+  );
+  if (!collectionDescriptors) return undefined;
+  const confidentialCollection = {
+    minimumPoolSwapCount: ownDataValue(collectionDescriptors, "minimumPoolSwapCount"),
+    minimumPoolDelaySeconds: ownDataValue(collectionDescriptors, "minimumPoolDelaySeconds"),
+    minimumVaultSweepDelaySeconds: ownDataValue(
+      collectionDescriptors,
+      "minimumVaultSweepDelaySeconds",
+    ),
+    vaultEpochSeconds: ownDataValue(collectionDescriptors, "vaultEpochSeconds"),
+    minimumVaultAggregatedSwapCount: ownDataValue(
+      collectionDescriptors,
+      "minimumVaultAggregatedSwapCount",
+    ),
+    minimumVaultResidenceEpochs: ownDataValue(
+      collectionDescriptors,
+      "minimumVaultResidenceEpochs",
+    ),
+  };
   return {
     totalFeeBps: ownDataValue(descriptors, "totalFeeBps"),
     protocolFeeShareNumerator: ownDataValue(descriptors, "protocolFeeShareNumerator"),
@@ -961,9 +1054,9 @@ const snapshotFeePolicy = (value: unknown): unknown => {
 };
 
 const snapshotConfidentialPoolDiscovery = (value: unknown): unknown => {
-  if (!value || typeof value !== "object") return value;
   try {
-    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const descriptors = exactOwnDataDescriptors(value, CONFIDENTIAL_POOL_DISCOVERY_FIELDS);
+    if (!descriptors) return undefined;
     return {
       disclosureSchemaVersion: ownDataValue(descriptors, "disclosureSchemaVersion"),
       protocolVersion: ownDataValue(descriptors, "protocolVersion"),
@@ -985,9 +1078,9 @@ const snapshotConfidentialPoolDiscovery = (value: unknown): unknown => {
 };
 
 const snapshotPublicPoolDiscovery = (value: unknown): unknown => {
-  if (!value || typeof value !== "object") return value;
   try {
-    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const descriptors = exactOwnDataDescriptors(value, PUBLIC_POOL_DISCOVERY_FIELDS);
+    if (!descriptors) return undefined;
     return {
       disclosureSchemaVersion: ownDataValue(descriptors, "disclosureSchemaVersion"),
       protocolVersion: ownDataValue(descriptors, "protocolVersion"),
@@ -1344,9 +1437,6 @@ export async function verifyConfidentialPoolDiscovery(
   policy: ConfidentialPoolVerificationPolicy,
   adapter: ConfidentialPoolVerificationAdapter,
 ): Promise<VerifiedConfidentialPoolDiscovery> {
-  if (containsSensitiveDisclosure(value)) {
-    throw new TypeError("Invalid confidential pool discovery shape");
-  }
   const discoverySnapshot = snapshotConfidentialPoolDiscovery(value);
   if (!isConfidentialPoolDiscovery(discoverySnapshot)) {
     throw new TypeError("Invalid confidential pool discovery shape");
@@ -1357,6 +1447,8 @@ export async function verifyConfidentialPoolDiscovery(
     policy.expectedChainId <= 0 ||
     !isAddressLike(policy.expectedFactory) ||
     !isAddressLike(policy.expectedFeeVault) ||
+    !isAddressLike(policy.expectedLPTokenFactory) ||
+    !/^0x[0-9a-f]{64}$/iu.test(policy.expectedLPTokenFactoryRuntimeCodehash) ||
     !Number.isSafeInteger(policy.expectedProtocolVersion) ||
     policy.expectedProtocolVersion <= 0 ||
     discovery.protocolVersion !== policy.expectedProtocolVersion ||
@@ -1369,17 +1461,25 @@ export async function verifyConfidentialPoolDiscovery(
   let factoryCode: string;
   let poolCode: string;
   let factoryVersionValue: number | bigint;
+  let factoryLPTokenFactory: string;
+  let factoryLPTokenFactoryRuntimeCodehash: string;
+  let lpTokenFactoryCode: string;
   let token0Approved: boolean;
   let token1Approved: boolean;
   let factoryRecognizesPool: boolean;
   let canonicalPool: string;
   let poolState: ConfidentialPoolOnchainState;
+  let lpTokenCode: string;
+  let lpTokenIssued: boolean;
   try {
     [
       chainIdValue,
       factoryCode,
       poolCode,
       factoryVersionValue,
+      factoryLPTokenFactory,
+      factoryLPTokenFactoryRuntimeCodehash,
+      lpTokenFactoryCode,
       token0Approved,
       token1Approved,
       factoryRecognizesPool,
@@ -1390,11 +1490,23 @@ export async function verifyConfidentialPoolDiscovery(
       adapter.getCode(policy.expectedFactory),
       adapter.getCode(discovery.pool),
       adapter.readFactoryProtocolVersion(policy.expectedFactory),
+      adapter.readFactoryLPTokenFactory(policy.expectedFactory),
+      adapter.readFactoryLPTokenFactoryRuntimeCodehash(policy.expectedFactory),
+      adapter.getCode(policy.expectedLPTokenFactory),
       adapter.isFactoryPrivateTokenApproved(policy.expectedFactory, discovery.token0),
       adapter.isFactoryPrivateTokenApproved(policy.expectedFactory, discovery.token1),
       adapter.isFactoryPool(policy.expectedFactory, discovery.pool),
       adapter.getCanonicalPool(policy.expectedFactory, discovery),
       adapter.readPoolState(discovery.pool),
+    ]);
+    [lpTokenCode, lpTokenIssued] = await Promise.all([
+      adapter.getCode(poolState.lpToken),
+      adapter.isLPTokenIssued(
+        policy.expectedLPTokenFactory,
+        discovery.pool,
+        poolState.lpToken,
+        policy.expectedFactory,
+      ),
     ]);
   } catch (error) {
     throw new TypeError("Unable to verify confidential pool provenance", { cause: error });
@@ -1412,6 +1524,12 @@ export async function verifyConfidentialPoolDiscovery(
     chainId !== policy.expectedChainId ||
     !hasDeployedCode(factoryCode) ||
     !hasDeployedCode(poolCode) ||
+    !sameAddress(factoryLPTokenFactory, policy.expectedLPTokenFactory) ||
+    factoryLPTokenFactoryRuntimeCodehash.toLowerCase() !==
+      policy.expectedLPTokenFactoryRuntimeCodehash.toLowerCase() ||
+    !hasDeployedCode(lpTokenFactoryCode) ||
+    adapter.hashRuntimeCode(lpTokenFactoryCode).toLowerCase() !==
+      policy.expectedLPTokenFactoryRuntimeCodehash.toLowerCase() ||
     !token0Approved ||
     !token1Approved ||
     !factoryRecognizesPool ||
@@ -1425,7 +1543,10 @@ export async function verifyConfidentialPoolDiscovery(
     token1Decimals !== discovery.token1Decimals ||
     feeBps !== discovery.feeBps ||
     !sameAddress(poolState.feeVault, discovery.feeVault) ||
-    !sameAddress(poolState.feeVault, policy.expectedFeeVault)
+    !sameAddress(poolState.feeVault, policy.expectedFeeVault) ||
+    !isAddressLike(poolState.lpToken) ||
+    !hasDeployedCode(lpTokenCode) ||
+    !lpTokenIssued
   ) {
     throw new TypeError("Confidential pool provenance verification failed");
   }
@@ -1452,9 +1573,11 @@ export async function verifyConfidentialPoolDiscovery(
 }
 
 export function isPublicPoolDiscovery(value: unknown): value is PublicPoolDiscovery {
-  if (!value || typeof value !== "object") return false;
-  if (containsSensitiveDisclosure(value)) return false;
-  const candidate = value as Partial<PublicPoolDiscovery>;
+  const descriptors = exactOwnDataDescriptors(value, PUBLIC_POOL_DISCOVERY_FIELDS);
+  if (!descriptors) return false;
+  const candidate = Object.fromEntries(
+    PUBLIC_POOL_DISCOVERY_FIELDS.map((field) => [field, ownDataValue(descriptors, field)]),
+  ) as Partial<PublicPoolDiscovery>;
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     candidate.protocolVersion === CIPHERDEX_PROTOCOL_VERSION &&
@@ -1491,9 +1614,6 @@ export async function verifyPublicPoolDiscovery(
   policy: PublicPoolVerificationPolicy,
   adapter: PublicPoolVerificationAdapter,
 ): Promise<VerifiedPublicPoolDiscovery> {
-  if (containsSensitiveDisclosure(value)) {
-    throw new TypeError("Invalid public pool discovery shape");
-  }
   const discoverySnapshot = snapshotPublicPoolDiscovery(value);
   if (!isPublicPoolDiscovery(discoverySnapshot)) {
     throw new TypeError("Invalid public pool discovery shape");
@@ -1592,9 +1712,11 @@ export async function verifyPublicPoolDiscovery(
 export function isConfidentialLockDiscovery(
   value: unknown,
 ): value is ConfidentialLockDiscovery {
-  if (!value || typeof value !== "object") return false;
-  if (containsSensitiveDisclosure(value)) return false;
-  const candidate = value as Partial<ConfidentialLockDiscovery>;
+  const descriptors = exactOwnDataDescriptors(value, CONFIDENTIAL_LOCK_DISCOVERY_FIELDS);
+  if (!descriptors) return false;
+  const candidate = Object.fromEntries(
+    CONFIDENTIAL_LOCK_DISCOVERY_FIELDS.map((field) => [field, ownDataValue(descriptors, field)]),
+  ) as Partial<ConfidentialLockDiscovery>;
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     isAddressLike(candidate.pool) &&
@@ -1612,9 +1734,11 @@ export const isConfidentialLockMetadata = isConfidentialLockDiscovery;
 export function isLaunchpadMigrationMetadata(
   value: unknown,
 ): value is LaunchpadMigrationMetadata {
-  if (!value || typeof value !== "object") return false;
-  if (containsSensitiveDisclosure(value)) return false;
-  const candidate = value as Partial<LaunchpadMigrationMetadata>;
+  const descriptors = exactOwnDataDescriptors(value, LAUNCHPAD_MIGRATION_METADATA_FIELDS);
+  if (!descriptors) return false;
+  const candidate = Object.fromEntries(
+    LAUNCHPAD_MIGRATION_METADATA_FIELDS.map((field) => [field, ownDataValue(descriptors, field)]),
+  ) as Partial<LaunchpadMigrationMetadata>;
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     isAddressLike(candidate.creator) &&

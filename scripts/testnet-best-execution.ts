@@ -4,6 +4,7 @@ import hre, { ethers } from "hardhat";
 
 import {
   CONFIDENTIAL_BEST_EXECUTION_ROUTER_TESTNET_ABI,
+  CONFIDENTIAL_FACTORY_TESTNET_ABI,
   CONFIDENTIAL_POOL_TESTNET_ABI,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
@@ -11,6 +12,11 @@ import { decryptPrivateValue256 } from "./coti-testnet-values";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import { confidentialLiquidityBounds } from "./testnet-slippage";
+import {
+  assertReviewedPrivateTokens,
+  requiredTestnetDeploymentRecordPath,
+  verifyConfiguredTestnetDeployment,
+} from "./testnet-deployment-provenance";
 import {
   requireMinedFailure,
   requireMinedSuccess,
@@ -171,6 +177,11 @@ function modeledPostSwapReserves(
   };
 }
 
+function modeledProtocolFee(amountIn: bigint, feeBps: number): bigint {
+  const netAmountIn = amountIn * BigInt(10_000 - feeBps) / 10_000n;
+  return (amountIn - netAmountIn) / 6n;
+}
+
 function reserveOutForExactQuote(
   targetOutput: bigint,
   amountIn: bigint,
@@ -216,6 +227,32 @@ async function submit(
   return { receipt, hash: evidence.transactionHash, gasUsed: receipt.gasUsed };
 }
 
+async function deployContract(
+  name: string,
+  wallet: CotiWallet,
+  args: readonly unknown[],
+  gasLimit: bigint,
+): Promise<{ contract: any; address: string; transaction: Submitted }> {
+  stage = `${name} deployment`;
+  const factory = await ethers.getContractFactory(name, wallet);
+  let contract: any;
+  const transaction = await submit(
+    `${name} deployment`,
+    (async () => {
+      contract = await factory.deploy(...args, { gasLimit });
+      const deploymentTx = contract.deploymentTransaction();
+      if (!deploymentTx) throw new Error(`${name} deployment transaction unavailable`);
+      return deploymentTx;
+    })(),
+  );
+  if (!contract) {
+    throw new Error(`${name} deployment mined without a contract handle; do not retry automatically`);
+  }
+  const address = ethersLibrary.getAddress(await contract.getAddress());
+  await verifyDeployedRuntimeArtifact(name, address);
+  return { contract, address, transaction };
+}
+
 async function expectFailure(
   label: string,
   operation: () => Promise<{ hash: string; wait(): Promise<TransactionReceipt | null> }>,
@@ -245,6 +282,14 @@ async function privateAllowance(
 ): Promise<bigint> {
   const allowance = await token.allowance.staticCall(owner, spender);
   return decryptPrivateValue256(wallet, allowance.ownerCiphertext);
+}
+
+async function privateShares(context: PoolContext, wallet: CotiWallet): Promise<bigint> {
+  const lpTokenAddress = ethersLibrary.getAddress(await context.pool.lpToken());
+  if (lpTokenAddress === ethersLibrary.ZeroAddress) return 0n;
+  const owner = await wallet.getAddress();
+  const lpToken = new Contract(lpTokenAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
+  return privateBalance(lpToken, wallet, owner);
 }
 
 async function setExactAllowance(
@@ -380,36 +425,6 @@ function requireSnapshotsEqual(
   }
 }
 
-async function deployContract(
-  name: string,
-  wallet: CotiWallet,
-  args: readonly unknown[],
-  gasLimit: bigint,
-): Promise<{ contract: any; address: string; transaction: Submitted }> {
-  stage = `${name} deployment`;
-  const factory = await ethers.getContractFactory(name, wallet);
-  let contract: any;
-  const transaction = await submit(
-    `${name} deployment`,
-    (async () => {
-      contract = await factory.deploy(...args, { gasLimit });
-      const deploymentTx = contract.deploymentTransaction();
-      if (!deploymentTx) throw new Error(`${name} deployment transaction unavailable`);
-      return deploymentTx;
-    })(),
-  );
-  if (!contract) {
-    throw new Error(`${name} deployment mined without a contract handle; do not retry automatically`);
-  }
-  const address = ethersLibrary.getAddress(await contract.getAddress());
-  await verifyDeployedRuntimeArtifact(name, address);
-  return {
-    contract,
-    address,
-    transaction,
-  };
-}
-
 async function loadPool(address: string, wallet: CotiWallet): Promise<PoolContext> {
   const pool = new Contract(address, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
   const [token0Address, token1Address, token0Decimals, token1Decimals, feeBps] = await Promise.all([
@@ -540,6 +555,52 @@ async function initializePool(
     !(await context.pool.initialized())
   ) {
     throw new Error("pool initialization did not consume exact liquidity");
+  }
+}
+
+async function removeAllLiquidity(
+  context: PoolContext,
+  wallet: CotiWallet,
+): Promise<void> {
+  const owner = await wallet.getAddress();
+  const shares = await privateShares(context, wallet);
+  if (shares <= 0n) throw new Error(`${context.feeBps} bps pool has no removable LP shares`);
+  const selector = context.pool.interface.getFunction("removeLiquidity")?.selector;
+  if (!selector) throw new Error("remove-liquidity selector unavailable");
+  const [encryptedShares, zero0, zero1] = await Promise.all([
+    wallet.encryptValue256(shares, context.address, selector),
+    wallet.encryptValue256(0n, context.address, selector),
+    wallet.encryptValue256(0n, context.address, selector),
+  ]);
+  await submit(
+    `full cleanup exit for ${context.feeBps} bps pool`,
+    context.pool.removeLiquidity(
+      encryptedShares,
+      zero0,
+      zero1,
+      deadline(),
+      { gasLimit: CALL_GAS_LIMIT },
+    ),
+  );
+
+  const [sharesAfter, initialized, balance0, balance1, allowance0, allowance1] =
+    await Promise.all([
+      privateShares(context, wallet),
+      context.pool.initialized(),
+      privateBalance(context.token0, wallet, context.address),
+      privateBalance(context.token1, wallet, context.address),
+      privateAllowance(context.token0, wallet, owner, context.address),
+      privateAllowance(context.token1, wallet, owner, context.address),
+    ]);
+  if (
+    sharesAfter !== 0n ||
+    Boolean(initialized) ||
+    balance0 !== 0n ||
+    balance1 !== 0n ||
+    allowance0 !== 0n ||
+    allowance1 !== 0n
+  ) {
+    throw new Error(`${context.feeBps} bps pool cleanup left shares, assets, or allowances`);
   }
 }
 
@@ -874,6 +935,9 @@ async function main(): Promise<void> {
   const tokenAAddress = requiredAddress("COTI_TOKEN0");
   const tokenBAddress = requiredAddress("COTI_TOKEN1");
   const feeBeneficiary = requiredAddress("CIPHERDEX_FEE_BENEFICIARY");
+  const factoryAddress = requiredAddress("COTI_FACTORY");
+  const feeVaultAddress = requiredAddress("COTI_FEE_VAULT");
+  const routerAddress = requiredAddress("COTI_BEST_EXECUTION_ROUTER");
 
   stage = "wallet and network initialization";
   const network = await ethers.provider.getNetwork();
@@ -889,6 +953,30 @@ async function main(): Promise<void> {
   const primaryAddress = await primary.getAddress();
   const quoteAddress = await quoteWallet.getAddress();
   if (primaryAddress === quoteAddress) throw new Error("quote identity must be distinct");
+
+  stage = "canonical deployment provenance";
+  const deploymentRecord = await verifyConfiguredTestnetDeployment(
+    requiredTestnetDeploymentRecordPath(),
+    ethers.provider,
+    [
+      {
+        recordKey: "feeVault",
+        contractName: "CipherDEXFeeVault",
+        address: feeVaultAddress,
+      },
+      {
+        recordKey: "confidentialFactory",
+        contractName: "ConfidentialCPMMFactory",
+        address: factoryAddress,
+      },
+      {
+        recordKey: "confidentialBestExecutionRouter",
+        contractName: "ConfidentialBestExecutionRouter",
+        address: routerAddress,
+      },
+    ],
+  );
+  assertReviewedPrivateTokens(deploymentRecord, [tokenAAddress, tokenBAddress]);
 
   const tokenA = new Contract(tokenAAddress, PRIVATE_ERC20_TESTNET_ABI, primary);
   const tokenB = new Contract(tokenBAddress, PRIVATE_ERC20_TESTNET_ABI, primary);
@@ -968,17 +1056,18 @@ async function main(): Promise<void> {
     throw new Error("primary test identity lacks the required private liquidity");
   }
 
+  stage = "disposable best-execution stack deployment";
   const codehashes = await resolvePrivateTokenCodehashes(
     ethers.provider,
     [tokenAAddress, tokenBAddress],
   );
-  const feeVault = await deployContract(
+  const feeVaultDeployment = await deployContract(
     "CipherDEXFeeVault",
     primary,
     [feeBeneficiary],
     1_000_000n,
   );
-  const lpFactory = await deployContract(
+  const lpFactoryDeployment = await deployContract(
     "PrivateLPTokenFactory",
     primary,
     [],
@@ -987,10 +1076,16 @@ async function main(): Promise<void> {
   const factoryDeployment = await deployContract(
     "ConfidentialCPMMFactory",
     primary,
-    [feeVault.address, lpFactory.address, codehashes],
+    [feeVaultDeployment.address, lpFactoryDeployment.address, codehashes],
     8_000_000n,
   );
   const factory = factoryDeployment.contract;
+  await submit(
+    "bind disposable confidential fee vault",
+    feeVaultDeployment.contract.setConfidentialFactory(factoryDeployment.address, {
+      gasLimit: 500_000n,
+    }),
+  );
   const routerDeployment = await deployContract(
     "ConfidentialBestExecutionRouter",
     primary,
@@ -998,17 +1093,41 @@ async function main(): Promise<void> {
     3_000_000n,
   );
   await submit(
-    "bind canonical best-execution router",
+    "bind disposable best-execution router",
     factory.setBestExecutionRouter(routerDeployment.address, {
       gasLimit: 500_000n,
     }),
   );
+  const router = routerDeployment.contract;
+  const [
+    configuredVault,
+    configuredRouter,
+    configuredBeneficiary,
+    configuredVaultFactory,
+    configuredRouterFactory,
+    configuredRouterVersion,
+    tokenAApproved,
+    tokenBApproved,
+  ] = await Promise.all([
+    factory.feeVault(),
+    factory.bestExecutionRouter(),
+    feeVaultDeployment.contract.beneficiary(),
+    feeVaultDeployment.contract.confidentialFactory(),
+    router.factory(),
+    router.PROTOCOL_VERSION(),
+    factory.isApprovedPrivateToken(tokenAAddress),
+    factory.isApprovedPrivateToken(tokenBAddress),
+  ]);
   if (
-    ethersLibrary.getAddress(await factory.bestExecutionRouter()) !==
-      routerDeployment.address ||
-    ethersLibrary.getAddress(await routerDeployment.contract.factory()) !==
-      factoryDeployment.address
-  ) throw new Error("router/factory binding verification failed");
+    ethersLibrary.getAddress(String(configuredVault)) !== feeVaultDeployment.address ||
+    ethersLibrary.getAddress(String(configuredRouter)) !== routerDeployment.address ||
+    ethersLibrary.getAddress(String(configuredBeneficiary)) !== feeBeneficiary ||
+    ethersLibrary.getAddress(String(configuredVaultFactory)) !== factoryDeployment.address ||
+    ethersLibrary.getAddress(String(configuredRouterFactory)) !== factoryDeployment.address ||
+    BigInt(configuredRouterVersion) !== 1n ||
+    !tokenAApproved ||
+    !tokenBApproved
+  ) throw new Error("canonical deployment binding verification failed");
 
   const pool30 = await createPool(
     factory,
@@ -1194,6 +1313,26 @@ async function main(): Promise<void> {
     "reverse three-candidate quote-plus-swap",
   );
 
+  stage = "disposable candidate cleanup";
+  for (const context of allPools) {
+    await removeAllLiquidity(context, primary);
+  }
+  const expectedProtocolFeeA = modeledProtocolFee(swapA, reverseQuote.selectedFeeBps);
+  const expectedProtocolFeeB =
+    modeledProtocolFee(swapB, 100) +
+    modeledProtocolFee(swapB, 5) +
+    modeledProtocolFee(swapB, 30);
+  const [finalBalanceA, finalBalanceB] = await Promise.all([
+    privateBalance(tokenA, primary, primaryAddress),
+    privateBalance(tokenB, primary, primaryAddress),
+  ]);
+  if (
+    finalBalanceA !== balanceA - expectedProtocolFeeA ||
+    finalBalanceB !== balanceB - expectedProtocolFeeB
+  ) {
+    throw new Error("candidate cleanup produced an unexplained private-token balance delta");
+  }
+
   console.log(`confidentialFactory=${factoryDeployment.address}`);
   console.log(`confidentialBestExecutionRouter=${routerDeployment.address}`);
   for (const context of allPools) {
@@ -1210,7 +1349,7 @@ async function main(): Promise<void> {
   console.log(
     "COTI testnet production best execution passed: canonical discovery, paid quote-only, " +
       "private selection, exact lower-tier tie-breaking, both directions, every v1 tier, encrypted candidate isolation, " +
-      "caller/replay/deadline protection, atomic rollback, exact escrow, quote parity and cleanup",
+      "caller/replay/deadline protection, atomic rollback, exact escrow, quote parity, full LP exits, and zero-residue cleanup",
   );
 }
 

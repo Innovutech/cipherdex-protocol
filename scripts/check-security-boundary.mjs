@@ -28,7 +28,10 @@ const requiredNonReentrant = new Map([
     ["migrate", "migrateWithDisposition"],
   ],
   ["contracts/PublicCPMM.sol", ["swapExactInput", "addLiquidity", "removeLiquidity", "collectProtocolFees", "lockShares", "unlockShares"]],
-  ["contracts/CipherDEXFeeVault.sol", ["sweepPublicToken", "sweepConfidentialToken"]],
+  [
+    "contracts/CipherDEXFeeVault.sol",
+    ["depositPublicFees", "depositConfidentialFees", "sweepPublicToken", "sweepConfidentialToken"],
+  ],
   ["contracts/PublicCPMMRouter.sol", ["swapExactInput"]],
   [
     "contracts/ConfidentialBestExecutionRouter.sol",
@@ -122,7 +125,7 @@ for (const functionName of ["quoteExactInput", "swapExactInput"]) {
 }
 
 const quoteBody = functionBody(confidentialSource, "_quoteExactInput");
-const amountOutBody = functionBody(confidentialSource, "_amountOut");
+const strictSwapTransitionBody = functionBody(confidentialSource, "_strictSwapTransition");
 const swapAmountsBody = functionBody(confidentialSource, "_swapAmounts");
 const settlementBody = functionBody(confidentialSource, "swapExactInput");
 const routerSettlementBody = functionBody(
@@ -133,6 +136,8 @@ const settlementCoreBody = functionBody(confidentialSource, "_settleExactInput")
 const addLiquidityBody = functionBody(confidentialSource, "addLiquidity");
 const bootstrapLiquidityBody = functionBody(confidentialSource, "_bootstrapLiquidity");
 const feeCollectionBody = functionBody(confidentialSource, "collectProtocolFees");
+const feeDepositBody = functionBody(confidentialSource, "_depositProtocolFees");
+const terminalFeeDepositBody = functionBody(confidentialSource, "_depositTerminalProtocolFees");
 const routerQuoteBody = functionBody(confidentialSource, "_routerQuoteAmounts");
 const routerSettlementValidityBody = functionBody(
   confidentialSource,
@@ -142,16 +147,25 @@ const routerOperationalValidityBody = functionBody(
   confidentialSource,
   "_routerOperationalValidity",
 );
-if (!quoteBody.includes("_amountOut(")) {
-  throw new Error("Confidential quote bypasses the shared amount-out calculation");
+if (!quoteBody.includes("_strictSwapTransition(")) {
+  throw new Error("Confidential paid quote bypasses the strict settlement transition");
 }
-if (!amountOutBody.includes("_swapAmounts(")) {
-  throw new Error("Confidential amount-out calculation bypasses shared fee and CPMM math");
+for (const fragment of [
+  "_swapAmounts(",
+  "_assertOperationalBounds(",
+  "_addChecked(_protocolFees0(), protocolFee)",
+  "_addChecked(_protocolFees1(), protocolFee)",
+  "protocolFeeSwapCount0 == type(uint32).max",
+  "protocolFeeSwapCount1 == type(uint32).max",
+]) {
+  if (!strictSwapTransitionBody.includes(fragment)) {
+    throw new Error("Confidential strict quote/settlement transition omits an operational bound");
+  }
 }
 if (
   !settlementBody.includes("_settleExactInput(") ||
   !routerSettlementBody.includes("_settleExactInput(") ||
-  !settlementCoreBody.includes("_swapAmounts(")
+  !settlementCoreBody.includes("_strictSwapTransition(")
 ) {
   throw new Error("Confidential settlement bypasses shared fee and CPMM math");
 }
@@ -211,11 +225,30 @@ for (const [body, helper, label] of [
   [settlementCoreBody, "_pushPrivateExact(", "swap output"],
   [addLiquidityBody, "_pullPrivateExact(", "liquidity input"],
   [bootstrapLiquidityBody, "_pullPrivateExact(", "bootstrap input"],
-  [feeCollectionBody, "_pushPrivateExact(", "protocol fee output"],
 ]) {
   if (!body.includes(helper)) {
     throw new Error(`Confidential ${label} bypasses exact private-token balance validation`);
   }
+}
+if (!feeCollectionBody.includes("_depositProtocolFees(")) {
+  throw new Error("Confidential protocol fees bypass encrypted vault aggregation");
+}
+for (const fragment of [
+  "token.approveGT(feeVault, amount)",
+  "IConfidentialFeeVault(feeVault).depositConfidentialFees(",
+  "token.allowance(feeVault, false)",
+  "revert ResidualAllowance()",
+]) {
+  if (!feeDepositBody.includes(fragment)) {
+    throw new Error("Confidential protocol-fee deposit lacks exact temporary-allowance cleanup");
+  }
+}
+if (
+  !terminalFeeDepositBody.includes("_depositProtocolFees(token0") ||
+  !terminalFeeDepositBody.includes("_depositProtocolFees(token1") ||
+  !functionBody(confidentialSource, "removeLiquidity").includes("_depositTerminalProtocolFees()")
+) {
+  throw new Error("Confidential full exit can strand or distribute terminal protocol fees");
 }
 if (bootstrapLiquidityBody.includes("_requirePrivatePoolBalance(")) {
   throw new Error("Confidential bootstrap can be griefed by an unmanaged preexisting balance");
@@ -233,6 +266,44 @@ if (
   !factorySource.includes("isApprovedPrivateTokenCodehash[tokenB.codehash]")
 ) {
   throw new Error("Confidential factory does not enforce immutable token implementation provenance");
+}
+for (const fragment of [
+  "lpTokenFactory_.codehash != PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH",
+  "isPool[pool] = true",
+  "IPrivateLPTokenFactory(issuer).isIssuedToken(",
+]) {
+  if (!factorySource.includes(fragment) && !confidentialSource.includes(fragment)) {
+    throw new Error("Confidential LP-token factory provenance is not cryptographically bound");
+  }
+}
+
+const feeVaultSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/CipherDEXFeeVault.sol", "utf8"),
+);
+const vaultDepositBody = functionBody(feeVaultSource, "depositConfidentialFees");
+for (const fragment of [
+  "IConfidentialCPMMFactory(factory).isPool(msg.sender)",
+  "source.feeVault() != address(this)",
+  "sourceCount != aggregatedSwapCount",
+  "transferFromGT(msg.sender, address(this), amount)",
+  "gtUint256 expectedBalanceAfter = _addChecked(balanceBefore, amount)",
+  "MpcCore.eq(balanceAfter, expectedBalanceAfter)",
+]) {
+  if (!vaultDepositBody.includes(fragment)) {
+    throw new Error("Confidential fee vault accepts an unauthenticated or inexact private deposit");
+  }
+}
+const vaultSweepBody = functionBody(feeVaultSource, "sweepConfidentialToken");
+for (const fragment of [
+  "aggregatedSwapCount < MIN_CONFIDENTIAL_AGGREGATED_SWAPS",
+  "_matureEpochEnd(token, start)",
+  "nextConfidentialEpochIndex[token] = end",
+  "gtUint256 expectedBalanceAfter = _subChecked(balanceBefore, amount)",
+  "MpcCore.eq(balanceAfter, expectedBalanceAfter)",
+]) {
+  if (!vaultSweepBody.includes(fragment)) {
+    throw new Error("Confidential fee vault sweep bypasses fixed epoch aggregation");
+  }
 }
 
 const bestExecutionRouterSource = maskSourceCommentsAndLiterals(
@@ -435,6 +506,13 @@ if (
   throw new Error("Full funded scenario validates the chain after network-dependent work");
 }
 if (
+  !scenarioMainBody.includes("assertReviewedPrivateTokens(deploymentRecord") ||
+  scenarioMainBody.indexOf("assertReviewedPrivateTokens(deploymentRecord") >
+    scenarioMainBody.indexOf("ethers.getContractFactory(")
+) {
+  throw new Error("Full funded scenario can move assets through unreviewed token instances");
+}
+if (
   !scenarioLiquidityBody.includes("confidentialLiquidityBounds(") ||
   !scenarioLiquidityBody.includes("bounds.minShares") ||
   !scenarioLiquidityBody.includes("bounds.minPriceX18") ||
@@ -513,6 +591,11 @@ for (const [file, source, ast] of [
       throw new Error(`${file}: configured contracts are not bound to reviewed source provenance`);
     }
   }
+}
+for (const [file, ast] of [
+  ["scripts/testnet-harness.ts", harnessAst],
+  ["scripts/testnet-fee-collection.ts", feeCollectionAst],
+]) {
   if (!hasStringCall(ast, "verifyDeployedRuntimeArtifact", "ConfidentialCPMM")) {
     throw new Error(`${file}: configured pool runtime is not bound to current artifacts`);
   }
@@ -584,10 +667,12 @@ for (const file of [
       "ethers.provider.getNetwork",
       "ethers.getContractFactory",
       "verifyDeployedRuntimeArtifact",
+      "verifyConfiguredTestnetDeployment",
     ],
   );
   for (const fragment of [
-    "verifyDeployedRuntimeArtifact(",
+    "verifyConfiguredTestnetDeployment(",
+    "assertReviewedPrivateTokens(deploymentRecord",
     "log.address.toLowerCase()",
     "matches.length !== 1",
   ]) {
@@ -595,6 +680,57 @@ for (const file of [
       throw new Error(`${file}: funded evidence is not bound to current artifacts and one emitter`);
     }
   }
+  const mainBody = functionBody(source, "main");
+  if (
+    mainBody.indexOf("assertReviewedPrivateTokens(deploymentRecord") >
+    mainBody.indexOf("new Contract(")
+  ) {
+    throw new Error(`${file}: token interaction precedes exact reviewed-token authorization`);
+  }
+}
+
+const launchpadRawSource = await readFile("scripts/testnet-launchpad.ts", "utf8");
+const launchpadSource = maskSourceCommentsAndLiterals(launchpadRawSource);
+const launchpadMainBody = functionBody(launchpadSource, "main");
+for (const fragment of [
+  "verifyConfiguredTestnetDeployment(",
+  "assertReviewedPrivateTokens(deploymentRecord",
+  "verifyDeployedRuntimeArtifact(",
+]) {
+  if (!launchpadMainBody.includes(fragment)) {
+    throw new Error("Launchpad funded runner bypasses reviewed source or token provenance");
+  }
+}
+if (
+  launchpadMainBody.indexOf("assertReviewedPrivateTokens(deploymentRecord") >
+  launchpadMainBody.indexOf("getContractFactory(")
+) {
+  throw new Error("Launchpad funded runner validates provenance after deployment begins");
+}
+for (const fragment of [
+  "tokenARead.decimals()",
+  "tokenBRead.decimals()",
+  "onchainDecimalsA !== decimalsA",
+  "onchainDecimalsB !== decimalsB",
+]) {
+  if (!launchpadMainBody.includes(fragment)) {
+    throw new Error("Launchpad funded runner does not bind CREATE2 inputs to onchain decimals");
+  }
+}
+if (
+  launchpadMainBody.indexOf("onchainDecimalsA !== decimalsA") >
+  launchpadMainBody.indexOf("getContractFactory(")
+) {
+  throw new Error("Launchpad funded runner validates decimals after deployment or prefunding begins");
+}
+const verificationReport = await readFile("docs/VERIFICATION_REPORT.md", "utf8");
+if (
+  verificationReport.includes("one raw unit per token") ||
+  verificationReport.includes("removed the test donation") ||
+  !verificationReport.includes("one raw unit of canonical\ntoken0") ||
+  !verificationReport.includes("does not recover or claim to recover that\nunit")
+) {
+  throw new Error("Verification report overstates launchpad prefunding or cleanup evidence");
 }
 
 const migratorSource = maskSourceCommentsAndLiterals(
@@ -640,6 +776,145 @@ for (const file of [
     throw new Error(`${file}: funded runner converts unvalidated environment text with BigInt`);
   }
 }
+const bestExecutionProductionRawSource = await readFile(
+  "scripts/testnet-best-execution.ts",
+  "utf8",
+);
+const bestExecutionProductionSource = maskSourceCommentsAndLiterals(
+  bestExecutionProductionRawSource,
+);
+const bestExecutionProductionMain = functionBody(
+  bestExecutionProductionSource,
+  "main",
+  "scripts/testnet-best-execution.ts",
+);
+if (!bestExecutionProductionSource.includes("assertReviewedPrivateTokens(deploymentRecord")) {
+  throw new Error("Best-execution funded runner accepts unreviewed private-token instances");
+}
+for (const contractName of [
+  "CipherDEXFeeVault",
+  "PrivateLPTokenFactory",
+  "ConfidentialCPMMFactory",
+  "ConfidentialBestExecutionRouter",
+]) {
+  if (!new RegExp(`deployContract\\(\\s*[\"']${contractName}[\"']`).test(
+    bestExecutionProductionRawSource,
+  )) {
+    throw new Error(`Best-execution funded runner does not deploy disposable ${contractName}`);
+  }
+}
+if (
+  !bestExecutionProductionMain.includes(
+    "feeVaultDeployment.contract.setConfidentialFactory(factoryDeployment.address",
+  ) ||
+  /new\s+Contract\(\s*(?:factoryAddress|routerAddress|feeVaultAddress)\b/.test(
+    bestExecutionProductionMain,
+  )
+) {
+  throw new Error("Best-execution funded runner can mutate the reviewed deployment");
+}
+for (const required of [
+  "for (const context of allPools)",
+  "await removeAllLiquidity(context, primary)",
+  "sharesAfter !== 0n",
+  "balance0 !== 0n",
+  "balance1 !== 0n",
+  "allowance0 !== 0n",
+  "allowance1 !== 0n",
+  "finalBalanceA !== balanceA - expectedProtocolFeeA",
+  "finalBalanceB !== balanceB - expectedProtocolFeeB",
+]) {
+  if (!bestExecutionProductionSource.includes(required)) {
+    throw new Error(`Best-execution funded runner is missing full cleanup evidence: ${required}`);
+  }
+}
+
+const feasibilityRouterProbe = maskSourceCommentsAndLiterals(
+  await readFile("contracts/mocks/MpcBestExecutionRouterProbe.sol", "utf8"),
+);
+for (const functionName of ["requestBestQuoteExactInput", "swapBestExactInput"]) {
+  const declaration = uniqueFunctionDeclaration(
+    feasibilityRouterProbe,
+    functionName,
+    "contracts/mocks/MpcBestExecutionRouterProbe.sol",
+  );
+  if (!/\bonlyAuthorizedCaller\b/.test(declaration) || !/\bonlyOpen\b/.test(declaration)) {
+    throw new Error(`MPC router probe ${functionName} is not caller-bound and closeable`);
+  }
+}
+const feasibilityPoolProbe = maskSourceCommentsAndLiterals(
+  await readFile("contracts/mocks/MpcBestExecutionPoolProbe.sol", "utf8"),
+);
+for (const functionName of ["quoteGt", "settleGt"]) {
+  const body = functionBody(
+    feasibilityPoolProbe,
+    functionName,
+    "contracts/mocks/MpcBestExecutionPoolProbe.sol",
+  );
+  if (!body.includes("if (closed) revert Closed()") || !body.includes("_requireRouter()")) {
+    throw new Error(`MPC pool probe ${functionName} is not router-bound and closeable`);
+  }
+}
+for (const source of [feasibilityRouterProbe, feasibilityPoolProbe]) {
+  const recovery = functionBody(source, "closeAndRecover", "MPC feasibility probe");
+  if (!recovery.includes("closed = true") || !recovery.includes("transferGT(recipient")) {
+    throw new Error("MPC feasibility probe has no permanent private-asset recovery path");
+  }
+}
+const feasibilityRunner = maskSourceCommentsAndLiterals(
+  await readFile("scripts/testnet-best-execution-feasibility.ts", "utf8"),
+);
+for (const required of [
+  "MAX_PROBE_INPUT",
+  "probe.closeAndRecover(caller",
+  "Boolean(await probe.closed())",
+  "inputResidue !== 0n || outputResidue !== 0n",
+  "inputAfterRecovery !== inputBalanceBefore",
+  "outputAfterRecovery !== outputBalanceBefore",
+]) {
+  if (!feasibilityRunner.includes(required)) {
+    throw new Error(`Best-execution feasibility runner is missing cleanup control: ${required}`);
+  }
+}
+
+const quoteCallProbeRunnerRaw = await readFile(
+  "scripts/testnet-quote-call-probe.ts",
+  "utf8",
+);
+const quoteCallProbeRunner = maskSourceCommentsAndLiterals(quoteCallProbeRunnerRaw);
+for (const required of [
+  "assertCleanCommittedSource",
+  "network.chainId !== COTI_TESTNET_CHAIN_ID",
+  "verifyDeployedRuntimeArtifactWithProvenance",
+  "serializeMinedEvidence(deploymentEvidence)",
+  "serializeMinedEvidence(controlEvidence)",
+]) {
+  if (!quoteCallProbeRunner.includes(required)) {
+    throw new Error(`Quote-call feasibility runner lacks provenance evidence: ${required}`);
+  }
+}
+for (const required of [
+  '"status", "--porcelain=v1", "--untracked-files=all"',
+  '"ls-files",',
+  '"cipherdex.testnet-quote-call-probe/v1"',
+  "paidPerPoolQuoteRemainsPrimary: true",
+]) {
+  if (!quoteCallProbeRunnerRaw.includes(required)) {
+    throw new Error(`Quote-call feasibility runner lacks committed evidence output: ${required}`);
+  }
+}
+
+const destructiveScenario = maskSourceCommentsAndLiterals(
+  await readFile("scripts/testnet-scenario.ts", "utf8"),
+);
+if (
+  !destructiveScenario.includes(
+    "process.env.COTI_POOL?.trim() || process.env.COTI_QUOTE_POOL?.trim()",
+  ) ||
+  destructiveScenario.includes("usesConfiguredDeployment")
+) {
+  throw new Error("Destructive scenario can reuse configured canonical pool state");
+}
 
 for (const file of [
   "scripts/deploy-testnet.ts",
@@ -662,9 +937,30 @@ for (const file of [
 
 const gitignore = await readFile(".gitignore", "utf8");
 const deploymentReadme = await readFile("deployments/README.md", "utf8");
+const deploymentProvenance = await readFile(
+  "scripts/testnet-deployment-provenance.ts",
+  "utf8",
+);
+const deploymentTransactionProvenance = await readFile(
+  "scripts/deployment-transaction-provenance.ts",
+  "utf8",
+);
 if (
   !/^deployments\/\*\.json$/m.test(gitignore) ||
-  !deploymentReadme.includes("git add -f deployments/coti-testnet-<commit>.json")
+  !deploymentReadme.includes("git add -f deployments/coti-testnet-<commit>.json") ||
+  !deploymentReadme.includes("separate evidence commit") ||
+  !deploymentReadme.includes("match the tracked blob at") ||
+  !deploymentProvenance.includes('"ls-files", "--error-unmatch"') ||
+  !deploymentProvenance.includes('"merge-base", "--is-ancestor"') ||
+  !deploymentProvenance.includes("recordMatchesHead") ||
+  !deploymentProvenance.includes("changedPathsSinceSource") ||
+  !deploymentProvenance.includes('"docs/VERIFICATION_REPORT.md"') ||
+  !deploymentProvenance.includes("verifyDeploymentTransactionEvidence") ||
+  !deploymentTransactionProvenance.includes("provider.getTransaction(hash)") ||
+  !deploymentTransactionProvenance.includes("provider.getTransactionReceipt(hash)") ||
+  !deploymentTransactionProvenance.includes("encodeDeploy(args)") ||
+  !deploymentTransactionProvenance.includes("encodeFunctionData(binding.functionName, args)") ||
+  !deploymentTransactionProvenance.includes("transaction hashes must be unique")
 ) {
   throw new Error("Deployment records are not protected by review-before-publication controls");
 }

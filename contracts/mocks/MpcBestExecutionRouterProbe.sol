@@ -19,6 +19,9 @@ contract MpcBestExecutionRouterProbe {
     IPrivateERC20 public immutable tokenIn;
     address public immutable pool0;
     address public immutable pool1;
+    address public immutable configurator;
+    address public immutable authorizedCaller;
+    bool public closed;
     mapping(bytes32 => bool) private consumedInputs;
     mapping(address => mapping(bytes32 => bool)) public usedRequestIds;
     uint256 private reentrancyState = 1;
@@ -32,6 +35,9 @@ contract MpcBestExecutionRouterProbe {
     error PrivateTransferAmountMismatch();
     error QuoteSettlementMismatch();
     error ResidualAllowance();
+    error Unauthorized();
+    error Closed();
+    error RecoveryMismatch();
 
     event ProbeBestQuote(
         address indexed caller,
@@ -53,21 +59,36 @@ contract MpcBestExecutionRouterProbe {
         reentrancyState = 1;
     }
 
-    constructor(address tokenIn_, address pool0_, address pool1_) {
+    modifier onlyAuthorizedCaller() {
+        if (msg.sender != authorizedCaller) revert Unauthorized();
+        _;
+    }
+
+    modifier onlyOpen() {
+        if (closed) revert Closed();
+        _;
+    }
+
+    constructor(address tokenIn_, address pool0_, address pool1_, address authorizedCaller_) {
         if (
             tokenIn_ == address(0) ||
             pool0_.code.length == 0 ||
             pool1_.code.length == 0 ||
-            pool0_ == pool1_
+            pool0_ == pool1_ ||
+            authorizedCaller_ == address(0)
         ) revert InvalidConfiguration();
         tokenIn = IPrivateERC20(tokenIn_);
         pool0 = pool0_;
         pool1 = pool1_;
+        configurator = msg.sender;
+        authorizedCaller = authorizedCaller_;
     }
 
     function requestBestQuoteExactInput(itUint256 calldata amountIn, bytes32 requestId)
         external
         nonReentrant
+        onlyAuthorizedCaller
+        onlyOpen
         returns (ctUint256 memory result)
     {
         _consumeRequestId(requestId);
@@ -82,7 +103,7 @@ contract MpcBestExecutionRouterProbe {
         itUint256 calldata minimumOut,
         bytes32 requestId,
         uint64 deadline
-    ) external nonReentrant returns (ctUint256 memory result) {
+    ) external nonReentrant onlyAuthorizedCaller onlyOpen returns (ctUint256 memory result) {
         if (deadline < block.timestamp) revert DeadlineExpired();
         _consumeRequestId(requestId);
         gtUint256 input = _validateAndConsume(amountIn);
@@ -114,6 +135,21 @@ contract MpcBestExecutionRouterProbe {
 
         result = MpcCore.offBoardToUser(settledOutput, msg.sender);
         emit ProbeBestSwap(msg.sender, requestId, selectedPool, result);
+    }
+
+    function closeAndRecover(address recipient) external nonReentrant {
+        if (msg.sender != configurator) revert Unauthorized();
+        if (closed) revert Closed();
+        if (recipient == address(0)) revert InvalidConfiguration();
+        closed = true;
+
+        gtUint256 balance = tokenIn.balanceOf();
+        if (!MpcCore.decrypt(MpcCore.eq(balance, uint256(0)))) {
+            tokenIn.transferGT(recipient, balance);
+        }
+        if (!MpcCore.decrypt(MpcCore.eq(tokenIn.balanceOf(), uint256(0)))) {
+            revert RecoveryMismatch();
+        }
     }
 
     function _selectBest(gtUint256 input)

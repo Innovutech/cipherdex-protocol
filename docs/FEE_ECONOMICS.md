@@ -87,28 +87,41 @@ Collection is aggregate rather than per-swap:
 
 - each token side needs at least 8 swaps in its current collection window;
 - the window must be at least 1 hour old;
-- collection transfers one encrypted aggregate to the immutable vault;
+- collection deposits one encrypted aggregate into the immutable vault under an
+  exact temporary allowance;
 - no amount is decrypted, returned, or emitted;
-- the vault permits confidential sweeps no more than once per token per 24 hours;
+- only a pool recognized by the vault's one-time bound canonical factory may
+  deposit, and the vault verifies the pool's token side, public aggregate count,
+  and exact encrypted balance delta;
+- deposits for the same token are combined across pools in fixed 24-hour epochs;
+- a confidential sweep processes only epochs at least two epoch numbers old,
+  giving each deposit between 24 and 48 hours of residence depending on when it
+  arrived, and requires at least 8 aggregate swaps across those matured epochs;
+- a full LP exit deposits any terminal one-to-seven-swap encrypted accumulator
+  into that same vault aggregation before clearing pool counters;
 - public and confidential vault sweep methods reject the wrong token mode.
 
 The public count and window disclose no amount beyond already-public direction
 and timing. They prevent ordinary one-swap collection. They do not provide an
 information-theoretic anonymity set: a fee beneficiary or active adversary that
 knows most trades in a low-volume window may infer information about the
-remainder after a later aggregate sweep. The 24-hour vault cadence can aggregate
-the same private token across several pools, but it cannot guarantee that such
-traffic exists. Confidential protocol fees therefore protect exact per-swap
+remainder after a later aggregate sweep. Fixed epochs prevent a beneficiary from
+choosing arbitrary per-pool collection boundaries at the vault. They can
+aggregate the same private token across several pools, but cannot guarantee that
+such traffic exists. Confidential protocol fees therefore protect exact per-swap
 amounts from passive observation and routine collection, not from all active
 differencing attacks.
 
 ## Vault boundary
 
-The vault beneficiary is immutable. Pools cannot choose another collection
-recipient, and an arbitrary caller cannot sweep vault assets. Public sweeps emit
-their public amount. Confidential sweeps emit only token and beneficiary
-identity. Private token balances stay under the vault contract's encrypted
-account until the delayed aggregate sweep transfers them to the beneficiary.
+The vault beneficiary is immutable. The confidential factory is configured once
+by the vault deployer and must report this exact vault; it cannot be replaced.
+Pools cannot choose another collection recipient, noncanonical pools cannot
+deposit, and an arbitrary caller cannot sweep vault assets. Public sweeps emit
+their public amount. Confidential deposit and sweep events expose token, pool,
+epoch and aggregate swap count, but never an amount. Private token balances stay
+under encrypted per-token/per-epoch vault accounting until a matured aggregate
+sweep transfers them to the beneficiary.
 
 The vault must be a dedicated CipherDEX deployment. The beneficiary should be a
 reviewed multisig or governed treasury before any production deployment. A v1

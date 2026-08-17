@@ -5,6 +5,11 @@ import { promisify } from "node:util";
 
 import type { RuntimeCodeProvider } from "./runtime-artifact";
 import {
+  CANONICAL_TESTNET_DEPLOYMENTS,
+  verifyDeploymentTransactionEvidence,
+  type DeploymentEvidenceProvider,
+} from "./deployment-transaction-provenance";
+import {
   verifyDeployedRuntimeArtifactWithProvenance,
   type RuntimeArtifactProvenance,
 } from "./runtime-artifact";
@@ -13,6 +18,7 @@ const execFileAsync = promisify(execFile);
 const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
 const RECORD_NAME_PATTERN = /^coti-testnet-([0-9a-f]{40})\.json$/i;
 const HASH_PATTERN = /^0x[0-9a-f]{64}$/i;
+const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/i;
 const MAX_RECORD_BYTES = 1_000_000;
 
 type JsonRecord = Record<string, unknown>;
@@ -26,6 +32,7 @@ export type TestnetDeploymentContractRequirement = Readonly<{
 export type VerifiedTestnetDeploymentRecord = Readonly<{
   path: string;
   sourceCommit: string;
+  evidenceCommit: string;
   chainId: string;
   contracts: Readonly<Record<string, JsonRecord>>;
   compiler: Readonly<Record<string, JsonRecord>>;
@@ -35,12 +42,28 @@ type ProvenanceDependencies = Readonly<{
   readSourceState?: (
     cwd: string,
     allowedRecordPath: string,
-  ) => Promise<Readonly<{ commit: string; dirty: boolean }>>;
+    sourceCommit: string,
+  ) => Promise<Readonly<{
+    headCommit: string;
+    dirty: boolean;
+    recordTracked: boolean;
+    recordMatchesHead: boolean;
+    sourceCommitIsAncestor: boolean;
+    changedPathsSinceSource: readonly string[];
+  }>>;
   verifyRuntime?: (
     contractName: string,
     address: string,
     provider: RuntimeCodeProvider,
   ) => Promise<RuntimeArtifactProvenance>;
+  verifyTransactions?: (
+    record: JsonRecord,
+    provider: DeploymentEvidenceProvider,
+  ) => Promise<void>;
+  canonicalDeployments?: readonly Readonly<{
+    key: string;
+    contractName: string;
+  }>[];
 }>;
 
 function asRecord(value: unknown, label: string): JsonRecord {
@@ -90,25 +113,86 @@ function assertCompilerProvenance(
 async function defaultReadSourceState(
   cwd: string,
   allowedRecordPath: string,
-): Promise<Readonly<{ commit: string; dirty: boolean }>> {
+  sourceCommit: string,
+): Promise<Readonly<{
+  headCommit: string;
+  dirty: boolean;
+  recordTracked: boolean;
+  recordMatchesHead: boolean;
+  sourceCommitIsAncestor: boolean;
+  changedPathsSinceSource: readonly string[];
+}>> {
   const [head, status] = await Promise.all([
     execFileAsync("git", ["rev-parse", "--verify", "HEAD"], { cwd }),
     execFileAsync(
       "git",
-      [
-        "status",
-        "--porcelain=v1",
-        "--untracked-files=all",
-        "--",
-        ".",
-        `:(exclude)${allowedRecordPath}`,
-      ],
+      ["status", "--porcelain=v1", "--untracked-files=all", "--", "."],
       { cwd },
     ),
   ]);
+
+  let recordTracked = true;
+  try {
+    await execFileAsync(
+      "git",
+      ["ls-files", "--error-unmatch", "--", allowedRecordPath],
+      { cwd },
+    );
+  } catch {
+    recordTracked = false;
+  }
+
+  let recordMatchesHead = recordTracked;
+  if (recordTracked) {
+    try {
+      await execFileAsync(
+        "git",
+        ["diff", "--quiet", "--no-ext-diff", "HEAD", "--", allowedRecordPath],
+        { cwd },
+      );
+    } catch {
+      recordMatchesHead = false;
+    }
+  }
+
+  let sourceCommitIsAncestor = true;
+  try {
+    await execFileAsync(
+      "git",
+      ["merge-base", "--is-ancestor", sourceCommit, "HEAD"],
+      { cwd },
+    );
+  } catch {
+    sourceCommitIsAncestor = false;
+  }
+
+  let changedPathsSinceSource: string[] = [];
+  if (sourceCommitIsAncestor) {
+    const changed = await execFileAsync(
+      "git",
+      [
+        "diff",
+        "--name-only",
+        "--diff-filter=ACDMRTUXB",
+        `${sourceCommit}..HEAD`,
+        "--",
+        ".",
+      ],
+      { cwd },
+    );
+    changedPathsSinceSource = changed.stdout
+      .split(/\r?\n/u)
+      .map((entry) => normalizePath(entry.trim()))
+      .filter((entry) => entry.length > 0);
+  }
+
   return Object.freeze({
-    commit: head.stdout.trim(),
+    headCommit: head.stdout.trim(),
     dirty: status.stdout.trim().length > 0,
+    recordTracked,
+    recordMatchesHead,
+    sourceCommitIsAncestor,
+    changedPathsSinceSource: Object.freeze(changedPathsSinceSource),
   });
 }
 
@@ -163,6 +247,33 @@ export function requiredTestnetDeploymentRecordPath(): string {
   return value;
 }
 
+export function assertReviewedPrivateTokens(
+  record: VerifiedTestnetDeploymentRecord,
+  tokenAddresses: readonly string[],
+): void {
+  if (tokenAddresses.length === 0) {
+    throw new Error("reviewed private-token verification requires at least one token");
+  }
+  const factoryRecord = asRecord(
+    record.contracts.confidentialFactory,
+    "deployment record contracts.confidentialFactory",
+  );
+  const reviewed = factoryRecord.reviewedPrivateTokens;
+  if (
+    !Array.isArray(reviewed) ||
+    reviewed.length === 0 ||
+    reviewed.some((entry) => typeof entry !== "string" || !ADDRESS_PATTERN.test(entry))
+  ) {
+    throw new Error("deployment record reviewedPrivateTokens must be a non-empty address list");
+  }
+  const reviewedAddresses = new Set(reviewed.map((entry) => entry.toLowerCase()));
+  for (const tokenAddress of tokenAddresses) {
+    if (!ADDRESS_PATTERN.test(tokenAddress) || !reviewedAddresses.has(tokenAddress.toLowerCase())) {
+      throw new Error(`configured private token is absent from the reviewed deployment record: ${tokenAddress}`);
+    }
+  }
+}
+
 export async function verifyConfiguredTestnetDeployment(
   configuredPath: string,
   provider: RuntimeCodeProvider,
@@ -192,52 +303,102 @@ export async function verifyConfiguredTestnetDeployment(
   const sourceState = await (dependencies.readSourceState ?? defaultReadSourceState)(
     cwd,
     resolved.relativePath,
+    sourceCommit,
   );
-  if (!SOURCE_COMMIT_PATTERN.test(sourceState.commit) || sourceState.commit.toLowerCase() !== sourceCommit) {
-    throw new Error("deployment record source commit does not match the current HEAD");
+  if (!SOURCE_COMMIT_PATTERN.test(sourceState.headCommit)) {
+    throw new Error("deployment evidence HEAD is not a full Git commit");
   }
   if (sourceState.dirty) {
-    throw new Error("configured deployment verification requires a clean source worktree");
+    throw new Error("configured deployment verification requires a completely clean worktree");
+  }
+  if (!sourceState.recordTracked || !sourceState.recordMatchesHead) {
+    throw new Error("deployment record must exactly match the Git-tracked evidence at HEAD");
+  }
+  if (!sourceState.sourceCommitIsAncestor) {
+    throw new Error("deployment record source commit is not an ancestor of the evidence HEAD");
+  }
+  const permittedEvidencePaths = new Set([
+    resolved.relativePath,
+    "docs/VERIFICATION_REPORT.md",
+  ]);
+  const changedPaths = sourceState.changedPathsSinceSource.map(normalizePath);
+  if (!changedPaths.includes(resolved.relativePath)) {
+    throw new Error("deployment record was not added by a post-source evidence commit");
+  }
+  const unexpectedPath = changedPaths.find((path) => !permittedEvidencePaths.has(path));
+  if (unexpectedPath) {
+    throw new Error(
+      `deployment evidence contains a post-source executable or unauthorized change: ${unexpectedPath}`,
+    );
   }
 
   const contracts = asRecord(record.contracts, "deployment record contracts");
   const compiler = asRecord(record.compiler, "deployment record compiler");
+  if (dependencies.verifyTransactions) {
+    await dependencies.verifyTransactions(
+      record,
+      provider as unknown as DeploymentEvidenceProvider,
+    );
+  } else {
+    const evidenceProvider = provider as unknown as Partial<DeploymentEvidenceProvider>;
+    if (
+      typeof evidenceProvider.getTransaction !== "function" ||
+      typeof evidenceProvider.getTransactionReceipt !== "function" ||
+      typeof evidenceProvider.call !== "function"
+    ) {
+      throw new Error("deployment transaction evidence requires a transaction-capable provider");
+    }
+    await verifyDeploymentTransactionEvidence(record, evidenceProvider as DeploymentEvidenceProvider);
+  }
   const verifyRuntime = dependencies.verifyRuntime ?? verifyDeployedRuntimeArtifactWithProvenance;
-  for (const requirement of requirements) {
+  const canonicalDeployments = dependencies.canonicalDeployments ?? CANONICAL_TESTNET_DEPLOYMENTS;
+  for (const deployment of canonicalDeployments) {
     const contractRecord = asRecord(
-      contracts[requirement.recordKey],
-      `deployment record contracts.${requirement.recordKey}`,
+      contracts[deployment.key],
+      `deployment record contracts.${deployment.key}`,
     );
     const recordedAddress = requiredString(
       contractRecord,
+      "address",
+      `deployment record contracts.${deployment.key}`,
+    );
+    const actual = await verifyRuntime(
+      deployment.contractName,
+      recordedAddress,
+      provider,
+    );
+    const recordedCodehash = requiredString(
+      contractRecord,
+      "runtimeCodehash",
+      `deployment record contracts.${deployment.key}`,
+    );
+    if (!HASH_PATTERN.test(recordedCodehash) || recordedCodehash !== actual.runtimeCodehash) {
+      throw new Error(`${deployment.key} runtime codehash does not match the deployment record`);
+    }
+    assertCompilerProvenance(
+      asRecord(compiler[deployment.contractName], `deployment compiler ${deployment.contractName}`),
+      actual,
+    );
+  }
+  for (const requirement of requirements) {
+    const canonical = canonicalDeployments.find((entry) => entry.key === requirement.recordKey);
+    if (!canonical || canonical.contractName !== requirement.contractName) {
+      throw new Error(`${requirement.recordKey} is not a canonical deployment requirement`);
+    }
+    const recordedAddress = requiredString(
+      asRecord(contracts[requirement.recordKey], `deployment record contracts.${requirement.recordKey}`),
       "address",
       `deployment record contracts.${requirement.recordKey}`,
     );
     if (!sameAddress(recordedAddress, requirement.address)) {
       throw new Error(`${requirement.recordKey} does not match the configured address`);
     }
-    const actual = await verifyRuntime(
-      requirement.contractName,
-      requirement.address,
-      provider,
-    );
-    const recordedCodehash = requiredString(
-      contractRecord,
-      "runtimeCodehash",
-      `deployment record contracts.${requirement.recordKey}`,
-    );
-    if (!HASH_PATTERN.test(recordedCodehash) || recordedCodehash !== actual.runtimeCodehash) {
-      throw new Error(`${requirement.recordKey} runtime codehash does not match the deployment record`);
-    }
-    assertCompilerProvenance(
-      asRecord(compiler[requirement.contractName], `deployment compiler ${requirement.contractName}`),
-      actual,
-    );
   }
 
   return Object.freeze({
     path: resolved.resolvedPath,
     sourceCommit,
+    evidenceCommit: sourceState.headCommit.toLowerCase(),
     chainId,
     contracts: contracts as Record<string, JsonRecord>,
     compiler: compiler as Record<string, JsonRecord>,

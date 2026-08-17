@@ -92,7 +92,7 @@ interface IConfidentialCPMM {
 
     function collectProtocolFees(bool collectToken0, bool collectToken1) external;
 
-    function myShares() external returns (ctUint256 memory);
+    function myShares() external view returns (ctUint256 memory);
     function lockInfo(bytes32 lockId)
         external
         view

@@ -49,6 +49,9 @@ const discovery = await verifyConfidentialPoolDiscovery(
     expectedFactory: configuredFactory,
     expectedFeeVault: configuredFeeVault,
     expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+    expectedLPTokenFactory: configuredPrivateLPTokenFactory,
+    expectedLPTokenFactoryRuntimeCodehash:
+      deployment.contracts.confidentialLpTokenFactory.runtimeCodehash,
   },
   rpcBackedVerificationAdapter,
 );
@@ -58,8 +61,11 @@ The shape validator does not prove provenance. The RPC adapter must verify
 deployed code, factory protocol version, `isPool`, the one canonical `poolKey`
 mapping and all immutable pool fields. It must also compare each token's current
 runtime implementation with `isApprovedPrivateToken` on that exact immutable
-factory. Only verified discoveries may enter candidate selection. The SDK
-verification adapter makes this check mandatory.
+factory. For LP-token provenance it verifies the factory's immutable helper,
+the helper's reviewed runtime codehash and factory constant, deployed LP-token
+code, and the helper's exact `(pool, lpToken, canonicalFactory)` issuance
+attestation. Only verified discoveries may enter candidate selection. The SDK
+verification adapter makes these checks mandatory.
 
 ## Confidential quote gate
 
@@ -172,6 +178,7 @@ reserves or block this exact-delta initialization.
 
 ## Version boundary
 
-Integrations must pin the expected factories, fee vault, protocol version,
-privacy mode and pool kind. Unknown discovery schema versions and privacy mode
-`2` are rejected rather than inferred.
+Integrations must pin the expected factories, private LP-token factory and its
+runtime codehash, fee vault, protocol version, privacy mode and pool kind.
+Unknown discovery schema versions and privacy mode `2` are rejected rather than
+inferred.

@@ -54,9 +54,12 @@ approved confidential fee tier. See `docs/FEE_ECONOMICS.md`.
 `isConfidentialPoolDiscovery` validates only the untrusted JSON shape. Before
 trusting a discovery record, callers must run
 `verifyConfidentialPoolDiscovery` with the expected factory, fee vault and
-protocol version plus an RPC-backed adapter. The verifier proves deployed code,
-factory membership, canonical lookup and immutable pool metadata, then returns a
-process-local verified value. Protocol version 2 uses
+protocol version, plus the expected private LP-token factory and its reviewed
+runtime codehash, through an RPC-backed adapter. The verifier proves deployed
+code, factory membership, canonical lookup, immutable pool metadata, the
+factory's helper address/codehash constant, helper runtime codehash, LP-token
+code, and exact `(pool, token, canonicalFactory)` issuance attestation before it
+returns a process-local verified value. Protocol version 2 uses
 `private-erc20-cpmm-v2`. Only verified records may enter confidential quote
 selection.
 

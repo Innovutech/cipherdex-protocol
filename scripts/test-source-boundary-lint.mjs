@@ -62,6 +62,7 @@ const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const freshRunnerSource = readFileSync("scripts/run-fresh-hardhat.mjs", "utf8");
 const freshTargets = new Map([
   ["testnet:preflight", "scripts/testnet-preflight.ts --network cotiTestnet"],
+  ["testnet:quote-call-probe", "scripts/testnet-quote-call-probe.ts --network cotiTestnet"],
   ["testnet:best-execution-feasibility", "scripts/testnet-best-execution-feasibility.ts --network cotiTestnet"],
   ["testnet:best-execution", "scripts/testnet-best-execution.ts --network cotiTestnet"],
   ["testnet:fee-collection", "scripts/testnet-fee-collection.ts --network cotiTestnet"],
@@ -415,6 +416,30 @@ const safeFullExitAst = compileAst(`
 });
 assert.equal(
   assertCompiledPrivacyDecryptBoundary(safeFullExitAst.sources, [safeFullExitAst.path]),
+  0,
+);
+
+const safeTerminalFeeFullExitAst = compileAst(`
+  bool private initialized;
+  function _depositTerminalProtocolFees() internal {}
+  function removeLiquidity(gtBool fullExit)
+    external
+  {
+    bool isFullExit = MpcCore.decrypt(fullExit);
+    if (isFullExit) {
+      _depositTerminalProtocolFees();
+      initialized = false;
+    }
+  }
+`, {
+  path: "contracts/ConfidentialCPMM.sol",
+  contractName: "ConfidentialCPMM",
+});
+assert.equal(
+  assertCompiledPrivacyDecryptBoundary(
+    safeTerminalFeeFullExitAst.sources,
+    [safeTerminalFeeFullExitAst.path],
+  ),
   0,
 );
 

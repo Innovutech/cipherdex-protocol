@@ -21,11 +21,11 @@ an external audit or mainnet readiness.
 - `npm audit --omit=dev --audit-level=high --json`: 0 production findings
 - `npm ls --omit=dev --all`: production graph resolved cleanly
 - full development audit: 46 findings (0 critical, 17 high, 10 moderate, 19 low)
-- privacy-boundary check: passed for 29 Solidity files
+- privacy-boundary check: passed for 33 Solidity files
 - security-boundary check: passed
 - TypeScript: passed
-- clean compile and TypeChain generation: 21 Solidity files, 52 typings
-- full local suite: 117 passing, 1 intentionally gated funded integration placeholder
+- clean compile and TypeChain generation: 22 Solidity files, 60 typings
+- full local suite: 131 passing, 1 intentionally gated funded integration placeholder
 - deployment gas measurement: passed
 - `git diff --check`: passed before fresh deployment evidence
 
@@ -197,9 +197,13 @@ tested amount and was selected without exposing the quote or reserve values.
 ## Launchpad dispositions
 
 All three launchpad LP dispositions completed in separate fresh deployments.
-Each run first pre-funded the predicted CREATE2 pool by one raw unit per token,
-proved that migration failed atomically without moving creator funds, removed
-the test donation, then completed the authorized canonical migration:
+Each run pre-funded the predicted CREATE2 pool with one raw unit of canonical
+token0. The impossible-price probe then proved that creator token pulls and
+canonical deployment rolled back while the pre-existing unit necessarily
+remained at the deterministic address. The subsequent authorized migration
+deployed that same address; protocol accounting excludes the unsolicited unit
+from effective reserves. The runner does not recover or claim to recover that
+unit, so these prefunded stacks remain disposable validation deployments:
 
 | Disposition | Factory | Migrator | Pool | Gas |
 | --- | --- | --- | --- | ---: |
@@ -232,19 +236,19 @@ was decrypted, returned or emitted.
 
 | Contract | Creation bytes | Runtime bytes | Local deployment gas |
 | --- | ---: | ---: | ---: |
-| `CipherDEXFeeVault` | 1,917 | 1,714 | 447,550 |
+| `CipherDEXFeeVault` | 8,186 | 7,961 | 1,797,662 |
 | `PrivateLPToken` | 12,976 | 11,453 | factory-created |
-| `PrivateLPTokenFactory` | 13,196 | 13,169 | 2,896,829 |
-| `ConfidentialCPMM` | 18,104 | 16,825 | factory-created |
-| `ConfidentialCPMMFactory` | 23,223 | 22,602 | 5,049,542 |
-| `ConfidentialBestExecutionRouter` | 7,773 | 7,347 | 1,672,903 |
+| `PrivateLPTokenFactory` | 13,636 | 13,609 | 2,991,908 |
+| `ConfidentialCPMM` | 19,010 | 17,696 | factory-created |
+| `ConfidentialCPMMFactory` | 24,360 | 23,706 | 5,286,752 |
+| `ConfidentialBestExecutionRouter` | 7,773 | 7,347 | 1,672,947 |
 | `ConfidentialLaunchpadMigrator` | 8,481 | 8,116 | 1,836,520 |
-| `PublicCPMM` | 11,826 | 10,233 | factory-created |
-| `PublicCPMMFactory` | 13,718 | 13,529 | 2,966,648 |
+| `PublicCPMM` | 12,201 | 10,615 | factory-created |
+| `PublicCPMMFactory` | 14,093 | 13,904 | 3,047,980 |
 | `PublicCPMMQuoter` | 816 | 640 | 193,697 |
 | `PublicCPMMRouter` | 3,162 | 2,974 | 719,995 |
 
-The confidential factory pool-creation measurement was 6,024,514 gas and is
+The confidential factory pool-creation measurement was 6,252,309 gas and is
 exercised separately from factory deployment. All runtime bytecode is below the
 24,576-byte EIP-170 limit and all initcode is below the 49,152-byte EIP-3860
 limit.

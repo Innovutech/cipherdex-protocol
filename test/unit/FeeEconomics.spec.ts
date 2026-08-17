@@ -1,27 +1,34 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployFeeVault } from "../helpers/deployFeeVault";
+import {
+  createPublicPool,
+  deployPublicFactory,
+} from "../helpers/deployPublicFactory";
 
 const DEADLINE = 0xffffffff;
 
 async function deployPublicFeeFixture() {
   const [beneficiary, lp, trader, outsider] = await ethers.getSigners();
-  const vault = await deployFeeVault(beneficiary.address);
+  const { vault, factory } = await deployPublicFactory(beneficiary.address);
   const tokenFactory = await ethers.getContractFactory("MockERC20");
-  const token0 = await tokenFactory.deploy("Token 0", "TK0", 18);
-  const token1 = await tokenFactory.deploy("Token 1", "TK1", 18);
-  await token0.waitForDeployment();
-  await token1.waitForDeployment();
+  const tokenA = await tokenFactory.deploy("Token A", "TKA", 18);
+  const tokenB = await tokenFactory.deploy("Token B", "TKB", 18);
+  await tokenA.waitForDeployment();
+  await tokenB.waitForDeployment();
 
-  const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
-    await token0.getAddress(),
-    await token1.getAddress(),
+  const pool = await createPublicPool(
+    factory,
+    await tokenA.getAddress(),
+    await tokenB.getAddress(),
     18,
     18,
     30,
-    await vault.getAddress(),
   );
-  await pool.waitForDeployment();
+  const tokenAIsToken0 = (await pool.token0()).toLowerCase() ===
+    (await tokenA.getAddress()).toLowerCase();
+  const token0 = tokenAIsToken0 ? tokenA : tokenB;
+  const token1 = tokenAIsToken0 ? tokenB : tokenA;
 
   const initial = 1_000_000n;
   await token0.mint(lp.address, initial * 2n);
@@ -34,12 +41,23 @@ async function deployPublicFeeFixture() {
   await token1.connect(trader).approve(await pool.getAddress(), ethers.MaxUint256);
   await pool.connect(lp).addLiquidity(initial, initial, 1n, 0n, ethers.MaxUint256, DEADLINE);
 
-  return { beneficiary, lp, trader, outsider, vault, token0, token1, pool, initial };
+  return {
+    beneficiary,
+    lp,
+    trader,
+    outsider,
+    vault,
+    factory,
+    token0,
+    token1,
+    pool,
+    initial,
+  };
 }
 
 describe("CipherDEX v1 fee economics", function () {
   it("pins approved total-fee tiers and the immutable one-sixth protocol split", async function () {
-    const [beneficiary] = await ethers.getSigners();
+    const [beneficiary, outsider] = await ethers.getSigners();
     const vault = await deployFeeVault(beneficiary.address);
     const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
       await vault.getAddress(),
@@ -60,11 +78,20 @@ describe("CipherDEX v1 fee economics", function () {
     await expect(
       (await ethers.getContractFactory("PublicCPMMFactory")).deploy(beneficiary.address),
     ).to.be.revertedWithCustomError(factory, "InvalidFeeVault");
+    await expect(vault.connect(outsider).setPublicFactory(await factory.getAddress()))
+      .to.be.revertedWithCustomError(vault, "PublicFactoryOnly");
+    await expect(vault.setPublicFactory(beneficiary.address))
+      .to.be.revertedWithCustomError(vault, "InvalidPublicFactory");
+    await expect(vault.setPublicFactory(await factory.getAddress()))
+      .to.emit(vault, "PublicFactoryConfigured")
+      .withArgs(await factory.getAddress());
+    await expect(vault.setPublicFactory(await factory.getAddress()))
+      .to.be.revertedWithCustomError(vault, "PublicFactoryAlreadyConfigured");
   });
 
   it("separates public and confidential vault sweep paths", async function () {
     const [beneficiary, outsider] = await ethers.getSigners();
-    const vault = await deployFeeVault(beneficiary.address);
+    const { vault } = await deployPublicFactory(beneficiary.address);
     const publicToken = await (await ethers.getContractFactory("MockERC20")).deploy(
       "Public token",
       "PUB",
@@ -76,8 +103,15 @@ describe("CipherDEX v1 fee economics", function () {
     await publicToken.waitForDeployment();
     await privateToken.waitForDeployment();
 
+    await publicToken.mint(await vault.getAddress(), 1n);
+    await expect(
+      vault.connect(outsider).depositPublicFees(await publicToken.getAddress(), 1n),
+    ).to.be.revertedWithCustomError(vault, "PublicFactoryOnly");
+    expect(await vault.publicFees(await publicToken.getAddress())).to.equal(0n);
+    await expect(vault.sweepPublicToken(await publicToken.getAddress()))
+      .to.be.revertedWithCustomError(vault, "NothingToSweep");
     await expect(vault.sweepPublicToken(await privateToken.getAddress()))
-      .to.be.revertedWithCustomError(vault, "InvalidTokenMode");
+      .to.be.revertedWithCustomError(vault, "NothingToSweep");
     await expect(vault.sweepConfidentialToken(await publicToken.getAddress()))
       .to.be.revertedWithCustomError(vault, "InvalidTokenMode");
     await expect(vault.connect(outsider).sweepConfidentialToken(await privateToken.getAddress()))
@@ -90,14 +124,39 @@ describe("CipherDEX v1 fee economics", function () {
   });
 
   it("rejects a reentrant public-token callback during a vault sweep", async function () {
-    const [beneficiary] = await ethers.getSigners();
-    const vault = await deployFeeVault(beneficiary.address);
+    const [beneficiary, trader] = await ethers.getSigners();
+    const { vault, factory } = await deployPublicFactory(beneficiary.address);
     const token = await (await ethers.getContractFactory("ReentrantERC20")).deploy(18);
+    const paired = await (await ethers.getContractFactory("MockERC20")).deploy(
+      "Paired token",
+      "PAIR",
+      18,
+    );
     await token.waitForDeployment();
+    await paired.waitForDeployment();
 
     const vaultAddress = await vault.getAddress();
     const tokenAddress = await token.getAddress();
-    await token.mint(vaultAddress, 100n);
+    const pool = await createPublicPool(
+      factory,
+      tokenAddress,
+      await paired.getAddress(),
+      18,
+      18,
+    );
+    const poolAddress = await pool.getAddress();
+    const tokenIsToken0 = (await pool.token0()).toLowerCase() === tokenAddress.toLowerCase();
+    await token.mint(beneficiary.address, 10_000_000n);
+    await paired.mint(beneficiary.address, 10_000_000n);
+    await token.mint(trader.address, 1_000_000n);
+    await token.approve(poolAddress, 10_000_000n);
+    await paired.approve(poolAddress, 10_000_000n);
+    await pool.addLiquidity(10_000_000n, 10_000_000n, 1n, 0n, ethers.MaxUint256, DEADLINE);
+    await token.connect(trader).approve(poolAddress, 1_000_000n);
+    await pool.connect(trader).swapExactInput(1_000_000n, 0n, tokenIsToken0, DEADLINE);
+    await pool.collectProtocolFees(tokenIsToken0, !tokenIsToken0);
+    const claim = await vault.publicFees(tokenAddress);
+    expect(claim).to.be.greaterThan(0n);
     await token.configureCallback(
       vaultAddress,
       vault.interface.encodeFunctionData("sweepPublicToken", [tokenAddress]),
@@ -105,8 +164,105 @@ describe("CipherDEX v1 fee economics", function () {
 
     await expect(vault.sweepPublicToken(tokenAddress))
       .to.be.revertedWithCustomError(vault, "BeneficiaryOnly");
-    expect(await token.balanceOf(vaultAddress)).to.equal(100n);
+    expect(await token.balanceOf(vaultAddress)).to.equal(claim);
+    expect(await vault.publicFees(tokenAddress)).to.equal(claim);
     expect(await token.balanceOf(beneficiary.address)).to.equal(0n);
+  });
+
+  it("requires an exact public-fee debit and beneficiary credit", async function () {
+    const [beneficiary, trader] = await ethers.getSigners();
+    const { vault, factory } = await deployPublicFactory(beneficiary.address);
+    const token = await (await ethers.getContractFactory("FeeOnTransferERC20")).deploy(
+      "Sender-taxed token",
+      "TAX",
+      100,
+    );
+    const paired = await (await ethers.getContractFactory("MockERC20")).deploy(
+      "Paired token",
+      "PAIR",
+      18,
+    );
+    await token.waitForDeployment();
+    await paired.waitForDeployment();
+
+    const vaultAddress = await vault.getAddress();
+    const tokenAddress = await token.getAddress();
+    await token.setTaxedSender(vaultAddress);
+    const pool = await createPublicPool(
+      factory,
+      tokenAddress,
+      await paired.getAddress(),
+      18,
+      18,
+    );
+    const poolAddress = await pool.getAddress();
+    const tokenIsToken0 = (await pool.token0()).toLowerCase() === tokenAddress.toLowerCase();
+    await token.mint(beneficiary.address, 10_000_000n);
+    await paired.mint(beneficiary.address, 10_000_000n);
+    await token.mint(trader.address, 1_000_000n);
+    await token.approve(poolAddress, 10_000_000n);
+    await paired.approve(poolAddress, 10_000_000n);
+    await pool.addLiquidity(10_000_000n, 10_000_000n, 1n, 0n, ethers.MaxUint256, DEADLINE);
+    await token.connect(trader).approve(poolAddress, 1_000_000n);
+    await pool.connect(trader).swapExactInput(1_000_000n, 0n, tokenIsToken0, DEADLINE);
+    await pool.collectProtocolFees(tokenIsToken0, !tokenIsToken0);
+    const claim = await vault.publicFees(tokenAddress);
+    expect(claim).to.be.greaterThan(0n);
+    await token.setTaxedSender(vaultAddress);
+
+    await expect(vault.sweepPublicToken(tokenAddress))
+      .to.be.revertedWithCustomError(vault, "PublicTransferAmountMismatch");
+    expect(await token.balanceOf(vaultAddress)).to.equal(claim);
+    expect(await vault.publicFees(tokenAddress)).to.equal(claim);
+    expect(await token.balanceOf(beneficiary.address)).to.equal(0n);
+
+    await token.setTaxedSender(beneficiary.address);
+    await expect(vault.sweepPublicToken(tokenAddress))
+      .to.emit(vault, "PublicFeesSwept")
+      .withArgs(tokenAddress, beneficiary.address, claim);
+    expect(await token.balanceOf(vaultAddress)).to.equal(0n);
+    expect(await token.balanceOf(beneficiary.address)).to.equal(claim);
+  });
+
+  it("keeps an authenticated public claim sweepable when a token changes interface reports", async function () {
+    const [beneficiary, trader] = await ethers.getSigners();
+    const { vault, factory } = await deployPublicFactory(beneficiary.address);
+    const mutable = await (
+      await ethers.getContractFactory("MutableInterfaceERC20")
+    ).deploy("Mutable token", "MUT", 18);
+    const paired = await (await ethers.getContractFactory("MockERC20")).deploy(
+      "Paired token",
+      "PAIR",
+      18,
+    );
+    await Promise.all([mutable.waitForDeployment(), paired.waitForDeployment()]);
+    const pool = await createPublicPool(
+      factory,
+      await mutable.getAddress(),
+      await paired.getAddress(),
+      18,
+      18,
+    );
+    const poolAddress = await pool.getAddress();
+    const mutableIsToken0 = (await pool.token0()).toLowerCase() ===
+      (await mutable.getAddress()).toLowerCase();
+    await mutable.mint(beneficiary.address, 1_000_000n);
+    await paired.mint(beneficiary.address, 1_000_000n);
+    await mutable.mint(trader.address, 100_000n);
+    await mutable.approve(poolAddress, 1_000_000n);
+    await paired.approve(poolAddress, 1_000_000n);
+    await pool.addLiquidity(1_000_000n, 1_000_000n, 1n, 0n, ethers.MaxUint256, DEADLINE);
+    await mutable.connect(trader).approve(poolAddress, 100_000n);
+    await pool.connect(trader).swapExactInput(100_000n, 0n, mutableIsToken0, DEADLINE);
+    await pool.collectProtocolFees(mutableIsToken0, !mutableIsToken0);
+    const claim = await vault.publicFees(await mutable.getAddress());
+    expect(claim).to.be.greaterThan(0n);
+
+    await mutable.setReportsInterface(true);
+    await expect(vault.sweepPublicToken(await mutable.getAddress()))
+      .to.emit(vault, "PublicFeesSwept")
+      .withArgs(await mutable.getAddress(), beneficiary.address, claim);
+    expect(await vault.publicFees(await mutable.getAddress())).to.equal(0n);
   });
 
   it("accrues each input token separately while preserving quote and effective-reserve math", async function () {
@@ -228,7 +384,7 @@ describe("CipherDEX v1 fee economics", function () {
 
   it("collects a conforming side independently and preserves a short-credit fee claim", async function () {
     const [lp, trader] = await ethers.getSigners();
-    const vault = await deployFeeVault();
+    const { vault, factory } = await deployPublicFactory();
     const normal = await (await ethers.getContractFactory("MockERC20")).deploy(
       "Normal Token",
       "NORM",
@@ -240,15 +396,14 @@ describe("CipherDEX v1 fee economics", function () {
       100,
     );
     await Promise.all([normal.waitForDeployment(), taxed.waitForDeployment()]);
-    const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
+    const pool = await createPublicPool(
+      factory,
       await normal.getAddress(),
       await taxed.getAddress(),
       18,
       18,
       30,
-      await vault.getAddress(),
     );
-    await pool.waitForDeployment();
 
     const poolAddress = await pool.getAddress();
     await taxed.setTaxedSender(poolAddress);
@@ -290,7 +445,7 @@ describe("CipherDEX v1 fee economics", function () {
       .to.equal(taxedAccrued);
 
     await expect(pool.collectProtocolFees(taxedIsToken0, !taxedIsToken0))
-      .to.be.revertedWithCustomError(pool, "TransferAmountMismatch");
+      .to.be.revertedWithCustomError(vault, "PublicTransferAmountMismatch");
     expect(await taxed.balanceOf(await vault.getAddress())).to.equal(0n);
     expect(await pool.effectiveReserves()).to.deep.equal(reservesBefore);
     expect(taxedIsToken0 ? await pool.protocolFees0() : await pool.protocolFees1())

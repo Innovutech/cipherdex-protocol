@@ -100,8 +100,8 @@ The testnet behavior is demonstrated, not audited. Before any mainnet decision:
 1. Obtain independent contract and COTI MPC integration review.
 2. Run sustained stateful/fuzz campaigns beyond the deterministic local suite,
    including router gas/liveness under future candidate tiers.
-3. Operationally validate the separate 24-hour confidential vault sweep without
-   shortening or bypassing its delay.
+3. Operationally validate the fixed-epoch confidential vault sweep after its
+   real two-epoch maturity boundary without shortening or bypassing the delay.
 4. Exercise launchpad creator-held, timed-lock and permanent-lock dispositions
    in separate fresh testnet deployments; the core pool lock paths themselves
    have been exercised.

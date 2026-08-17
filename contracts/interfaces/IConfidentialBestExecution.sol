@@ -23,6 +23,41 @@ interface IConfidentialBestExecutionPool {
 }
 
 interface IConfidentialBestExecutionRouter {
+    event ConfidentialBestQuoteResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        address indexed selectedPool,
+        uint256 selectedFeeBps,
+        bool zeroForOne,
+        ctUint256 result
+    );
+
+    event ConfidentialBestSwapResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        address indexed selectedPool,
+        uint256 selectedFeeBps,
+        bool zeroForOne,
+        ctUint256 result
+    );
+
     function PROTOCOL_VERSION() external view returns (uint256);
     function factory() external view returns (address);
+
+    function requestBestQuoteExactInput(
+        address tokenIn,
+        address tokenOut,
+        itUint256 calldata amountIn,
+        bytes32 requestId,
+        uint64 deadline
+    ) external returns (ctUint256 memory result);
+
+    function swapBestExactInput(
+        address tokenIn,
+        address tokenOut,
+        itUint256 calldata amountIn,
+        itUint256 calldata minimumOut,
+        bytes32 requestId,
+        uint64 deadline
+    ) external returns (ctUint256 memory result);
 }

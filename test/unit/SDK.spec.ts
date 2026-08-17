@@ -646,7 +646,40 @@ describe("stable SDK surface", function () {
 
     const cyclic = { ...valid } as typeof valid & { self?: unknown };
     cyclic.self = cyclic;
-    expect(isConfidentialPoolDiscovery(cyclic)).to.equal(true);
+    expect(isConfidentialPoolDiscovery(cyclic)).to.equal(false);
+
+    for (const extra of [
+      { amount0: "1" },
+      { protocolFeeAmount: "1" },
+      { AmountIn: "1" },
+      { arbitraryMetadata: "unexpected" },
+    ]) {
+      expect(isConfidentialPoolDiscovery({ ...valid, ...extra })).to.equal(false);
+    }
+    expect(isConfidentialPoolDiscovery({
+      ...valid,
+      feePolicy: {
+        ...valid.feePolicy,
+        confidentialCollection: {
+          ...valid.feePolicy.confidentialCollection,
+          amount: "1",
+        },
+      },
+    })).to.equal(false);
+    expect(isConfidentialPoolDiscovery({
+      ...valid,
+      [Symbol("hidden")]: "1",
+    })).to.equal(false);
+
+    let proxyGetCalls = 0;
+    const dataPropertyProxy = new Proxy({ ...valid }, {
+      get() {
+        proxyGetCalls += 1;
+        throw new Error("shape validation must not invoke proxy getters");
+      },
+    });
+    expect(isConfidentialPoolDiscovery(dataPropertyProxy)).to.equal(true);
+    expect(proxyGetCalls).to.equal(0);
 
     const deepRoot: Record<string, unknown> = {};
     let cursor = deepRoot;
@@ -682,6 +715,40 @@ describe("stable SDK surface", function () {
       unlockTime: "0",
       metadata: deepRoot,
     })).to.equal(false);
+    expect(isPublicPoolDiscovery({
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      pool: valid.pool,
+      token0: valid.token0,
+      token1: valid.token1,
+      token0Decimals: valid.token0Decimals,
+      token1Decimals: valid.token1Decimals,
+      feeBps: valid.feeBps,
+      feeVault: valid.feeVault,
+      feePolicy: valid.feePolicy,
+      privacyMode: PRIVACY_MODE.TRANSPARENT,
+      poolKind: "public-erc20-cpmm-v2",
+      amount0: "1",
+    })).to.equal(false);
+    expect(isConfidentialLockDiscovery({
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      pool: valid.pool,
+      lockId: "0x" + "11".repeat(32),
+      owner: valid.token0,
+      unlockTime: "0",
+      permanent: false,
+      released: false,
+      amount0: "1",
+    })).to.equal(false);
+    expect(isLaunchpadMigrationMetadata({
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      creator: valid.token0,
+      pool: valid.pool,
+      disposition: LP_DISPOSITION.CREATOR_HELD,
+      lockId: "0x" + "00".repeat(32),
+      unlockTime: "0",
+      amount0: "1",
+    })).to.equal(false);
 
     const wide = Object.fromEntries(
       Array.from({ length: 1_100 }, (_, index) => [`node${index}`, {}]),
@@ -714,10 +781,30 @@ describe("stable SDK surface", function () {
     expect(isConfidentialPoolDiscovery(hostile)).to.equal(false);
   });
 
+  it("fails closed for revoked Proxy metadata across every exported predicate", function () {
+    const guards = [
+      isConfidentialPoolDiscovery,
+      isPublicPoolDiscovery,
+      isConfidentialLockDiscovery,
+      isLaunchpadMigrationMetadata,
+    ];
+
+    for (const guard of guards) {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      expect(() => guard(proxy)).not.to.throw();
+      expect(guard(proxy)).to.equal(false);
+    }
+  });
+
   it("requires factory-proven confidential pool discovery", async function () {
     const chainId = 31_337;
     const factory = "0x0000000000000000000000000000000000000099";
     const feeVault = "0x0000000000000000000000000000000000000055";
+    const lpTokenFactory = "0x0000000000000000000000000000000000000066";
+    const lpToken = "0x0000000000000000000000000000000000000044";
+    const deployedCode = "0x60006000";
+    const lpTokenFactoryRuntimeCodehash = keccak256(deployedCode);
     const discovery = (pool: string, feeBps: number) => ({
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
       protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
@@ -735,8 +822,12 @@ describe("stable SDK surface", function () {
     });
     const adapter = (candidate: ReturnType<typeof discovery>, overrides: Record<string, unknown> = {}) => ({
       readChainId: async () => BigInt(chainId),
-      getCode: async () => "0x60006000",
+      getCode: async () => deployedCode,
+      hashRuntimeCode: (code: string) => keccak256(code),
       readFactoryProtocolVersion: async () => BigInt(CIPHERDEX_PROTOCOL_VERSION),
+      readFactoryLPTokenFactory: async () => lpTokenFactory,
+      readFactoryLPTokenFactoryRuntimeCodehash: async () => lpTokenFactoryRuntimeCodehash,
+      isLPTokenIssued: async () => true,
       isFactoryPrivateTokenApproved: async () => true,
       isFactoryPool: async () => true,
       getCanonicalPool: async () => candidate.pool,
@@ -749,6 +840,7 @@ describe("stable SDK surface", function () {
         token1Decimals: 6n,
         feeBps: BigInt(candidate.feeBps),
         feeVault,
+        lpToken,
       }),
       ...overrides,
     });
@@ -760,6 +852,8 @@ describe("stable SDK surface", function () {
           expectedFactory: factory,
           expectedFeeVault: feeVault,
           expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+          expectedLPTokenFactory: lpTokenFactory,
+          expectedLPTokenFactoryRuntimeCodehash: lpTokenFactoryRuntimeCodehash,
         },
         adapter(candidate, overrides),
       );
@@ -779,6 +873,8 @@ describe("stable SDK surface", function () {
         expectedFactory: factory,
         expectedFeeVault: feeVault,
         expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+        expectedLPTokenFactory: lpTokenFactory,
+        expectedLPTokenFactoryRuntimeCodehash: lpTokenFactoryRuntimeCodehash,
       },
       adapter(slowDiscovery),
     );
@@ -795,6 +891,9 @@ describe("stable SDK surface", function () {
       { readChainId: async () => BigInt(chainId + 1) },
       { isFactoryPrivateTokenApproved: async () => false },
       { isFactoryPool: async () => false },
+      { readFactoryLPTokenFactory: async () => "0x0000000000000000000000000000000000000077" },
+      { readFactoryLPTokenFactoryRuntimeCodehash: async () => `0x${"77".repeat(32)}` },
+      { isLPTokenIssued: async () => false },
       { getCanonicalPool: async () => "0x0000000000000000000000000000000000000077" },
       {
         readPoolState: async () => ({
@@ -806,6 +905,7 @@ describe("stable SDK surface", function () {
           token1Decimals: 6n,
           feeBps: 30n,
           feeVault: "0x0000000000000000000000000000000000000088",
+          lpToken,
         }),
       },
     ]) {
@@ -900,6 +1000,9 @@ describe("stable SDK surface", function () {
         minimumPoolSwapCount: 8,
         minimumPoolDelaySeconds: 3_600,
         minimumVaultSweepDelaySeconds: 86_400,
+        vaultEpochSeconds: 86_400,
+        minimumVaultAggregatedSwapCount: 8,
+        minimumVaultResidenceEpochs: 2,
       },
     });
     expect(calculateCipherDEXV1FeeBreakdown(10_000n, 30)).to.deep.equal({

@@ -7,6 +7,7 @@ import "./interfaces/IConfidentialCPMM.sol";
 import "./interfaces/IConfidentialCPMMFactory.sol";
 import "./interfaces/IConfidentialBestExecution.sol";
 import "./interfaces/IPrivateLPTokenFactory.sol";
+import "./interfaces/IConfidentialFeeVault.sol";
 
 /**
  * @title ConfidentialCPMMFactory
@@ -18,6 +19,8 @@ import "./interfaces/IPrivateLPTokenFactory.sol";
 contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy {
     uint256 public constant PROTOCOL_VERSION = 2;
     uint8 public constant PRIVACY_MODE = 1;
+    bytes32 public constant PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH =
+        hex"9c796ceca64fdb8f1b780ed50588dfce7d75b5674ef5faa06bc1d5d4f063a0de";
     mapping(bytes32 => address) public getPool;
     mapping(address => bool) public isPool;
     mapping(bytes32 => bool) public isApprovedPrivateTokenCodehash;
@@ -51,7 +54,9 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         bytes32[] memory privateTokenCodehashes_
     ) {
         if (feeVault_.code.length == 0) revert InvalidFeeVault();
-        if (lpTokenFactory_.code.length == 0) revert InvalidLPTokenFactory();
+        if (lpTokenFactory_.codehash != PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH) {
+            revert InvalidLPTokenFactory();
+        }
         if (privateTokenCodehashes_.length == 0) revert InvalidPrivateTokenCodehash();
         for (uint256 index = 0; index < privateTokenCodehashes_.length; index++) {
             bytes32 codehash = privateTokenCodehashes_[index];
@@ -181,6 +186,9 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         uint8 decimals1,
         uint256 feeBps
     ) internal returns (address pool) {
+        if (IConfidentialFeeVault(feeVault).confidentialFactory() != address(this)) {
+            revert InvalidFeeVault();
+        }
         pool = address(new ConfidentialCPMM{salt: key}(
             token0,
             token1,
@@ -189,9 +197,9 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
             feeBps,
             feeVault
         ));
+        isPool[pool] = true;
         address lpTokenAddress = IPrivateLPTokenFactory(lpTokenFactory).create(pool);
         IConfidentialCPMM(pool).initializeLPToken(lpTokenAddress);
-        isPool[pool] = true;
         pools.push(pool);
 
         emit PoolCreated(token0, token1, decimals0, decimals1, feeBps, pool);

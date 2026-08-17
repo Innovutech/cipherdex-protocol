@@ -15,12 +15,15 @@ contract MpcBestExecutionPoolProbe {
     uint256 public immutable denominator;
     address public immutable configurator;
     address public router;
+    bool public closed;
 
     error Unauthorized();
     error AlreadyConfigured();
     error InvalidConfiguration();
     error SlippageExceeded();
     error PrivateTransferAmountMismatch();
+    error Closed();
+    error RecoveryMismatch();
 
     constructor(address tokenIn_, address tokenOut_, uint256 numerator_, uint256 denominator_) {
         if (
@@ -39,12 +42,14 @@ contract MpcBestExecutionPoolProbe {
 
     function configureRouter(address router_) external {
         if (msg.sender != configurator) revert Unauthorized();
+        if (closed) revert Closed();
         if (router != address(0)) revert AlreadyConfigured();
         if (router_.code.length == 0) revert InvalidConfiguration();
         router = router_;
     }
 
     function quoteGt(gtUint256 amountIn) external returns (gtUint256) {
+        if (closed) revert Closed();
         _requireRouter();
         return _quote(amountIn);
     }
@@ -53,6 +58,7 @@ contract MpcBestExecutionPoolProbe {
         external
         returns (gtUint256 amountOut)
     {
+        if (closed) revert Closed();
         _requireRouter();
         if (recipient == address(0)) revert InvalidConfiguration();
 
@@ -72,6 +78,26 @@ contract MpcBestExecutionPoolProbe {
         if (!MpcCore.decrypt(MpcCore.eq(tokenOut.balanceOf(), MpcCore.sub(outputBefore, amountOut)))) {
             revert PrivateTransferAmountMismatch();
         }
+    }
+
+    function closeAndRecover(address recipient) external {
+        if (msg.sender != configurator) revert Unauthorized();
+        if (closed) revert Closed();
+        if (recipient == address(0)) revert InvalidConfiguration();
+        closed = true;
+
+        gtUint256 inputBalance = tokenIn.balanceOf();
+        if (!MpcCore.decrypt(MpcCore.eq(inputBalance, uint256(0)))) {
+            tokenIn.transferGT(recipient, inputBalance);
+        }
+        gtUint256 outputBalance = tokenOut.balanceOf();
+        if (!MpcCore.decrypt(MpcCore.eq(outputBalance, uint256(0)))) {
+            tokenOut.transferGT(recipient, outputBalance);
+        }
+        if (
+            !MpcCore.decrypt(MpcCore.eq(tokenIn.balanceOf(), uint256(0))) ||
+            !MpcCore.decrypt(MpcCore.eq(tokenOut.balanceOf(), uint256(0)))
+        ) revert RecoveryMismatch();
     }
 
     function _quote(gtUint256 amountIn) internal returns (gtUint256) {

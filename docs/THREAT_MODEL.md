@@ -41,6 +41,12 @@
 - successful atomic routing leaving input escrow or candidate allowance residue;
 - selected settlement bypassing pool-owned fee, slippage, invariant, reserve,
   protocol-fee or exact-delta enforcement;
+- arbitrary or lookalike LP-token helper code being accepted by the canonical
+  factory, or a helper-created token being rebound to a different pool/issuer;
+- a full LP exit receiving or stranding sub-threshold encrypted protocol fees;
+- a noncanonical pool depositing encrypted fees into the protocol vault;
+- confidential fee deposits leaving residual token allowance or bypassing exact
+  encrypted vault balance-delta validation;
 
 ## Not solved by this phase
 
@@ -67,9 +73,9 @@
 - gas cost and block-limit headroom as additional fee tiers are considered. V1
   is hard-bounded to three tiers and has no caller-controlled candidate loop;
 - active differencing of low-volume confidential fee batches by a beneficiary or
-  adversary that already knows most constituent trades; count/time batching and
-  the vault sweep cadence reduce routine per-swap disclosure but cannot create
-  unknown traffic;
+  adversary that already knows most constituent trades; pool count/time batching,
+  fixed daily cross-pool epochs, terminal deposits and the vault sweep threshold
+  reduce routine per-swap disclosure but cannot create unknown traffic;
 - quote-identity key compromise, request logging or traffic analysis; the quote
   identity is non-custodial but learns its own requested outputs;
 - whether a launchpad's encrypted allowances are economically scoped to its

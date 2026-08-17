@@ -18,8 +18,8 @@ import {
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
-import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
+  assertReviewedPrivateTokens,
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
@@ -81,6 +81,7 @@ const requireConfidentialFeeAccrual = (
 };
 
 const CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
+const FEE_VAULT_BIND_GAS_LIMIT = 250_000n;
 const PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const CONFIDENTIAL_POOL_CREATE_GAS_LIMIT = 6_500_000n;
 const FEE_VAULT_DEPLOY_GAS_LIMIT = 1_000_000n;
@@ -421,11 +422,6 @@ async function main(): Promise<void> {
   requireConfidentialFeeAccrual(swapAmount0, feeBps);
   requireConfidentialFeeAccrual(swapAmount0, quoteFeeBps);
   requireConfidentialFeeAccrual(swapAmount1, feeBps);
-  const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
-    ethers.provider,
-    [tokenAddressA, tokenAddressB],
-  );
-
   const secondPrivateKey = requiredPrivateKey("COTI_SECOND_LP_PRIVATE_KEY");
   const secondAesKey = process.env.COTI_SECOND_LP_AES_KEY?.trim();
   if (!secondAesKey) throw new Error("missing COTI_SECOND_LP_AES_KEY");
@@ -454,13 +450,45 @@ async function main(): Promise<void> {
     throw new Error("deployer, second LP and quote identity must be separate accounts");
   }
 
-  let poolAddress = process.env.COTI_POOL?.trim();
-  let quotePoolAddress = process.env.COTI_QUOTE_POOL?.trim();
-  let trustedFactoryAddress = process.env.COTI_FACTORY?.trim();
-  let trustedFeeVaultAddress = process.env.COTI_FEE_VAULT?.trim();
+  const configuredFactoryAddress = requiredAddress("COTI_FACTORY");
+  const configuredFeeVaultAddress = requiredAddress("COTI_FEE_VAULT");
+  stage = "reviewed deployment provenance";
+  const deploymentRecord = await verifyConfiguredTestnetDeployment(
+    requiredTestnetDeploymentRecordPath(),
+    ethers.provider,
+    [
+      {
+        recordKey: "confidentialFactory",
+        contractName: "ConfidentialCPMMFactory",
+        address: configuredFactoryAddress,
+      },
+      {
+        recordKey: "feeVault",
+        contractName: "CipherDEXFeeVault",
+        address: configuredFeeVaultAddress,
+      },
+    ],
+  );
+  assertReviewedPrivateTokens(deploymentRecord, [tokenAddressA, tokenAddressB]);
+  const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
+    ethers.provider,
+    [tokenAddressA, tokenAddressB],
+  );
+
+  if (process.env.COTI_POOL?.trim() || process.env.COTI_QUOTE_POOL?.trim()) {
+    throw new Error(
+      "the destructive full scenario does not accept COTI_POOL or COTI_QUOTE_POOL; " +
+      "it always deploys an isolated disposable factory",
+    );
+  }
+  let poolAddress: string | undefined;
+  let quotePoolAddress: string | undefined;
+  let trustedFactoryAddress = configuredFactoryAddress;
+  let trustedFeeVaultAddress = configuredFeeVaultAddress;
+  let trustedLpTokenFactoryAddress: string | undefined;
+  let trustedLpTokenFactoryRuntimeCodehash: string | undefined;
   let createdPrimaryPool = false;
   let createdQuotePool = false;
-  const usesConfiguredDeployment = Boolean(poolAddress);
   if (!poolAddress) {
     stage = "fee vault deployment";
     const feeVaultFactory = await ethers.getContractFactory("CipherDEXFeeVault", wallet);
@@ -478,6 +506,10 @@ async function main(): Promise<void> {
       () => privateLpFactory.deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT }),
     );
     const lpTokenFactoryAddress = await lpTokenFactory.getAddress();
+    trustedLpTokenFactoryAddress = lpTokenFactoryAddress;
+    trustedLpTokenFactoryRuntimeCodehash = ethers.keccak256(
+      await ethers.provider.getCode(lpTokenFactoryAddress),
+    );
     console.log(`private LP token factory deployed: ${lpTokenFactoryAddress}`);
     stage = "confidential factory deployment";
     const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory", wallet);
@@ -493,6 +525,15 @@ async function main(): Promise<void> {
     const factoryAddress = await factory.getAddress();
     trustedFactoryAddress = factoryAddress;
     console.log(`factory deployed: ${factoryAddress}`);
+    await submit(
+      "confidential fee-vault factory binding",
+      feeVault.setConfidentialFactory(factoryAddress, {
+        gasLimit: FEE_VAULT_BIND_GAS_LIMIT,
+      }),
+    );
+    if ((await feeVault.confidentialFactory()).toLowerCase() !== factoryAddress.toLowerCase()) {
+      throw new Error("fee vault did not bind the confidential factory");
+    }
     await submit(
       "pool creation",
       factory.createPool(
@@ -557,36 +598,13 @@ async function main(): Promise<void> {
   if (quotePoolAddress.toLowerCase() === poolAddress.toLowerCase()) {
     throw new Error("COTI_POOL and COTI_QUOTE_POOL must be different fee-tier pools");
   }
-  if (usesConfiguredDeployment) {
-    stage = "reviewed deployment provenance";
-    const deploymentRecord = await verifyConfiguredTestnetDeployment(
-      requiredTestnetDeploymentRecordPath(),
-      ethers.provider,
-      [
-        {
-          recordKey: "confidentialFactory",
-          contractName: "ConfidentialCPMMFactory",
-          address: trustedFactoryAddress,
-        },
-        {
-          recordKey: "feeVault",
-          contractName: "CipherDEXFeeVault",
-          address: trustedFeeVaultAddress,
-        },
-      ],
-    );
-    await verifyDeployedRuntimeArtifact("ConfidentialCPMM", poolAddress);
-    await verifyDeployedRuntimeArtifact("ConfidentialCPMM", quotePoolAddress);
-    const reviewedTokens = deploymentRecord.contracts.confidentialFactory.reviewedPrivateTokens;
-    if (
-      !Array.isArray(reviewedTokens) ||
-      ![tokenAddressA, tokenAddressB].every((token) => reviewedTokens.some(
-        (candidate) => typeof candidate === "string" &&
-          candidate.toLowerCase() === token.toLowerCase(),
-      ))
-    ) {
-      throw new Error("configured private tokens are absent from the reviewed deployment record");
-    }
+  if (
+    !trustedLpTokenFactoryAddress ||
+    !ethers.isAddress(trustedLpTokenFactoryAddress) ||
+    !trustedLpTokenFactoryRuntimeCodehash ||
+    !/^0x[0-9a-f]{64}$/iu.test(trustedLpTokenFactoryRuntimeCodehash)
+  ) {
+    throw new Error("missing reviewed private LP-token factory provenance");
   }
   console.log(`pool: ${poolAddress}`);
   console.log(`quote candidate pool: ${quotePoolAddress}`);
@@ -604,6 +622,11 @@ async function main(): Promise<void> {
   const discoveryFactory = await ethers.getContractAt(
     "ConfidentialCPMMFactory",
     discoveryFactoryAddress,
+    quoteWallet,
+  );
+  const discoveryLpTokenFactory = await ethers.getContractAt(
+    "PrivateLPTokenFactory",
+    trustedLpTokenFactoryAddress,
     quoteWallet,
   );
   const [factoryCode, feeVaultCode, factoryVersionValue] = await Promise.all([
@@ -865,11 +888,19 @@ async function main(): Promise<void> {
         expectedFactory: discoveryFactoryAddress,
         expectedFeeVault: trustedFeeVaultAddress,
         expectedProtocolVersion: discoveryProtocolVersion,
+        expectedLPTokenFactory: trustedLpTokenFactoryAddress,
+        expectedLPTokenFactoryRuntimeCodehash: trustedLpTokenFactoryRuntimeCodehash,
       },
       {
         readChainId: async () => (await ethers.provider.getNetwork()).chainId,
         getCode: (address) => ethers.provider.getCode(address),
+        hashRuntimeCode: (code) => ethers.keccak256(code),
         readFactoryProtocolVersion: async () => discoveryFactory.PROTOCOL_VERSION(),
+        readFactoryLPTokenFactory: async () => discoveryFactory.lpTokenFactory(),
+        readFactoryLPTokenFactoryRuntimeCodehash: async () =>
+          discoveryFactory.PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH(),
+        isLPTokenIssued: async (_lpFactory, candidatePool, lpToken, issuer) =>
+          discoveryLpTokenFactory.isIssuedToken(candidatePool, lpToken, issuer),
         isFactoryPrivateTokenApproved: async (_factoryAddress, token) =>
           discoveryFactory.isApprovedPrivateToken(token),
         isFactoryPool: async (_factoryAddress, candidatePool) =>
@@ -899,6 +930,7 @@ async function main(): Promise<void> {
             token1Decimals,
             onchainFeeBps,
             feeVault,
+            lpToken,
           ] = await Promise.all([
             onchainPool.PROTOCOL_VERSION(),
             onchainPool.PRIVACY_MODE(),
@@ -908,6 +940,7 @@ async function main(): Promise<void> {
             onchainPool.token1Decimals(),
             onchainPool.feeBps(),
             onchainPool.feeVault(),
+            onchainPool.lpToken(),
           ]);
           return {
             protocolVersion,
@@ -918,6 +951,7 @@ async function main(): Promise<void> {
             token1Decimals,
             feeBps: onchainFeeBps,
             feeVault,
+            lpToken,
           };
         },
       },

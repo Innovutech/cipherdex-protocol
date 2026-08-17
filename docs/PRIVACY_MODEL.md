@@ -10,6 +10,7 @@
 - amounts held in timed/permanent LP locks;
 - amounts in the pool's own events and errors.
 - per-token accrued confidential protocol-fee amounts.
+- per-token/per-epoch confidential fee-vault amounts.
 - losing fee-tier quote outputs and their relative ordering.
 - amounts held temporarily in best-execution router escrow and allowances.
 
@@ -53,17 +54,21 @@ winner and its exact output and can probe repeatedly. A dedicated quote service
 must not persist or publish those outputs as protocol market data.
 
 Confidential protocol-fee collection has a related but narrower inference
-boundary. Pool-side count/time batching and a delayed vault sweep prevent routine
-per-swap disclosure. A beneficiary that already knows most trades in a quiet
-window may still infer information about the remainder from a later aggregate
-balance change. The protocol does not claim that batching manufactures unknown
-traffic or an information-theoretic anonymity set.
+boundary. Pool-side count/time batching, canonical encrypted vault deposits,
+fixed daily cross-pool epochs, a minimum eight-swap matured sweep, and terminal
+full-exit deposits prevent routine per-swap amount disclosure. Deposit events do
+reveal pool, token, epoch and public aggregate swap count. A beneficiary that
+already knows most trades in a quiet window may still infer information about
+the remainder from a later aggregate balance change. The protocol does not claim
+that batching manufactures unknown traffic or an information-theoretic anonymity
+set.
 
 ## Trust assumptions
 
 The design relies on COTI's MPC precompile, consensus, operator/key-management
 model, reviewed token implementations admitted by the factory's immutable
-runtime-codehash policy, client-side AES key handling and the COTI SDK's
+runtime-codehash policy, the reviewed LP-token helper runtime and its on-chain
+issuance attestations, client-side AES key handling and the COTI SDK's
 authenticated encrypted-input format. Interface and exact-balance checks reduce
 integration mistakes but do not prove the behavior of an approved implementation.
 Mutable proxy and metamorphic implementations are unsupported. These are trust

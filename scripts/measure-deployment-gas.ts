@@ -50,6 +50,18 @@ async function main(): Promise<void> {
     await privateLpTokenFactory.getAddress(),
     privateTokenCodehashes,
   );
+  const bindVaultTransaction = await (
+    feeVault as BaseContract & {
+      setConfidentialFactory(
+        factory: string,
+      ): Promise<{ wait(): Promise<{ gasUsed: bigint } | null> }>;
+    }
+  ).setConfidentialFactory(await confidentialFactory.getAddress());
+  const bindVaultReceipt = await bindVaultTransaction.wait();
+  if (!bindVaultReceipt) {
+    throw new Error("CipherDEXFeeVault.setConfidentialFactory receipt missing");
+  }
+  console.log(`CipherDEXFeeVault.setConfidentialFactory: gas=${bindVaultReceipt.gasUsed}`);
   const confidentialBestExecutionRouter = await deployAndMeasure(
     "ConfidentialBestExecutionRouter",
     await ethers.getContractFactory("ConfidentialBestExecutionRouter"),
@@ -100,6 +112,18 @@ async function main(): Promise<void> {
     await ethers.getContractFactory("PublicCPMMFactory"),
     await feeVault.getAddress(),
   );
+  const bindPublicVaultTransaction = await (
+    feeVault as BaseContract & {
+      setPublicFactory(
+        factory: string,
+      ): Promise<{ wait(): Promise<{ gasUsed: bigint } | null> }>;
+    }
+  ).setPublicFactory(await publicFactory.getAddress());
+  const bindPublicVaultReceipt = await bindPublicVaultTransaction.wait();
+  if (!bindPublicVaultReceipt) {
+    throw new Error("CipherDEXFeeVault.setPublicFactory receipt missing");
+  }
+  console.log(`CipherDEXFeeVault.setPublicFactory: gas=${bindPublicVaultReceipt.gasUsed}`);
   await deployAndMeasure(
     "PublicCPMMQuoter",
     await ethers.getContractFactory("PublicCPMMQuoter"),

@@ -15,6 +15,7 @@ describe("PublicCPMM", function () {
     const factoryFactory = await ethers.getContractFactory("PublicCPMMFactory");
     const factory = await factoryFactory.deploy(await vault.getAddress());
     await factory.waitForDeployment();
+    await vault.setPublicFactory(await factory.getAddress());
     await factory.createPool(
       await tokenA.getAddress(),
       await tokenB.getAddress(),

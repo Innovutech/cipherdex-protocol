@@ -11,10 +11,34 @@ latency only. A release record should include:
 - compiler version, EVM target and optimizer settings;
 - confidential factory, its configured best-execution router, pool, LP-token
   factory, launchpad migrator, public factory, quoter and router addresses;
-- deployment transaction hashes and gas used;
+- deployment transaction hashes, receipts, exact constructor arguments and gas used;
+- one-time vault/factory, best-router and launchpad-adapter binding targets,
+  arguments and transaction hashes;
 - ABI/schema version and source commit;
 - known limitations and independent-review status.
 
 Generated deployment records remain ignored until they have been reviewed and
-sanitized for publication. After that review, publish only the commit-bound
-final record explicitly with `git add -f deployments/coti-testnet-<commit>.json`.
+sanitized for publication. Funded verification commands must not trust that
+mutable generated file. After review:
+
+1. update `docs/VERIFICATION_REPORT.md` with the public deployment evidence;
+2. stage only that report and the completed record with
+   `git add docs/VERIFICATION_REPORT.md` and
+   `git add -f deployments/coti-testnet-<commit>.json`;
+3. create a separate evidence commit after the source commit used for
+   deployment; and
+4. run funded verification only from a clean checkout of that evidence commit.
+
+The verifier requires the configured record to match the tracked blob at
+`HEAD`, requires its `sourceCommit` to be an ancestor of `HEAD`, and rejects
+every post-source change except that exact manifest and
+`docs/VERIFICATION_REPORT.md`. This two-commit model avoids the impossible
+self-reference that would result from requiring a generated manifest to be
+contained in the same commit named by its `sourceCommit`.
+
+Verification also retrieves all eight canonical deployment transactions and all
+three one-time binding transactions from the configured chain. It rejects a
+missing, duplicate, failed or extra transaction; mismatched gas/address/receipt;
+creation data that differs from the reviewed artifact plus canonical constructor
+arguments; binding calldata that differs from the expected target/function/args;
+or final contract relationships that do not match the manifest.

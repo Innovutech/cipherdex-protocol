@@ -16,6 +16,11 @@ import {
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
+  assertReviewedPrivateTokens,
+  requiredTestnetDeploymentRecordPath,
+  verifyConfiguredTestnetDeployment,
+} from "./testnet-deployment-provenance";
+import {
   requireMinedSuccess,
   safeTestnetErrorSummary,
 } from "./testnet-transaction-evidence";
@@ -23,11 +28,14 @@ import {
 const EXPECTED_CHAIN_ID = 7_082_400n;
 const CALL_GAS_LIMIT = 30_000_000n;
 const DEFAULT_INPUT = 10_001n;
+const MAX_PROBE_INPUT = 1_000_000n;
 let stage = "configuration";
 
 const ROUTER_ABI = [
   `function requestBestQuoteExactInput(${IT_UINT256} amountIn,bytes32 requestId) returns (${CT_UINT256} result)`,
   `function swapBestExactInput(${IT_UINT256} amountIn,${IT_UINT256} minimumOut,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} result)`,
+  "function closeAndRecover(address recipient)",
+  "function closed() view returns (bool)",
   `event ProbeBestQuote(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,${CT_UINT256} result)`,
   `event ProbeBestSwap(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,${CT_UINT256} result)`,
 ] as const;
@@ -62,8 +70,10 @@ function positiveAmount(): bigint {
     throw new Error("COTI_BEST_EXECUTION_TEST_AMOUNT_IN must be a safe positive uint256");
   }
   const value = raw ? BigInt(raw) : DEFAULT_INPUT;
-  if (value <= 0n || value > (2n ** 256n - 1n) / 4n) {
-    throw new Error("COTI_BEST_EXECUTION_TEST_AMOUNT_IN must be a safe positive uint256");
+  if (value <= 0n || value > MAX_PROBE_INPUT) {
+    throw new Error(
+      `COTI_BEST_EXECUTION_TEST_AMOUNT_IN must be between 1 and ${MAX_PROBE_INPUT}`,
+    );
   }
   return value;
 }
@@ -189,6 +199,9 @@ async function main(): Promise<void> {
   const aesKey = requiredAesKey("COTI_AES_KEY");
   const tokenInAddress = requiredAddress("COTI_TOKEN0");
   const tokenOutAddress = requiredAddress("COTI_TOKEN1");
+  const factoryAddress = requiredAddress("COTI_FACTORY");
+  const feeVaultAddress = requiredAddress("COTI_FEE_VAULT");
+  const bestExecutionRouterAddress = requiredAddress("COTI_BEST_EXECUTION_ROUTER");
   const amountIn = positiveAmount();
   const expectedBestOutput = amountIn * 3n;
 
@@ -197,6 +210,30 @@ async function main(): Promise<void> {
   if (network.chainId !== EXPECTED_CHAIN_ID) {
     throw new Error(`expected COTI testnet ${EXPECTED_CHAIN_ID}, received ${network.chainId}`);
   }
+  stage = "reviewed deployment provenance";
+  const deploymentRecord = await verifyConfiguredTestnetDeployment(
+    requiredTestnetDeploymentRecordPath(),
+    ethers.provider,
+    [
+      {
+        recordKey: "feeVault",
+        contractName: "CipherDEXFeeVault",
+        address: feeVaultAddress,
+      },
+      {
+        recordKey: "confidentialFactory",
+        contractName: "ConfidentialCPMMFactory",
+        address: factoryAddress,
+      },
+      {
+        recordKey: "confidentialBestExecutionRouter",
+        contractName: "ConfidentialBestExecutionRouter",
+        address: bestExecutionRouterAddress,
+      },
+    ],
+  );
+  assertReviewedPrivateTokens(deploymentRecord, [tokenInAddress, tokenOutAddress]);
+
   const wallet = new CotiWallet(privateKey, ethers.provider, { aesKey });
   wallet.setAesKey(aesKey);
   const caller = await wallet.getAddress();
@@ -236,7 +273,7 @@ async function main(): Promise<void> {
   const routerDeployment = await deployProbe(
     "router probe deployment",
     routerFactory,
-    [tokenInAddress, pool0Address, pool1Address],
+    [tokenInAddress, pool0Address, pool1Address, caller],
   );
   const routerAddress = await routerDeployment.getAddress();
   await verifyDeployedRuntimeArtifact("MpcBestExecutionRouterProbe", routerAddress);
@@ -352,6 +389,40 @@ async function main(): Promise<void> {
     throw new Error("atomic settlement left a caller-to-router allowance");
   }
 
+  stage = "probe closure and private-asset recovery";
+  const recoveryEvidence = [];
+  for (const [label, probe] of [
+    ["pool probe 0", pool0],
+    ["pool probe 1", pool1],
+    ["router probe", routerDeployment],
+  ] as const) {
+    recoveryEvidence.push(await submit(
+      `${label} closure and recovery`,
+      () => probe.closeAndRecover(caller, { gasLimit: CALL_GAS_LIMIT }),
+    ));
+    if (!Boolean(await probe.closed())) {
+      throw new Error(`${label} did not remain permanently closed`);
+    }
+  }
+
+  const probeAddresses = [pool0Address, pool1Address, routerAddress];
+  for (const probeAddress of probeAddresses) {
+    const [inputResidue, outputResidue] = await Promise.all([
+      encryptedBalance(tokenIn, wallet, probeAddress),
+      encryptedBalance(tokenOut, wallet, probeAddress),
+    ]);
+    if (inputResidue !== 0n || outputResidue !== 0n) {
+      throw new Error(`closed probe retained private-token residue at ${probeAddress}`);
+    }
+  }
+  const [inputAfterRecovery, outputAfterRecovery] = await Promise.all([
+    encryptedBalance(tokenIn, wallet, caller),
+    encryptedBalance(tokenOut, wallet, caller),
+  ]);
+  if (inputAfterRecovery !== inputBalanceBefore || outputAfterRecovery !== outputBalanceBefore) {
+    throw new Error("probe cleanup did not restore the funded wallet's exact private-token balances");
+  }
+
   console.log(`GT pool probe 0: ${pool0Address}`);
   console.log(`GT pool probe 1: ${pool1Address}`);
   console.log(`GT router probe: ${routerAddress}`);
@@ -361,8 +432,13 @@ async function main(): Promise<void> {
   console.log(
     `quote-plus-swap tx=${swapEvidence.transactionHash} gas=${swapReceipt.gasUsed.toString()}`,
   );
+  for (const evidence of recoveryEvidence) {
+    console.log(
+      `probe-recovery tx=${evidence.transactionHash} gas=${evidence.receipt.gasUsed.toString()}`,
+    );
+  }
   console.log(
-    "COTI testnet GT feasibility passed: current runtime artifacts reused caller-bound GT across two contracts, selected privately, escrowed exactly, consumed the caller and pool allowances, and contract-enforced restoration of the router's starting input balance",
+    "COTI testnet GT feasibility passed: current runtime artifacts reused caller-bound GT across two contracts, selected privately, escrowed exactly, consumed allowances, restored the router's starting input balance, permanently closed every disposable probe, and recovered all private assets",
   );
 }
 

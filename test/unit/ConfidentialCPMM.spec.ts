@@ -182,7 +182,44 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     await expect(pool.collectProtocolFees(false, false))
       .to.be.revertedWithCustomError(pool, "InvalidCollectionSelection");
     await expect(pool.collectProtocolFees(true, false))
-      .to.be.revertedWithCustomError(pool, "ConfidentialCollectionNotReady");
+      .to.be.revertedWithCustomError(pool, "CanonicalLPTokenRequired");
+  });
+
+  it("prevents directly deployed pools from entering the liquidity lifecycle", async function () {
+    const { pool } = await deploy();
+    const decoy = await (await ethers.getContractFactory("PrivateLPToken")).deploy(
+      await pool.getAddress(),
+    );
+    await decoy.waitForDeployment();
+
+    await expect(pool.initializeLPToken(await decoy.getAddress()))
+      .to.be.revertedWithCustomError(pool, "InvalidLPToken");
+    expect(await pool.lpToken()).to.equal(ethers.ZeroAddress);
+
+    const emptyInput = {
+      ciphertext: { ciphertextHigh: 0n, ciphertextLow: 0n },
+      signature: "0x",
+    };
+    await expect(pool.addLiquidity(
+      emptyInput,
+      emptyInput,
+      emptyInput,
+      emptyInput,
+      emptyInput,
+      false,
+      (1n << 64n) - 1n,
+    )).to.be.revertedWithCustomError(pool, "CanonicalLPTokenRequired");
+    await expect(pool.bootstrapLiquidity(
+      (await ethers.getSigners())[0].address,
+      (await ethers.getSigners())[0].address,
+      1n,
+      1n,
+      1n,
+      0n,
+      1n,
+    )).to.be.revertedWithCustomError(pool, "CanonicalLPTokenRequired");
+    await expect(pool.myShares())
+      .to.be.revertedWithCustomError(pool, "CanonicalLPTokenRequired");
   });
 
   it("rejects invalid launchpad disposition metadata before MPC inputs", async function () {

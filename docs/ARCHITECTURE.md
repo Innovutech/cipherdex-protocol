@@ -9,17 +9,20 @@
   registry.
 - `contracts/PrivateLPToken.sol`: pool-bound encrypted LP-share token using the
   official COTI `PrivateERC20` implementation.
-- `contracts/PrivateLPTokenFactory.sol`: stateless permissionless deployer that
-  keeps COTI token creation bytecode out of the canonical CPMM factory runtime.
-  A token created by an arbitrary caller has no pool authority; only a canonical
-  pool can bind its expected pool-owned token once during factory deployment.
+- `contracts/PrivateLPTokenFactory.sol`: permissionless deployer that keeps COTI
+  token creation bytecode out of the canonical CPMM factory runtime and records
+  the exact `(pool, token, issuer)` relationship for every token it creates.
+  The canonical factory accepts only the reviewed helper runtime codehash, and a
+  pool binds an LP token only when the helper attests that the canonical factory
+  issued that exact token for that exact pool.
 - `contracts/PublicCPMM.sol`: ordinary public/public ERC-20 CPMM with public
   amounts, fees, swaps, liquidity accounting and locks.
 - `contracts/PublicCPMMFactory.sol`: separate public/public pool registry.
 - `contracts/CipherDEXFeePolicy.sol`: immutable approved v1 total-fee tiers and
   LP/protocol split shared by both pool modes.
 - `contracts/CipherDEXFeeVault.sol`: immutable protocol-fee destination with
-  mode-separated public/private sweeps and delayed private aggregation.
+  public-token sweeps and canonical-pool-only encrypted deposits aggregated by
+  token and fixed daily epoch before delayed confidential sweeps.
 - `contracts/PublicCPMMQuoter.sol`: factory-gated read-only quotes for public
   pools.
 - `contracts/PublicCPMMRouter.sol`: factory-gated exact-input routing for
@@ -88,8 +91,13 @@ The fee deducted by this formula is the complete advertised swap fee. One sixth
 of its integer-rounded value accrues to the protocol and the remainder stays in
 effective reserves for LPs. There is no additional native-COTI swap payment.
 Public pools track each token's protocol fees in public counters; confidential
-pools use encrypted counters. Both collect only to an immutable fee vault, and
-collection never changes effective reserves or price. See `FEE_ECONOMICS.md`.
+pools use encrypted counters. Public collection moves only a selected token
+side. Confidential collection grants an exact temporary allowance and deposits
+the encrypted aggregate into a factory-bound vault, which combines the same
+token across canonical pools and fixed daily epochs. A full LP exit deposits
+even a sub-threshold terminal encrypted aggregate before clearing pool state, so
+LPs cannot receive protocol-owned fees and fees cannot become stranded. Both
+paths leave effective reserves and price unchanged. See `FEE_ECONOMICS.md`.
 
 The core pool exposes no public reserve, TVL, spot-price or TWAP getter. Current
 COTI testnet nodes allow ciphertext-only state reads but reject fresh MPC
@@ -114,9 +122,13 @@ declared decimals silently disagree with the token contract.
 LP shares are ciphertext stored in aggregate by the pool. Factory-created pools
 also mint a pool-bound `PrivateLPToken` for each provider, so the encrypted share
 position can use the official COTI transfer and approval paths. The pool remains
-the only minter/burner. Directly deployed pools retain the internal ledger only
-as a standalone test-harness mode; canonical discovery uses factory-created LP
-tokens. Initial shares equal the smaller of the two
+the only minter/burner. The helper records the creating issuer, and the pool plus
+SDK both require the reviewed helper runtime and exact issuance attestation.
+An arbitrary caller can ask the helper to create a token, but that token cannot
+be bound to a canonical pool. Directly deployed pools cannot initialize or enter
+the liquidity lifecycle; every usable pool requires the exact factory-issued LP
+token binding. Direct user operations against canonical pools remain supported.
+Initial shares equal the smaller of the two
 18-decimal-normalized deposits. This supports an arbitrary non-zero initial price,
 avoids an overflow-prone encrypted product and square-root loop, and does not
 change ownership because the first LP receives 100% of issued shares. Subsequent

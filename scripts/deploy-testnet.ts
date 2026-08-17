@@ -32,6 +32,7 @@ const TESTNET_DEPLOY_GAS_LIMITS = {
   publicFactory: 3_000_000n,
   publicQuoter: 400_000n,
   publicRouter: 800_000n,
+  vaultBinding: 250_000n,
   adapterBinding: 250_000n,
   routerBinding: 250_000n,
 } as const;
@@ -73,6 +74,16 @@ type ConfidentialFactoryHandle = BaseContract & {
 
 type FeeVaultHandle = BaseContract & {
   beneficiary(): Promise<string>;
+  confidentialFactory(): Promise<string>;
+  publicFactory(): Promise<string>;
+  setConfidentialFactory(
+    address: string,
+    overrides?: { gasLimit: bigint },
+  ): Promise<ContractTransactionResponse>;
+  setPublicFactory(
+    address: string,
+    overrides?: { gasLimit: bigint },
+  ): Promise<ContractTransactionResponse>;
 };
 
 type FactoryBoundHandle = BaseContract & {
@@ -286,7 +297,10 @@ async function main(): Promise<void> {
     feeBeneficiary,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.feeVault },
   );
-  await recordDeployment("feeVault", feeVaultDeployment, { beneficiary: feeBeneficiary });
+  await recordDeployment("feeVault", feeVaultDeployment, {
+    beneficiary: feeBeneficiary,
+    constructorArgs: [feeBeneficiary],
+  });
 
   stage = "PrivateLPTokenFactory deployment";
   const privateLpTokenFactoryDeployment = await deployAndReport(
@@ -295,7 +309,9 @@ async function main(): Promise<void> {
     recordTransaction,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.privateLpTokenFactory },
   );
-  await recordDeployment("confidentialLpTokenFactory", privateLpTokenFactoryDeployment);
+  await recordDeployment("confidentialLpTokenFactory", privateLpTokenFactoryDeployment, {
+    constructorArgs: [],
+  });
 
   stage = "ConfidentialCPMMFactory deployment";
   const factoryFactory = await ethers.getContractFactory("ConfidentialCPMMFactory");
@@ -311,8 +327,38 @@ async function main(): Promise<void> {
   await recordDeployment("confidentialFactory", factoryDeployment, {
     reviewedPrivateTokens,
     approvedPrivateTokenCodehashes: privateTokenCodehashes,
+    constructorArgs: [
+      feeVaultDeployment.address,
+      privateLpTokenFactoryDeployment.address,
+      privateTokenCodehashes,
+    ],
   });
   const factory = factoryDeployment.contract;
+
+  stage = "confidential fee-vault factory binding";
+  const vaultBindingEvidence = await requireMinedSuccess(
+    "confidential fee-vault factory binding",
+    () => feeVaultDeployment.contract.setConfidentialFactory(
+      factoryDeployment.address,
+      { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.vaultBinding },
+    ),
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
+  const vaultBindingReceipt = vaultBindingEvidence.receipt;
+  await recordTransaction({
+    label: "confidential fee-vault factory binding",
+    transactionHash: vaultBindingEvidence.transactionHash,
+    gasUsed: vaultBindingReceipt?.gasUsed?.toString() ?? null,
+  });
+  journalContracts.confidentialFeeVaultBinding = {
+    address: factoryDeployment.address,
+    target: feeVaultDeployment.address,
+    function: "setConfidentialFactory",
+    args: [factoryDeployment.address],
+    transaction: vaultBindingEvidence.transactionHash,
+    gasUsed: vaultBindingReceipt?.gasUsed?.toString() ?? null,
+  };
+  await writeJournal("in-progress");
 
   stage = "ConfidentialBestExecutionRouter deployment";
   const confidentialRouterDeployment = await deployAndReport<VersionedFactoryBoundHandle>(
@@ -325,6 +371,7 @@ async function main(): Promise<void> {
   await recordDeployment("confidentialBestExecutionRouter", confidentialRouterDeployment, {
     protocolVersion: "1",
     factory: factoryDeployment.address,
+    constructorArgs: [factoryDeployment.address],
   });
   stage = "confidential best-execution router binding";
   const bestExecutionRouterEvidence = await requireMinedSuccess(
@@ -343,6 +390,9 @@ async function main(): Promise<void> {
   });
   journalContracts.bestExecutionRouterBinding = {
     address: confidentialRouterDeployment.address,
+    target: factoryDeployment.address,
+    function: "setBestExecutionRouter",
+    args: [confidentialRouterDeployment.address],
     transaction: bestExecutionRouterEvidence.transactionHash,
     gasUsed: bestExecutionRouterReceipt?.gasUsed?.toString() ?? null,
   };
@@ -362,7 +412,9 @@ async function main(): Promise<void> {
     factoryDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.launchpadMigrator },
   );
-  await recordDeployment("launchpadMigrator", launchpadDeployment);
+  await recordDeployment("launchpadMigrator", launchpadDeployment, {
+    constructorArgs: [factoryDeployment.address],
+  });
   stage = "launchpad adapter binding";
   const adapterEvidence = await requireMinedSuccess(
     "launchpad adapter binding",
@@ -379,6 +431,9 @@ async function main(): Promise<void> {
   });
   journalContracts.bootstrapAdapterBinding = {
     address: launchpadDeployment.address,
+    target: factoryDeployment.address,
+    function: "setBootstrapAdapter",
+    args: [launchpadDeployment.address],
     transaction: adapterEvidence.transactionHash,
     gasUsed: adapterReceipt?.gasUsed?.toString() ?? null,
   };
@@ -398,7 +453,34 @@ async function main(): Promise<void> {
     feeVaultDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.publicFactory },
   );
-  await recordDeployment("publicFactory", publicFactoryDeployment);
+  await recordDeployment("publicFactory", publicFactoryDeployment, {
+    constructorArgs: [feeVaultDeployment.address],
+  });
+
+  stage = "public fee-vault factory binding";
+  const publicVaultBindingEvidence = await requireMinedSuccess(
+    "public fee-vault factory binding",
+    () => feeVaultDeployment.contract.setPublicFactory(
+      publicFactoryDeployment.address,
+      { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.vaultBinding },
+    ),
+    (hash) => ethers.provider.getTransactionReceipt(hash),
+  );
+  const publicVaultBindingReceipt = publicVaultBindingEvidence.receipt;
+  await recordTransaction({
+    label: "public fee-vault factory binding",
+    transactionHash: publicVaultBindingEvidence.transactionHash,
+    gasUsed: publicVaultBindingReceipt?.gasUsed?.toString() ?? null,
+  });
+  journalContracts.publicFeeVaultBinding = {
+    address: publicFactoryDeployment.address,
+    target: feeVaultDeployment.address,
+    function: "setPublicFactory",
+    args: [publicFactoryDeployment.address],
+    transaction: publicVaultBindingEvidence.transactionHash,
+    gasUsed: publicVaultBindingReceipt?.gasUsed?.toString() ?? null,
+  };
+  await writeJournal("in-progress");
 
   stage = "PublicCPMMQuoter deployment";
   const publicQuoterFactory = await ethers.getContractFactory("PublicCPMMQuoter");
@@ -409,7 +491,9 @@ async function main(): Promise<void> {
     publicFactoryDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.publicQuoter },
   );
-  await recordDeployment("publicQuoter", publicQuoterDeployment);
+  await recordDeployment("publicQuoter", publicQuoterDeployment, {
+    constructorArgs: [publicFactoryDeployment.address],
+  });
 
   stage = "PublicCPMMRouter deployment";
   const publicRouterFactory = await ethers.getContractFactory("PublicCPMMRouter");
@@ -420,13 +504,17 @@ async function main(): Promise<void> {
     publicFactoryDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.publicRouter },
   );
-  await recordDeployment("publicRouter", publicRouterDeployment);
+  await recordDeployment("publicRouter", publicRouterDeployment, {
+    constructorArgs: [publicFactoryDeployment.address],
+  });
 
   stage = "post-deployment immutable binding verification";
   const sameAddress = (actual: string, expected: string): boolean =>
     actual.toLowerCase() === expected.toLowerCase();
   const [
     deployedBeneficiary,
+    deployedConfidentialFactory,
+    deployedPublicFactory,
     confidentialFeeVault,
     deployedLpTokenFactory,
     deployedBootstrapAdapter,
@@ -439,6 +527,8 @@ async function main(): Promise<void> {
     routerFactory,
   ] = await Promise.all([
     feeVaultDeployment.contract.beneficiary(),
+    feeVaultDeployment.contract.confidentialFactory(),
+    feeVaultDeployment.contract.publicFactory(),
     factory.feeVault(),
     factory.lpTokenFactory(),
     factory.bootstrapAdapter(),
@@ -452,6 +542,8 @@ async function main(): Promise<void> {
   ]);
   if (
     !sameAddress(String(deployedBeneficiary), feeBeneficiary) ||
+    !sameAddress(String(deployedConfidentialFactory), factoryDeployment.address) ||
+    !sameAddress(String(deployedPublicFactory), publicFactoryDeployment.address) ||
     !sameAddress(String(confidentialFeeVault), feeVaultDeployment.address) ||
     !sameAddress(String(deployedLpTokenFactory), privateLpTokenFactoryDeployment.address) ||
     !sameAddress(String(deployedBootstrapAdapter), launchpadDeployment.address) ||
@@ -490,6 +582,9 @@ async function main(): Promise<void> {
         minimumPoolSwaps: 8,
         minimumPoolDelaySeconds: 3600,
         minimumVaultSweepDelaySeconds: 86400,
+        vaultEpochSeconds: 86400,
+        minimumVaultAggregatedSwaps: 8,
+        vaultResidenceEpochs: 2,
       },
     },
     limitations: [

@@ -11,9 +11,10 @@ import {
 } from "../../scripts/testnet-transaction-evidence";
 
 describe("funded testnet transaction evidence", function () {
-  const failedReceipt = { status: 0 as number | null };
-  const successfulReceipt = { status: 1 as number | null };
   const hash = `0x${"12".repeat(32)}`;
+  const otherHash = `0x${"34".repeat(32)}`;
+  const failedReceipt = { hash, status: 0 as number | null };
+  const successfulReceipt = { hash, status: 1 as number | null };
 
   it("accepts only a mined failure receipt", async function () {
     const result = await requireMinedFailure(
@@ -42,15 +43,26 @@ describe("funded testnet transaction evidence", function () {
     expect((captured as Error).message).to.include(`transactionHash=${hash}`);
   });
 
-  it("reconciles an error-carried hash before classifying the outcome", async function () {
-    const result = await requireMinedFailure(
-      "expected rejection",
-      async () => {
-        throw { info: { error: { transactionHash: hash } } };
-      },
-      async (candidate) => candidate === hash ? failedReceipt : null,
-    );
-    expect(result.transactionHash).to.equal(hash);
+  it("never treats an error-carried hash as evidence for the attempted operation", async function () {
+    let receiptLookups = 0;
+    let captured: unknown;
+    try {
+      await requireMinedFailure(
+        "expected rejection",
+        async () => {
+          throw { info: { error: { transactionHash: hash } } };
+        },
+        async () => {
+          receiptLookups += 1;
+          return failedReceipt;
+        },
+      );
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).to.be.instanceOf(UnknownBroadcastOutcomeError);
+    expect((captured as UnknownBroadcastOutcomeError).transactionHash).to.equal(hash);
+    expect(receiptLookups).to.equal(0);
   });
 
   it("fails closed on an indeterminate send or wait outcome", async function () {
@@ -95,12 +107,18 @@ describe("funded testnet transaction evidence", function () {
     );
     expect(reconciled.transactionHash).to.equal(hash);
 
-    const sendReconciled = await requireMinedSuccess(
-      "funded action",
-      async () => { throw { cause: { transactionHash: hash } }; },
-      async (candidate) => candidate === hash ? successfulReceipt : null,
-    );
-    expect(sendReconciled.transactionHash).to.equal(hash);
+    let sendError: unknown;
+    try {
+      await requireMinedSuccess(
+        "funded action",
+        async () => { throw { cause: { transactionHash: hash } }; },
+        async () => successfulReceipt,
+      );
+    } catch (error) {
+      sendError = error;
+    }
+    expect(sendError).to.be.instanceOf(UnknownBroadcastOutcomeError);
+    expect((sendError as UnknownBroadcastOutcomeError).transactionHash).to.equal(hash);
   });
 
   it("distinguishes definite failure from uncertain successful delivery", async function () {
@@ -168,6 +186,24 @@ describe("funded testnet transaction evidence", function () {
         `funded action broadcast outcome is unknown; transactionHash=${hash}; do not retry automatically`,
       );
     }
+  });
+
+  it("rejects a receipt whose hash does not match the returned transaction", async function () {
+    let captured: unknown;
+    try {
+      await requireMinedSuccess(
+        "funded action",
+        async () => ({
+          hash,
+          wait: async () => ({ hash: otherHash, status: 1 }),
+        }),
+        async () => null,
+      );
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).to.be.instanceOf(UnknownBroadcastOutcomeError);
+    expect((captured as UnknownBroadcastOutcomeError).transactionHash).to.equal(hash);
   });
 
   it("handles cyclic error wrappers without losing a reachable hash", async function () {

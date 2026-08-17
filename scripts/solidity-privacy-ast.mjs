@@ -242,10 +242,9 @@ function assertRouterIndexDeclassification(path, call, ancestors) {
   }
 }
 
-function isInitializedFalseAssignment(body) {
-  const statements = bodyStatements(body);
-  const expression = statements.length === 1 && statements[0].nodeType === "ExpressionStatement"
-    ? statements[0].expression
+function isInitializedFalseStatement(statement) {
+  const expression = statement?.nodeType === "ExpressionStatement"
+    ? statement.expression
     : undefined;
   return (
     expression?.nodeType === "Assignment" &&
@@ -255,6 +254,28 @@ function isInitializedFalseAssignment(body) {
     expression.rightHandSide?.nodeType === "Literal" &&
     expression.rightHandSide.kind === "bool" &&
     expression.rightHandSide.value === "false"
+  );
+}
+
+function isTerminalProtocolFeeDepositStatement(statement) {
+  const expression = statement?.nodeType === "ExpressionStatement"
+    ? statement.expression
+    : undefined;
+  return (
+    expression?.nodeType === "FunctionCall" &&
+    expression.expression?.nodeType === "Identifier" &&
+    expression.expression.name === "_depositTerminalProtocolFees" &&
+    expression.arguments?.length === 0
+  );
+}
+
+function isReviewedFullExitBody(body) {
+  const statements = bodyStatements(body);
+  if (statements.length === 1) return isInitializedFalseStatement(statements[0]);
+  return (
+    statements.length === 2 &&
+    isTerminalProtocolFeeDepositStatement(statements[0]) &&
+    isInitializedFalseStatement(statements[1])
   );
 }
 
@@ -320,7 +341,7 @@ function assertReviewedFullExitBoolean(path, call, ancestors) {
     parent?.nodeType !== "IfStatement" ||
     parent.condition !== reference.node ||
     parent.falseBody ||
-    !isInitializedFalseAssignment(parent.trueBody)
+    !isReviewedFullExitBody(parent.trueBody)
   ) {
     throw new Error(`${path}: plaintext MPC full-exit boolean reaches an unreviewed sink`);
   }
