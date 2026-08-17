@@ -31,7 +31,7 @@ import {
   UnknownBroadcastOutcomeError,
 } from "./testnet-transaction-evidence";
 
-const FEE_VAULT_DEPLOY_GAS_LIMIT = 1_000_000n;
+const FEE_VAULT_DEPLOY_GAS_LIMIT = 2_500_000n;
 const PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
 const FEE_VAULT_BIND_GAS_LIMIT = 250_000n;

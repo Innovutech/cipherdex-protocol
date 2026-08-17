@@ -507,6 +507,15 @@ for (const path of [
     throw new Error(`${path}: funded evidence is not bound to the reviewed deployment source`);
   }
 }
+for (const path of [
+  "scripts/testnet-best-execution.ts",
+  "scripts/testnet-launchpad.ts",
+]) {
+  const source = await readFile(path, "utf8");
+  if (!source.includes("const FEE_VAULT_DEPLOY_GAS_LIMIT = 2_500_000n;")) {
+    throw new Error(`${path}: funded fee-vault deployment gas cap is stale`);
+  }
+}
 if (!hasStringCall(deploymentAst, "getContractFactory", "ConfidentialBestExecutionRouter")) {
   throw new Error("Testnet deployment does not deploy the confidential best-execution router");
 }

@@ -147,6 +147,13 @@ for (const path of [
   const source = readFileSync(path, "utf8");
   assert.ok(source.includes("const sourceCommit = deploymentRecord.sourceCommit;"));
 }
+for (const path of [
+  "scripts/testnet-best-execution.ts",
+  "scripts/testnet-launchpad.ts",
+]) {
+  const source = readFileSync(path, "utf8");
+  assert.ok(source.includes("const FEE_VAULT_DEPLOY_GAS_LIMIT = 2_500_000n;"));
+}
 for (const unsafe of [
   `async function dead() { await hre.run("compile"); }
    async function main() { await ethers.provider.getNetwork(); }`,

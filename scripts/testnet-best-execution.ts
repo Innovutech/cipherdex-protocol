@@ -45,6 +45,7 @@ const CALL_GAS_LIMIT = (() => {
   return value;
 })();
 const CREATE_POOL_GAS_LIMIT = 6_500_000n;
+const FEE_VAULT_DEPLOY_GAS_LIMIT = 2_500_000n;
 const UINT64_MAX = (1n << 64n) - 1n;
 const FEE_TIERS = [5, 30, 100] as const;
 let stage = "configuration";
@@ -1229,7 +1230,7 @@ async function main(): Promise<void> {
     "CipherDEXFeeVault",
     primary,
     [feeBeneficiary],
-    1_000_000n,
+    FEE_VAULT_DEPLOY_GAS_LIMIT,
   );
   const lpFactoryDeployment = await deployContract(
     "PrivateLPTokenFactory",
