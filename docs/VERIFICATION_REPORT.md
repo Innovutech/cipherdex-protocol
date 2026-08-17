@@ -25,14 +25,16 @@ an external audit or mainnet readiness.
 - security-boundary check: passed
 - TypeScript: passed
 - clean compile and TypeChain generation: 22 Solidity files, 60 typings
-- full local suite: 131 passing, 1 intentionally gated funded integration placeholder
+- full local suite: 157 passing, 1 intentionally gated funded integration placeholder
 - deployment gas measurement: passed
 - `git diff --check`: passed before fresh deployment evidence
 
-No dependency or lockfile changed. Development-only advisories and lifecycle
-script review are recorded in `DEPENDENCY_AUDIT_REPORT.md`; none is present in
-the production dependency graph. No forced upgrade, override or advisory
-suppression was used.
+No dependency was added. The redundant direct `dotenv` dependency was removed;
+the lockfile changed only for that root declaration and the pinned Node/npm
+engine policy, while the resolved production graph remained unchanged.
+Development-only advisories and lifecycle-script review are recorded in
+`DEPENDENCY_AUDIT_REPORT.md`; none is present in the production dependency
+graph. No forced upgrade, override or advisory suppression was used.
 
 ## Security review
 
@@ -43,20 +45,16 @@ exact token deltas, public negative-rebase handling, taxed fee collection,
 public and confidential SDK provenance, quote-domain separation, funded-runner
 provenance, and zero-accrual confidential dust.
 
-The current pre-deployment diff received independent read-only contract,
-SDK/configuration and funded-runner reviews. The contract review found no
-reportable Solidity vulnerability. The reviews identified four low-severity
-release-evidence defects: standalone gas measurement could consume stale
-artifacts; this report retained obsolete counts plus a mutable `latest`
-deployment reference; a reconciled mined deployment could reach handle recovery
-before its hash was durably journaled; and the module-initialization AST tracer
-could be bypassed through JavaScript callable indirection. This report no longer
-labels a mutable record authoritative. Mined deployment evidence is now synced
-before contract-handle recovery and enriched by hash without duplication.
-Every supported `--no-compile` command now runs clean, compile and target
-execution in separate blocking processes through an exact target/argument
-allowlist, so target imports cannot observe a stale pre-compile artifact cache.
-The in-script freshness checks remain as defense in depth.
+Independent read-only contract, SDK/configuration and funded-runner reviews
+found and closed the earlier implementation and evidence defects. The
+remediations cover confidential arithmetic and price bounds, full exits, LP burn
+authority, private-token runtime provenance, exact token deltas, public
+negative-rebase and taxed-token handling, quote-domain separation, funded-run
+provenance, zero-accrual dust, stale-artifact execution, mined-transaction
+journaling and source-bound evidence. Every supported `--no-compile` command now
+runs clean, compile and target execution in separate blocking processes through
+an exact target/argument allowlist. In-script freshness checks remain as defense
+in depth.
 
 The funded-runner review repeated five earlier deployment-evidence candidates.
 The actual current tree closes them with focused regression evidence:
@@ -76,15 +74,15 @@ The actual current tree closes them with focused regression evidence:
 Twenty focused evidence/provenance tests and both source/security boundary gates
 passed after those controls were inspected. The gas-evidence and process-runner
 fixes passed TypeScript, both boundary gates and a full process-isolated clean
-gas-measurement run. An independent re-review reproduced the earlier source
-boundary indirections, then confirmed they can no longer reach stale artifacts
-through any supported command and found no remaining reportable Low-or-higher
-issue in these remediation scopes.
+gas-measurement run. Focused Codex Security diff rechecks of the later source-
+provenance and funded deployment-cap changes found no findings.
 
-The Codex Security workbench could not seal a final working-tree diff scan
-because its launcher rejected the otherwise valid non-bare worktree as lacking
-a resolvable `HEAD`. This is a tooling coverage gap, not a passing scan, and is
-not hidden by the successful independent reviews.
+The final Codex Security Standard scan
+`d692182e-0a8e-4bfb-b398-19b2e2b1a62b` covered all 121 tracked files and seven
+security surfaces at revision
+`f19957bd585a4f34bb267ca54997287c3e65c828`. It completed with zero Critical,
+High, Medium or Low findings. Token-usage measurement was unavailable from the
+workbench. This is an internal automated review, not an external audit.
 
 ## Protocol and fee evidence
 
@@ -127,12 +125,13 @@ On the configured COTI testnet RPC:
 - deployment-time encrypted constants did not help because they still require
   stored ciphertext onboarding.
 
-Therefore the preferred gasless design is technically specified but not
-supported by the tested runtime. The currently recorded deployment still uses
-the paid per-pool `requestQuoteExactInput` transaction as its primary working
-quote. The canonical paid best-quote router becomes preferred only after this
-version completes final verification and fresh deployment; it is still not
-normal gasless DEX quote UX. No public reserve, TVL, spot-price or TWAP state was added. The
+Therefore the preferred stored-constant gasless design is technically specified
+but not supported by the tested runtime. There is no separate gasless main quote
+path. On the final deployment, the canonical paid best-quote router is the
+preferred exact quote transport, while the paid per-pool
+`requestQuoteExactInput` transaction remains a supported direct diagnostic and
+compatibility path. Both require gas and inclusion, so neither is normal gasless
+DEX quote UX. No public reserve, TVL, spot-price or TWAP state was added. The
 complete privacy and active curve-probing analysis is in
 `QUOTE_MARKET_DATA_REVIEW.md`.
 
@@ -141,17 +140,18 @@ complete privacy and active curve-probing analysis is in
 The lower-level feasibility deployment proved one router can validate a
 caller-bound encrypted input, reuse the GT value across two contracts, compare
 the encrypted outputs, offboard only the winner, and perform exact encrypted
-escrow/allowance/settlement in the same transaction. The quote-only transaction
-used 1,726,424 gas and quote-plus-swap used 5,771,737 gas.
+escrow/allowance/settlement in the same transaction. On the final source, the
+quote-only transaction used 1,728,873 gas and quote-plus-swap used 5,774,373
+gas.
 
 A fresh funded run of the production `ConfidentialBestExecutionRouter` then
 passed against three canonical confidential fee tiers:
 
-- confidential factory: `0xA72e1c4671C995FC1a5013cBfe992A9687b36603`
-- best-execution router: `0x76B5c628EF412f62BA391138f165C2EEf61317b9`
-- 5 bps pool: `0x7495b804D4A209c23462df638F5F6180527319E4`
-- 30 bps pool: `0xdB7803f899aA9f381f03103C589676694d1ba6D7`
-- 100 bps pool: `0xCd1abc05C956aE6Bc05D4B71822736cb7c57eDCE`
+- confidential factory: `0x9c54438f6918d01A0707F371e30F0D549472a76d`
+- best-execution router: `0x53C61928E7E01F39ACd7adEb0cC1b59EEA658034`
+- 5 bps pool: `0xD42E81c3aD4b83dc2132B99d6ba5be7Ce0d79FE1`
+- 30 bps pool: `0x5aA14b7B8BeC76F89fF2AdE29D4b27254481a48d`
+- 100 bps pool: `0x0576886c4Dd458709169aB11b8bB4b72F2D5a14c`
 
 The run covered absent and uninitialized tiers, encrypted-invalid candidate
 isolation, request/ciphertext replay, deadline and caller binding, quote-only
@@ -160,10 +160,10 @@ rollback, exact escrow and allowance cleanup, and quote/settlement parity. Gas:
 
 | Candidate count | Paid best quote | Quote plus swap |
 | ---: | ---: | ---: |
-| 2 | 16,872,645 | 29,530,376 |
-| 3 | 25,247,841 | 38,236,748 |
+| 2 | 16,873,051 | 29,531,211 |
+| 3 | 25,248,305 | 38,237,605 |
 
-The reverse three-candidate quote-plus-swap used 37,903,897 gas. The runner's
+The reverse three-candidate quote-plus-swap used 37,904,757 gas. The runner's
 60M transaction cap is a safety ceiling; receipts above are actual gas charged.
 
 These are disposable COTI testnet validation contracts, not the final canonical
@@ -194,25 +194,23 @@ rejection, second-LP exit, timed and permanent locks, and true full exit. Each
 quote used 4,393,044 gas. The 100-bps pool produced the best output for the
 tested amount and was selected without exposing the quote or reserve values.
 
-## Launchpad dispositions
+## Launchpad migration
 
-All three launchpad LP dispositions completed in separate fresh deployments.
-Each run pre-funded the predicted CREATE2 pool with one raw unit of canonical
-token0. The impossible-price probe then proved that creator token pulls and
-canonical deployment rolled back while the pre-existing unit necessarily
-remained at the deterministic address. The subsequent authorized migration
-deployed that same address; protocol accounting excludes the unsolicited unit
-from effective reserves. The runner does not recover or claim to recover that
-unit, so these prefunded stacks remain disposable validation deployments:
+The final-source funded creator-held launchpad path used a disposable factory at
+`0xa2dA12D44155933ed59e60bf1ed3BC69a1d819Ca`, migrator at
+`0x07f240886b2FFcE5f47f281D00A8361e35dAC9EE` and canonical pool at
+`0x808f55382e3eCA5aF6fdC37F51176529dc16E4D1`. An impossible-price probe reverted
+atomically after 19,014,661 gas. The valid canonical migration used 21,895,615
+gas, a replay probe reverted after 77,365 gas, and the true full exit used
+10,239,767 gas. All disposable private balances and allowances were recovered
+with zero pool residue.
 
-| Disposition | Factory | Migrator | Pool | Gas |
-| --- | --- | --- | --- | ---: |
-| Creator-held | `0x2fBB3A7d8CB4726cBcdBF62c1aC23C6FE68CA2Cb` | `0xd8dcDAe8D5F9116EFc55Ded75c0056C1B8AE8f9a` | `0x905b20eA1633A2404CDe8A995bE49cF879DdC03E` | 21,340,020 |
-| Timed lock | `0xaa3d1977bD62Ef6ccaB0555baEBa8bE709Ea3B8e` | `0x85d4B68ef815b85ad1aD0aa75776c99C8E3f855D` | `0xb327dFe5eDadC4Ed895Cd6208746ce41307C33d3` | 20,896,329 |
-| Permanent lock | `0x2c47ec2ec62FF559fD02618691051b3AC1Cd8d90` | `0x0283f9102737a33A96072652bAC166F3C2C96f85` | `0x18288962D5028CCa202ee37574eD490ED17A80AE` | 20,896,255 |
-
-Replay, caller, domain, ciphertext-commitment, bounds and disposition mismatches
-were rejected without additional private-token movement.
+Creator-held, timed-lock and permanent-lock dispositions remain covered by local
+unit, property and integration tests. The funded recovery run intentionally uses
+creator-held shares so it can prove complete recovery without creating an
+irreversible testnet lock. Caller, domain, ciphertext-commitment, bounds,
+disposition and replay mismatches are rejected before additional private-token
+movement.
 
 ## Confidential fee collection
 
