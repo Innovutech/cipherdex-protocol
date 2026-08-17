@@ -76,6 +76,12 @@ contract CipherDEXFeeVault {
         address indexed beneficiary,
         uint256 amount
     );
+    event PublicFeesSweepReceipt(
+        address indexed token,
+        address indexed beneficiary,
+        uint256 debitedAmount,
+        uint256 beneficiaryReceived
+    );
     event ConfidentialFeesSwept(
         address indexed token,
         address indexed beneficiary,
@@ -198,10 +204,16 @@ contract CipherDEXFeeVault {
         if (
             vaultBalanceAfter > vaultBalanceBefore ||
             beneficiaryBalanceAfter < beneficiaryBalanceBefore ||
-            vaultBalanceBefore - vaultBalanceAfter != amount ||
-            beneficiaryBalanceAfter - beneficiaryBalanceBefore != amount
+            vaultBalanceBefore - vaultBalanceAfter != amount
         ) revert PublicTransferAmountMismatch();
+        uint256 beneficiaryReceived = beneficiaryBalanceAfter - beneficiaryBalanceBefore;
         emit PublicFeesSwept(token, beneficiary, amount);
+        emit PublicFeesSweepReceipt(
+            token,
+            beneficiary,
+            amount,
+            beneficiaryReceived
+        );
     }
 
     function depositConfidentialFees(

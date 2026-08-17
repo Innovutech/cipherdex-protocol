@@ -115,6 +115,7 @@ describe("stable SDK surface", function () {
     expect(publicQuoter.getFunction("quoteExactInput")).to.not.equal(null);
     expect(publicRouter.getFunction("swapExactInput")).to.not.equal(null);
     expect(feeVault.getFunction("sweepPublicToken")).to.not.equal(null);
+    expect(feeVault.getEvent("PublicFeesSweepReceipt")).to.not.equal(null);
     expect(feeVault.getFunction("sweepConfidentialToken")).to.not.equal(null);
     expect(feeVault.getFunction("MIN_CONFIDENTIAL_SWEEP_DELAY")).to.not.equal(null);
     expect(feeVault.getFunction("nextConfidentialSweepAt")).to.not.equal(null);
@@ -431,6 +432,41 @@ describe("stable SDK surface", function () {
       creatorHeldAdapter,
     );
     expect(creatorHeld.disposition).to.equal(LP_DISPOSITION.CREATOR_HELD);
+
+    let dynamicMetadataReads = 0;
+    const hostileMetadata = new Proxy({ ...creatorHeldMetadata }, {
+      get() {
+        dynamicMetadataReads += 1;
+        throw new Error("launchpad metadata was dynamically re-read");
+      },
+    });
+    const proxyVerified = await verifyLaunchpadMigrationMetadata(
+      { transactionHash, metadata: hostileMetadata },
+      policy,
+      creatorHeldAdapter,
+    );
+    expect(proxyVerified.pool).to.equal(pool);
+    expect(dynamicMetadataReads).to.equal(0);
+
+    const alternateHash = `0x${"98".repeat(32)}`;
+    const mutableExpectation: {
+      transactionHash: string;
+      metadata: typeof creatorHeldMetadata;
+    } = { transactionHash, metadata: creatorHeldMetadata };
+    const hashSnapshotVerified = await verifyLaunchpadMigrationMetadata(
+      mutableExpectation,
+      policy,
+      {
+        ...creatorHeldAdapter,
+        getTransaction: async (hash: string) => {
+          expect(hash).to.equal(transactionHash);
+          mutableExpectation.transactionHash = alternateHash;
+          return creatorHeldAdapter.getTransaction();
+        },
+      },
+    );
+    expect(mutableExpectation.transactionHash).to.equal(alternateHash);
+    expect(hashSnapshotVerified.transactionHash).to.equal(transactionHash);
   });
 
   it("builds immutable caller-encrypted best quote and swap calls", function () {

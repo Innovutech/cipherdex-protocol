@@ -63,7 +63,6 @@ const freshRunnerSource = readFileSync("scripts/run-fresh-hardhat.mjs", "utf8");
 const freshTargets = new Map([
   ["testnet:harness", "scripts/testnet-harness.ts --network cotiTestnet"],
   ["testnet:preflight", "scripts/testnet-preflight.ts --network cotiTestnet"],
-  ["testnet:scenario", "scripts/testnet-scenario.ts --network cotiTestnet"],
   ["testnet:quote-call-probe", "scripts/testnet-quote-call-probe.ts --network cotiTestnet"],
   ["testnet:best-execution-feasibility", "scripts/testnet-best-execution-feasibility.ts --network cotiTestnet"],
   ["testnet:best-execution", "scripts/testnet-best-execution.ts --network cotiTestnet"],
@@ -83,6 +82,15 @@ for (const [script, target] of freshTargets) {
 assert.doesNotMatch(freshRunnerSource, /from\s+["']\.\.?\//);
 assert.doesNotMatch(readFileSync("hardhat.config.ts", "utf8"), /dotenv(?:\/config)?/);
 assert.doesNotMatch(freshRunnerSource, /env:\s*process\.env/);
+assert.doesNotMatch(freshRunnerSource, /spawnSync\(["']git["']/);
+for (const required of [
+  "TRUSTED_GIT_CANDIDATES",
+  "trustedGitExecutable",
+  "trustedGitRealpath",
+  "refuses a repository-controlled Git executable",
+]) {
+  assert.ok(freshRunnerSource.includes(required));
+}
 const sourceCheckPosition = freshRunnerSource.indexOf(
   'runGit(["status", "--porcelain=v1", "--untracked-files=all"])',
 );

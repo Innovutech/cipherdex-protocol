@@ -30,12 +30,33 @@ const RUNNER_SOURCES = Object.freeze<Record<string, string>>({
   "launchpad": "scripts/testnet-launchpad.ts",
   "evidence-test": "test/unit/FundedRunEvidence.spec.ts",
 });
+const SELECTOR = Object.freeze({
+  probeQuote: "0x0b6f808f",
+  probeSwap: "0x7cbe798d",
+  closeAndRecover: "0xcb9648a1",
+  bestQuote: "0x440bde4a",
+  bestSwap: "0x310481d3",
+  collectProtocolFees: "0x1609fa07",
+  confidentialSwap: "0xa33cffc4",
+  removeLiquidity: "0x1928ed0a",
+  launchpadMigrate: "0x97173c02",
+  launchpadMigrateWithDisposition: "0xdd80f5fd",
+  mockDeployment: "0x60a06040",
+} as const);
+
+type RequiredTransactionPolicy = Readonly<{
+  label: RegExp;
+  status: 0 | 1;
+  targetArtifactLabel: string;
+  selectors: readonly string[];
+  minimumCount?: number;
+}>;
 
 type RunnerPolicy = Readonly<{
   configurationKeys: readonly string[];
   assertions: readonly string[];
   artifacts: Readonly<Record<string, number>>;
-  requiredTransactions: readonly Readonly<{ label: RegExp; status: 0 | 1 }>[];
+  requiredTransactions: readonly RequiredTransactionPolicy[];
 }>;
 
 const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
@@ -54,9 +75,11 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
     ],
     artifacts: { MpcBestExecutionPoolProbe: 2, MpcBestExecutionRouterProbe: 1 },
     requiredTransactions: [
-      { label: /^cross-contract GT quote and private selection$/, status: 1 },
-      { label: /^atomic selected-pool settlement$/, status: 1 },
-      { label: / closure and recovery$/, status: 1 },
+      { label: /^cross-contract GT quote and private selection$/, status: 1, targetArtifactLabel: "GT router probe", selectors: [SELECTOR.probeQuote] },
+      { label: /^atomic selected-pool settlement$/, status: 1, targetArtifactLabel: "GT router probe", selectors: [SELECTOR.probeSwap] },
+      { label: /^pool probe 0 closure and recovery$/, status: 1, targetArtifactLabel: "GT pool probe 0", selectors: [SELECTOR.closeAndRecover] },
+      { label: /^pool probe 1 closure and recovery$/, status: 1, targetArtifactLabel: "GT pool probe 1", selectors: [SELECTOR.closeAndRecover] },
+      { label: /^router probe closure and recovery$/, status: 1, targetArtifactLabel: "GT router probe", selectors: [SELECTOR.closeAndRecover] },
     ],
   },
   "best-execution": {
@@ -87,14 +110,14 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       PrivateLPToken: 3,
     },
     requiredTransactions: [
-      { label: /^best quote request-id replay$/, status: 0 },
-      { label: /^best quote ciphertext replay$/, status: 0 },
-      { label: /^best quote expired deadline$/, status: 0 },
-      { label: /^caller-bound ciphertext isolation$/, status: 0 },
-      { label: / encrypted slippage rollback$/, status: 0 },
-      { label: /^three-candidate quote$/, status: 1 },
-      { label: /^three-candidate quote-plus-swap$/, status: 1 },
-      { label: /^reverse three-candidate quote-plus-swap$/, status: 1 },
+      { label: /^best quote request-id replay$/, status: 0, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
+      { label: /^best quote ciphertext replay$/, status: 0, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
+      { label: /^best quote expired deadline$/, status: 0, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
+      { label: /^caller-bound ciphertext isolation$/, status: 0, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
+      { label: / encrypted slippage rollback$/, status: 0, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestSwap] },
+      { label: /^three-candidate quote$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
+      { label: /^three-candidate quote-plus-swap$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestSwap] },
+      { label: /^reverse three-candidate quote-plus-swap$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestSwap] },
     ],
   },
   "fee-collection": {
@@ -120,9 +143,9 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       PrivateLPToken: 1,
     },
     requiredTransactions: [
-      { label: /^mature confidential protocol fee collection$/, status: 1 },
-      { label: /^terminal sub-threshold fee swap$/, status: 1 },
-      { label: /^full disposable fee-pool exit$/, status: 1 },
+      { label: /^mature confidential protocol fee collection$/, status: 1, targetArtifactLabel: "disposable confidential fee pool", selectors: [SELECTOR.collectProtocolFees] },
+      { label: /^terminal sub-threshold fee swap$/, status: 1, targetArtifactLabel: "disposable confidential fee pool", selectors: [SELECTOR.confidentialSwap] },
+      { label: /^full disposable fee-pool exit$/, status: 1, targetArtifactLabel: "disposable confidential fee pool", selectors: [SELECTOR.removeLiquidity] },
     ],
   },
   "launchpad": {
@@ -148,17 +171,17 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       PrivateLPToken: 1,
     },
     requiredTransactions: [
-      { label: /^rejected launchpad price-bound probe$/, status: 0 },
-      { label: /^atomic launchpad migration$/, status: 1 },
-      { label: /^launchpad replay probe$/, status: 0 },
-      { label: /^full disposable launchpad-pool exit$/, status: 1 },
+      { label: /^rejected launchpad price-bound probe$/, status: 0, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
+      { label: /^atomic launchpad migration$/, status: 1, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
+      { label: /^launchpad replay probe$/, status: 0, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
+      { label: /^full disposable launchpad-pool exit$/, status: 1, targetArtifactLabel: "disposable launchpad pool", selectors: [SELECTOR.removeLiquidity] },
     ],
   },
   "evidence-test": {
     configurationKeys: ["chainId", "privacyMode", "protocolVersion"],
     assertions: ["deployment mined", "resource recovered"],
     artifacts: { MockERC20: 1 },
-    requiredTransactions: [{ label: /^mock deployment$/, status: 1 }],
+    requiredTransactions: [{ label: /^mock deployment$/, status: 1, targetArtifactLabel: "mock token", selectors: [SELECTOR.mockDeployment] }],
   },
 });
 
@@ -269,9 +292,15 @@ function receiptLogsHash(
 function requireRunnerPolicy(
   runner: string,
   configuration: PublicConfiguration,
-  artifacts: readonly Readonly<{ contractName: string }>[],
+  artifacts: readonly Readonly<{ label: string; contractName: string; address: string }>[],
   assertions: readonly string[],
-  transactions: readonly Readonly<{ label: string; status: 0 | 1 }>[],
+  transactions: readonly Readonly<{
+    label: string;
+    status: 0 | 1;
+    selector: string;
+    to: string | null;
+    contractAddress: string | null;
+  }>[],
 ): void {
   const policy = RUNNER_POLICIES[runner];
   if (!policy) throw new Error("funded runner has no semantic evidence policy");
@@ -289,9 +318,24 @@ function requireRunnerPolicy(
     throw new Error("funded evidence artifacts do not match runner policy");
   }
   for (const requirement of policy.requiredTransactions) {
-    if (!transactions.some((transaction) =>
-      transaction.status === requirement.status && requirement.label.test(transaction.label)
-    )) throw new Error("funded evidence lacks a required semantic transaction");
+    const targets = artifacts.filter((artifact) =>
+      artifact.label === requirement.targetArtifactLabel
+    );
+    if (targets.length !== 1) {
+      throw new Error("funded evidence policy target is missing or ambiguous");
+    }
+    const expectedTarget = getAddress(targets[0].address).toLowerCase();
+    const matches = transactions.filter((transaction) => {
+      const actualTarget = transaction.to ?? transaction.contractAddress;
+      return transaction.status === requirement.status &&
+        requirement.label.test(transaction.label) &&
+        requirement.selectors.includes(transaction.selector.toLowerCase()) &&
+        actualTarget !== null &&
+        getAddress(actualTarget).toLowerCase() === expectedTarget;
+    });
+    if (matches.length < (requirement.minimumCount ?? 1)) {
+      throw new Error("funded evidence lacks a selector-bound semantic transaction");
+    }
   }
 }
 

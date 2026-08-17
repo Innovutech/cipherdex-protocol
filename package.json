@@ -17,7 +17,6 @@
     "test:security-boundary": "node scripts/check-security-boundary.mjs",
     "testnet:harness": "node scripts/run-fresh-hardhat.mjs scripts/testnet-harness.ts --network cotiTestnet",
     "testnet:preflight": "node scripts/run-fresh-hardhat.mjs scripts/testnet-preflight.ts --network cotiTestnet",
-    "testnet:scenario": "node scripts/run-fresh-hardhat.mjs scripts/testnet-scenario.ts --network cotiTestnet",
     "testnet:quote-call-probe": "node scripts/run-fresh-hardhat.mjs scripts/testnet-quote-call-probe.ts --network cotiTestnet",
     "testnet:best-execution-feasibility": "node scripts/run-fresh-hardhat.mjs scripts/testnet-best-execution-feasibility.ts --network cotiTestnet",
     "testnet:best-execution": "node scripts/run-fresh-hardhat.mjs scripts/testnet-best-execution.ts --network cotiTestnet",

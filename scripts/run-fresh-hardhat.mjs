@@ -103,42 +103,6 @@ const ALLOWED_TARGETS = new Map([
     funded: true,
     environment: ["COTI_QUOTE_PRIVATE_KEY", "COTI_QUOTE_AES_KEY"],
   }],
-  ["scripts/testnet-scenario.ts", {
-    arguments: ["--network", "cotiTestnet"],
-    funded: true,
-    environment: [
-      "COTI_AES_KEY",
-      "COTI_SECOND_LP_PRIVATE_KEY",
-      "COTI_SECOND_LP_AES_KEY",
-      "COTI_QUOTE_PRIVATE_KEY",
-      "COTI_QUOTE_AES_KEY",
-      "COTI_TOKEN0",
-      "COTI_TOKEN1",
-      "COTI_TOKEN0_DECIMALS",
-      "COTI_TOKEN1_DECIMALS",
-      "COTI_FACTORY",
-      "COTI_FEE_VAULT",
-      "COTI_FEE_BPS",
-      "COTI_QUOTE_FEE_BPS",
-      "COTI_LIQUIDITY_AMOUNT0",
-      "COTI_LIQUIDITY_AMOUNT1",
-      "COTI_QUOTE_LIQUIDITY_AMOUNT0",
-      "COTI_QUOTE_LIQUIDITY_AMOUNT1",
-      "COTI_SECOND_LP_AMOUNT0",
-      "COTI_SECOND_LP_AMOUNT1",
-      "COTI_SWAP_AMOUNT0",
-      "COTI_SWAP_AMOUNT1",
-      "COTI_SECOND_LP_REMOVE_MIN0",
-      "COTI_SECOND_LP_REMOVE_MIN1",
-      "COTI_PERSONAL_REMOVE_MIN0",
-      "COTI_PERSONAL_REMOVE_MIN1",
-      "COTI_FULL_EXIT_MIN0",
-      "COTI_FULL_EXIT_MIN1",
-      "COTI_TEST_LOCK_SECONDS",
-      "COTI_DEPLOYMENT_RECORD",
-      "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
-    ],
-  }],
   ["scripts/testnet-launchpad.ts", {
     arguments: ["--network", "cotiTestnet"],
     funded: true,
@@ -216,8 +180,32 @@ function selectedEnvironment(names, source = process.env) {
 
 const systemEnvironment = selectedEnvironment(SYSTEM_ENVIRONMENT);
 
+const TRUSTED_GIT_CANDIDATES = Object.freeze(
+  process.platform === "win32"
+    ? [
+        "C:\\Program Files\\Git\\cmd\\git.exe",
+        "C:\\Program Files (x86)\\Git\\cmd\\git.exe",
+      ]
+    : ["/usr/bin/git", "/bin/git"],
+);
+const trustedGitExecutable = TRUSTED_GIT_CANDIDATES.find((candidate) => existsSync(candidate));
+if (!trustedGitExecutable) {
+  throw new Error("Fresh Hardhat runner requires Git at a trusted system path");
+}
+const trustedGitRealpath = realpathSync(trustedGitExecutable);
+const workingTreeRealpath = realpathSync(resolve(process.cwd()));
+const pathComparison = process.platform === "win32"
+  ? [trustedGitRealpath.toLowerCase(), workingTreeRealpath.toLowerCase()]
+  : [trustedGitRealpath, workingTreeRealpath];
+if (
+  pathComparison[0] === pathComparison[1] ||
+  pathComparison[0].startsWith(`${pathComparison[1]}${process.platform === "win32" ? "\\" : "/"}`)
+) {
+  throw new Error("Fresh Hardhat runner refuses a repository-controlled Git executable");
+}
+
 function runGit(arguments_) {
-  const result = spawnSync("git", arguments_, {
+  const result = spawnSync(trustedGitRealpath, arguments_, {
     cwd: process.cwd(),
     env: systemEnvironment,
     encoding: "utf8",

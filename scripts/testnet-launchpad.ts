@@ -271,6 +271,37 @@ async function recoverLaunchpadResources(): Promise<void> {
   );
 
   if (!poolResource && stack) {
+    await verifyRecoveryResourceCreation(recoveryJournal, stack, hardhatEthers.provider);
+    const factoryAddress = metadataAddress(stack, "factoryAddress");
+    const migratorAddress = metadataAddress(stack, "migratorAddress");
+    const token0Address = metadataAddress(stack, "token0Address");
+    const token1Address = metadataAddress(stack, "token1Address");
+    const decimals0 = Number(stack.metadata.decimals0);
+    const decimals1 = Number(stack.metadata.decimals1);
+    const feeBps = Number(stack.metadata.feeBps);
+    if (
+      !Number.isInteger(decimals0) ||
+      !Number.isInteger(decimals1) ||
+      decimals0 < 0 ||
+      decimals1 < 0 ||
+      decimals0 > 18 ||
+      decimals1 > 18 ||
+      !Number.isInteger(feeBps) ||
+      feeBps <= 0
+    ) throw new Error("launchpad recovery metadata is invalid");
+    const factory = await hardhatEthers.getContractAt(
+      "ConfidentialCPMMFactory",
+      factoryAddress,
+      recoveryWallet,
+    );
+    const key = await factory.poolKey(
+      token0Address,
+      token1Address,
+      decimals0,
+      decimals1,
+      feeBps,
+    );
+    const poolAddress = ethers.getAddress(await factory.getPool(key));
     const successfulMigrations = recoveryJournal.transactions.filter((transaction) =>
       transaction.label === "atomic launchpad migration" &&
       transaction.status === "mined-success"
@@ -278,46 +309,71 @@ async function recoverLaunchpadResources(): Promise<void> {
     if (successfulMigrations.length > 1) {
       throw new Error("launchpad recovery found multiple successful migrations");
     }
-    if (successfulMigrations.length === 1) {
-      await verifyRecoveryResourceCreation(recoveryJournal, stack, hardhatEthers.provider);
-      const factoryAddress = metadataAddress(stack, "factoryAddress");
-      const migratorAddress = metadataAddress(stack, "migratorAddress");
-      const token0Address = metadataAddress(stack, "token0Address");
-      const token1Address = metadataAddress(stack, "token1Address");
-      const decimals0 = Number(stack.metadata.decimals0);
-      const decimals1 = Number(stack.metadata.decimals1);
-      const feeBps = Number(stack.metadata.feeBps);
-      if (
-        !Number.isInteger(decimals0) ||
-        !Number.isInteger(decimals1) ||
-        decimals0 < 0 ||
-        decimals1 < 0 ||
-        decimals0 > 18 ||
-        decimals1 > 18 ||
-        !Number.isInteger(feeBps) ||
-        feeBps <= 0
-      ) throw new Error("launchpad recovery metadata is invalid");
-      const factory = await hardhatEthers.getContractAt(
-        "ConfidentialCPMMFactory",
-        factoryAddress,
-        recoveryWallet,
-      );
-      const key = await factory.poolKey(
-        token0Address,
-        token1Address,
-        decimals0,
-        decimals1,
-        feeBps,
-      );
-      const poolAddress = ethers.getAddress(await factory.getPool(key));
-      if (poolAddress === ethers.ZeroAddress || !(await factory.isPool(poolAddress))) {
+    if (poolAddress === ethers.ZeroAddress) {
+      if (successfulMigrations.length !== 0) {
         throw new Error("successful launchpad migration has no canonical pool to recover");
+      }
+    } else {
+      if (!(await factory.isPool(poolAddress))) {
+        throw new Error("launchpad recovery found a non-canonical factory pool");
+      }
+      const factoryReceipt = await hardhatEthers.provider.getTransactionReceipt(
+        stack.creationTransactionHash,
+      );
+      if (!factoryReceipt || factoryReceipt.status !== 1) {
+        throw new Error("launchpad recovery cannot prove the factory deployment block");
+      }
+      const createdEvents = await factory.queryFilter(
+        factory.filters.PoolCreated(token0Address, token1Address),
+        factoryReceipt.blockNumber,
+        "latest",
+      );
+      const matchingCreatedEvents = createdEvents.filter((event: any) =>
+        event.args &&
+        ethers.getAddress(String(event.args.token0)) === token0Address &&
+        ethers.getAddress(String(event.args.token1)) === token1Address &&
+        Number(event.args.token0Decimals) === decimals0 &&
+        Number(event.args.token1Decimals) === decimals1 &&
+        Number(event.args.feeBps) === feeBps &&
+        ethers.getAddress(String(event.args.pool)) === poolAddress
+      );
+      if (matchingCreatedEvents.length !== 1) {
+        throw new Error("launchpad recovery cannot uniquely prove canonical pool creation");
+      }
+      const creationTransactionHash = matchingCreatedEvents[0].transactionHash;
+      if (
+        successfulMigrations.length === 1 &&
+        successfulMigrations[0].hash.toLowerCase() !== creationTransactionHash.toLowerCase()
+      ) {
+        throw new Error("launchpad recovery journal does not match canonical pool creation");
+      }
+      const creationReceipt = await hardhatEthers.provider.getTransactionReceipt(
+        creationTransactionHash,
+      );
+      if (!creationReceipt || creationReceipt.status !== 1) {
+        throw new Error("launchpad canonical pool creation receipt is unavailable");
+      }
+      const journaledCreation = recoveryJournal.transactions.find((transaction) =>
+        transaction.hash.toLowerCase() === creationTransactionHash.toLowerCase()
+      );
+      if (!journaledCreation) {
+        recoveryJournal.recordBroadcast(
+          "atomic launchpad migration recovery",
+          creationTransactionHash,
+        );
+        recoveryJournal.recordTransaction(
+          creationTransactionHash,
+          "mined-success",
+          creationReceipt.blockNumber,
+        );
+      } else if (journaledCreation.status !== "mined-success") {
+        throw new Error("launchpad canonical pool creation is not journaled as mined-success");
       }
       recoveryJournal.recordResource({
         id: POOL_RESOURCE_ID,
         kind: "launchpad-pool",
         address: poolAddress,
-        creationTransactionHash: successfulMigrations[0].hash,
+        creationTransactionHash,
         metadata: {
           factoryAddress,
           migratorAddress,

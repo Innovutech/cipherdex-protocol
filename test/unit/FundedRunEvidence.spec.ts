@@ -214,11 +214,17 @@ describe("funded run evidence", function () {
       "sender is not a reviewed participant",
     );
 
-    const unreviewedTarget = clone();
-    unreviewedTarget.transactions[0].to = `0x${"55".repeat(20)}`;
-    unreviewedTarget.transactions[0].contractAddress = null;
-    expect(() => validateFundedRunEvidence(unreviewedTarget)).to.throw(
-      "transaction target is not reviewed",
+    const relabeledWrongSelector = clone();
+    relabeledWrongSelector.transactions[0].selector = "0x12345678";
+    expect(() => validateFundedRunEvidence(relabeledWrongSelector)).to.throw(
+      "lacks a selector-bound semantic transaction",
+    );
+
+    const rightSelectorWrongTarget = clone();
+    rightSelectorWrongTarget.transactions[0].to = `0x${"55".repeat(20)}`;
+    rightSelectorWrongTarget.transactions[0].contractAddress = null;
+    expect(() => validateFundedRunEvidence(rightSelectorWrongTarget)).to.throw(
+      "lacks a selector-bound semantic transaction",
     );
 
     const assertions = clone();

@@ -177,6 +177,20 @@ async function requireMinedStatus<TReceipt extends ReceiptLike>(
     transaction = await operation();
   } catch (error) {
     const possibleHash = transactionHashFromError(error);
+    if (possibleHash && onBroadcast) {
+      try {
+        await onBroadcast(possibleHash);
+      } catch (journalError) {
+        throw new UnknownBroadcastOutcomeError(
+          label,
+          possibleHash,
+          new AggregateError(
+            [error, journalError],
+            "broadcast failed before its known transaction hash could be journaled",
+          ),
+        );
+      }
+    }
     throw new UnknownBroadcastOutcomeError(label, possibleHash, error);
   }
 

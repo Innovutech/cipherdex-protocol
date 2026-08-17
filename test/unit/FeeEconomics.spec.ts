@@ -169,7 +169,7 @@ describe("CipherDEX v1 fee economics", function () {
     expect(await token.balanceOf(beneficiary.address)).to.equal(0n);
   });
 
-  it("requires an exact public-fee debit and beneficiary credit", async function () {
+  it("requires an exact public-fee debit and reports a taxed beneficiary receipt", async function () {
     const [beneficiary, trader] = await ethers.getSigners();
     const { vault, factory } = await deployPublicFactory(beneficiary.address);
     const token = await (await ethers.getContractFactory("FeeOnTransferERC20")).deploy(
@@ -210,18 +210,17 @@ describe("CipherDEX v1 fee economics", function () {
     expect(claim).to.be.greaterThan(0n);
     await token.setTaxedSender(vaultAddress);
 
-    await expect(vault.sweepPublicToken(tokenAddress))
-      .to.be.revertedWithCustomError(vault, "PublicTransferAmountMismatch");
-    expect(await token.balanceOf(vaultAddress)).to.equal(claim);
-    expect(await vault.publicFees(tokenAddress)).to.equal(claim);
-    expect(await token.balanceOf(beneficiary.address)).to.equal(0n);
-
-    await token.setTaxedSender(beneficiary.address);
-    await expect(vault.sweepPublicToken(tokenAddress))
+    const expectedReceipt = claim - claim / 100n;
+    const sweep = vault.sweepPublicToken(tokenAddress);
+    await expect(sweep)
       .to.emit(vault, "PublicFeesSwept")
       .withArgs(tokenAddress, beneficiary.address, claim);
+    await expect(sweep)
+      .to.emit(vault, "PublicFeesSweepReceipt")
+      .withArgs(tokenAddress, beneficiary.address, claim, expectedReceipt);
     expect(await token.balanceOf(vaultAddress)).to.equal(0n);
-    expect(await token.balanceOf(beneficiary.address)).to.equal(claim);
+    expect(await vault.publicFees(tokenAddress)).to.equal(0n);
+    expect(await token.balanceOf(beneficiary.address)).to.equal(expectedReceipt);
   });
 
   it("keeps an authenticated public claim sweepable when a token changes interface reports", async function () {

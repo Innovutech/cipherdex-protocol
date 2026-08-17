@@ -191,6 +191,7 @@ export const CIPHERDEX_FEE_VAULT_ABI = [
   "function sweepPublicToken(address) returns (uint256)",
   "function sweepConfidentialToken(address)",
   "event PublicFeesSwept(address indexed token,address indexed beneficiary,uint256 amount)",
+  "event PublicFeesSweepReceipt(address indexed token,address indexed beneficiary,uint256 debitedAmount,uint256 beneficiaryReceived)",
   "event PublicFactoryConfigured(address indexed factory)",
   "event PublicFeesDeposited(address indexed token,address indexed pool,uint256 amount)",
   "event ConfidentialFeesSwept(address indexed token,address indexed beneficiary,uint64 aggregatedSwapCount)",
@@ -1826,14 +1827,29 @@ export function isConfidentialLockDiscovery(
 // Backward-compatible semantic guard for callers that used the original name.
 export const isConfidentialLockMetadata = isConfidentialLockDiscovery;
 
+const snapshotLaunchpadMigrationMetadata = (value: unknown): unknown => {
+  try {
+    const descriptors = exactOwnDataDescriptors(value, LAUNCHPAD_MIGRATION_METADATA_FIELDS);
+    if (!descriptors) return undefined;
+    return Object.freeze({
+      disclosureSchemaVersion: ownDataValue(descriptors, "disclosureSchemaVersion"),
+      creator: ownDataValue(descriptors, "creator"),
+      pool: ownDataValue(descriptors, "pool"),
+      disposition: ownDataValue(descriptors, "disposition"),
+      lockId: ownDataValue(descriptors, "lockId"),
+      unlockTime: ownDataValue(descriptors, "unlockTime"),
+    });
+  } catch {
+    return undefined;
+  }
+};
+
 export function isLaunchpadMigrationMetadataShape(
   value: unknown,
 ): value is LaunchpadMigrationMetadata {
-  const descriptors = exactOwnDataDescriptors(value, LAUNCHPAD_MIGRATION_METADATA_FIELDS);
-  if (!descriptors) return false;
-  const candidate = Object.fromEntries(
-    LAUNCHPAD_MIGRATION_METADATA_FIELDS.map((field) => [field, ownDataValue(descriptors, field)]),
-  ) as Partial<LaunchpadMigrationMetadata>;
+  const candidate = snapshotLaunchpadMigrationMetadata(value) as
+    Partial<LaunchpadMigrationMetadata> | undefined;
+  if (!candidate) return false;
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     isAddressLike(candidate.creator) &&
@@ -1849,16 +1865,17 @@ export function isLaunchpadMigrationMetadataShape(
 export function isLaunchpadMigrationMetadata(
   value: unknown,
 ): value is LaunchpadMigrationMetadata {
-  if (!isLaunchpadMigrationMetadataShape(value)) return false;
-  if (sameAddress(value.creator, ZERO_ADDRESS) || sameAddress(value.pool, ZERO_ADDRESS)) {
+  const candidate = snapshotLaunchpadMigrationMetadata(value);
+  if (!isLaunchpadMigrationMetadataShape(candidate)) return false;
+  if (sameAddress(candidate.creator, ZERO_ADDRESS) || sameAddress(candidate.pool, ZERO_ADDRESS)) {
     return false;
   }
-  const unlockTime = quantityAsBigInt(value.unlockTime);
-  const zeroLock = value.lockId.toLowerCase() === ZERO_BYTES32;
-  if (value.disposition === LP_DISPOSITION.CREATOR_HELD) {
+  const unlockTime = quantityAsBigInt(candidate.unlockTime);
+  const zeroLock = candidate.lockId.toLowerCase() === ZERO_BYTES32;
+  if (candidate.disposition === LP_DISPOSITION.CREATOR_HELD) {
     return zeroLock && unlockTime === 0n;
   }
-  if (value.disposition === LP_DISPOSITION.TIMED_LOCK) {
+  if (candidate.disposition === LP_DISPOSITION.TIMED_LOCK) {
     return !zeroLock && unlockTime > 0n;
   }
   return !zeroLock && unlockTime === 0n;
@@ -1911,9 +1928,19 @@ export async function verifyLaunchpadMigrationMetadata(
   policy: LaunchpadMigrationVerificationPolicy,
   adapter: LaunchpadMigrationVerificationAdapter,
 ): Promise<VerifiedLaunchpadMigrationMetadata> {
+  const expectationDescriptors = exactOwnDataDescriptors(
+    expectation,
+    ["transactionHash", "metadata"],
+  );
+  const transactionHash = expectationDescriptors
+    ? ownDataValue(expectationDescriptors, "transactionHash")
+    : undefined;
+  const metadataSnapshot = expectationDescriptors
+    ? snapshotLaunchpadMigrationMetadata(ownDataValue(expectationDescriptors, "metadata"))
+    : undefined;
   if (
-    !isBytes32(expectation.transactionHash) ||
-    !isLaunchpadMigrationMetadata(expectation.metadata) ||
+    !isBytes32(transactionHash) ||
+    !isLaunchpadMigrationMetadata(metadataSnapshot) ||
     !Number.isSafeInteger(policy.expectedChainId) ||
     policy.expectedChainId <= 0 ||
     !isAddressLike(policy.expectedFactory) ||
@@ -1931,7 +1958,7 @@ export async function verifyLaunchpadMigrationMetadata(
     throw new TypeError("Invalid launchpad migration verification input");
   }
 
-  const metadata = Object.freeze({ ...expectation.metadata });
+  const metadata = metadataSnapshot;
   let chainIdValue: number | bigint;
   let transaction: ConfidentialBestExecutionTransactionEvidence | null;
   let receipt: ConfidentialBestExecutionReceiptEvidence | null;
@@ -1960,8 +1987,8 @@ export async function verifyLaunchpadMigrationMetadata(
       poolState,
     ] = await Promise.all([
       adapter.readChainId(),
-      adapter.getTransaction(expectation.transactionHash),
-      adapter.getTransactionReceipt(expectation.transactionHash),
+      adapter.getTransaction(transactionHash),
+      adapter.getTransactionReceipt(transactionHash),
       adapter.getCode(policy.expectedFactory),
       adapter.getCode(policy.expectedMigrator),
       adapter.readFactoryProtocolVersion(policy.expectedFactory),
@@ -2008,11 +2035,11 @@ export async function verifyLaunchpadMigrationMetadata(
     token1Decimals === undefined ||
     feeBps === undefined ||
     !isBytes32(transaction.hash) ||
-    transaction.hash.toLowerCase() !== expectation.transactionHash.toLowerCase() ||
+    transaction.hash.toLowerCase() !== transactionHash.toLowerCase() ||
     !sameAddress(transaction.from, metadata.creator) ||
     !sameAddress(transaction.to, policy.expectedMigrator) ||
     !isBytes32(receipt.transactionHash) ||
-    receipt.transactionHash.toLowerCase() !== expectation.transactionHash.toLowerCase() ||
+    receipt.transactionHash.toLowerCase() !== transactionHash.toLowerCase() ||
     toSafeChainNumber(receipt.status) !== 1
   ) {
     throw new TypeError("Launchpad migration provenance verification failed");
@@ -2143,7 +2170,7 @@ export async function verifyLaunchpadMigrationMetadata(
   const verified = Object.freeze({
     ...metadata,
     chainId,
-    transactionHash: expectation.transactionHash,
+    transactionHash,
     factory: policy.expectedFactory,
     migrator: policy.expectedMigrator,
   }) as VerifiedLaunchpadMigrationMetadata;

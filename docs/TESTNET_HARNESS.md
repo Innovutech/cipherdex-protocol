@@ -99,58 +99,6 @@ moves funded private assets, it runs only after the clean source deployment and
 separate evidence commit. It verifies the complete tracked deployment and exact
 reviewed token instances before constructing token contracts or deploying probes.
 
-## Full confidential scenario
-
-Run:
-
-```text
-npm run testnet:scenario
-```
-
-Leave `COTI_POOL` and `COTI_QUOTE_POOL` unset for the reproducible gate. The
-runner deploys a fresh fee vault and confidential factory, creates two canonical
-fee-tier pools for the same pair, and initializes both at independently supplied
-ratios. The second LP joins the primary pool proportionally, and local decrypted
-balance checks prove that only rounded-up proportional deposits were accepted.
-Before any deployment or token approval, the runner verifies the tracked
-`COTI_DEPLOYMENT_RECORD`, a completely clean source/evidence state, the configured
-canonical factory and vault, and exact membership of both token instances in the
-record's reviewed list. The fresh stack is disposable test evidence, not a
-replacement canonical deployment.
-
-This regression scenario deliberately exercises the currently proven paid
-per-pool quote path: a separate quote EOA/AES identity submits one encrypted
-transaction per canonical fee-tier candidate, verifies discovery provenance,
-decrypts its own results and selects the largest output. The user then creates
-fresh pool-bound inputs and executes directly. This proves the primary path on
-deployments without the finalized router and the direct compatibility path
-after router deployment. No decrypted value is printed or persisted.
-
-The runner exercises:
-
-- discovery provenance and best-output selection across canonical fee tiers;
-- direct encrypted swaps in both directions;
-- expiry, slippage and encrypted-input replay rejection;
-- per-input-token protocol-fee batch accounting and premature collection
-  rejection;
-- a second-LP full personal exit;
-- timed and permanent LP locks;
-- the primary LP's remaining unlocked exit;
-- a true full exit from the independent second fee-tier pool.
-
-The primary and second LP identities need private token balances and native gas.
-The separate quote identity needs native gas for the paid per-pool quote
-transactions but never receives user assets or signs settlement. Raw swap inputs
-must be large enough for the one-sixth protocol share to remain nonzero after
-integer rounding. The runner validates this before any RPC or deployment work
-and reports the exact minimum for every configured fee tier.
-
-Every LP removal also requires explicit positive encrypted limits:
-`COTI_SECOND_LP_REMOVE_MIN0/1`, `COTI_PERSONAL_REMOVE_MIN0/1`, and
-`COTI_FULL_EXIT_MIN0/1`. These values must be reviewed against the disposable
-scenario inputs. They are not derived from public reserve state because the
-protocol intentionally discloses none.
-
 ## Launchpad bootstrap
 
 Run the atomic canonical bootstrap proof separately:

@@ -289,7 +289,7 @@ describe("configured testnet deployment provenance", function () {
               recordTracked: true,
               recordMatchesHead: true,
               sourceCommitIsAncestor: true,
-              changedPathsSinceSource: [relativePath, "scripts/testnet-scenario.ts"],
+              changedPathsSinceSource: [relativePath, "scripts/testnet-harness.ts"],
             }),
             verifyRuntime: async () => artifact,
             verifyTransactions: async () => undefined,

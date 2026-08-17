@@ -45,6 +45,7 @@ describe("funded testnet transaction evidence", function () {
 
   it("never treats an error-carried hash as evidence for the attempted operation", async function () {
     let receiptLookups = 0;
+    const journaled: string[] = [];
     let captured: unknown;
     try {
       await requireMinedFailure(
@@ -56,6 +57,9 @@ describe("funded testnet transaction evidence", function () {
           receiptLookups += 1;
           return failedReceipt;
         },
+        (transactionHash) => {
+          journaled.push(transactionHash);
+        },
       );
     } catch (error) {
       captured = error;
@@ -63,6 +67,24 @@ describe("funded testnet transaction evidence", function () {
     expect(captured).to.be.instanceOf(UnknownBroadcastOutcomeError);
     expect((captured as UnknownBroadcastOutcomeError).transactionHash).to.equal(hash);
     expect(receiptLookups).to.equal(0);
+    expect(journaled).to.deep.equal([hash]);
+  });
+
+  it("preserves a known hash when journaling an operation-level broadcast failure also fails", async function () {
+    let captured: unknown;
+    try {
+      await requireMinedSuccess(
+        "funded action",
+        async () => { throw { cause: { transactionHash: hash } }; },
+        async () => null,
+        () => { throw new Error("disk unavailable"); },
+      );
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).to.be.instanceOf(UnknownBroadcastOutcomeError);
+    expect((captured as UnknownBroadcastOutcomeError).transactionHash).to.equal(hash);
+    expect((captured as Error & { cause?: unknown }).cause).to.be.instanceOf(AggregateError);
   });
 
   it("fails closed on an indeterminate send or wait outcome", async function () {

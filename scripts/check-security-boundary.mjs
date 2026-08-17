@@ -304,6 +304,23 @@ for (const fragment of [
     throw new Error("Confidential fee vault sweep bypasses fixed epoch aggregation");
   }
 }
+const publicVaultSweepBody = functionBody(feeVaultSource, "sweepPublicToken");
+for (const fragment of [
+  "publicFees[token] = 0",
+  "publicToken.safeTransfer(beneficiary, amount)",
+  "beneficiaryBalanceAfter < beneficiaryBalanceBefore",
+  "vaultBalanceBefore - vaultBalanceAfter != amount",
+  "emit PublicFeesSweepReceipt(",
+]) {
+  if (!publicVaultSweepBody.includes(fragment)) {
+    throw new Error("Public fee vault sweep does not bind claim clearance to its exact debit receipt");
+  }
+}
+if (publicVaultSweepBody.includes(
+  "beneficiaryBalanceAfter - beneficiaryBalanceBefore != amount",
+)) {
+  throw new Error("Public fee vault can permanently strand an authenticated sender-taxed claim");
+}
 
 const bestExecutionRouterSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/ConfidentialBestExecutionRouter.sol", "utf8"),
@@ -349,7 +366,6 @@ const freshRunnerSource = await readFile("scripts/run-fresh-hardhat.mjs", "utf8"
 const freshHardhatScripts = new Map([
   ["testnet:harness", "scripts/testnet-harness.ts --network cotiTestnet"],
   ["testnet:preflight", "scripts/testnet-preflight.ts --network cotiTestnet"],
-  ["testnet:scenario", "scripts/testnet-scenario.ts --network cotiTestnet"],
   ["testnet:quote-call-probe", "scripts/testnet-quote-call-probe.ts --network cotiTestnet"],
   ["testnet:best-execution-feasibility", "scripts/testnet-best-execution-feasibility.ts --network cotiTestnet"],
   ["testnet:best-execution", "scripts/testnet-best-execution.ts --network cotiTestnet"],
@@ -373,6 +389,19 @@ if (/from\s+["']\.\.?\//.test(freshRunnerSource)) {
 }
 if (/env:\s*process\.env/.test(freshRunnerSource)) {
   throw new Error("Fresh Hardhat runner forwards the ambient environment into a subprocess");
+}
+if (/spawnSync\(["']git["']/.test(freshRunnerSource)) {
+  throw new Error("Fresh Hardhat runner resolves Git through an attacker-controlled search path");
+}
+for (const required of [
+  "TRUSTED_GIT_CANDIDATES",
+  "trustedGitExecutable",
+  "trustedGitRealpath",
+  "refuses a repository-controlled Git executable",
+]) {
+  if (!freshRunnerSource.includes(required)) {
+    throw new Error(`Fresh Hardhat runner omits trusted Git control: ${required}`);
+  }
 }
 const hardhatConfigSource = await readFile("hardhat.config.ts", "utf8");
 if (/dotenv(?:\/config)?/.test(hardhatConfigSource)) {
@@ -493,53 +522,6 @@ if (!hasStringCall(harnessAst, "requiredAddress", "COTI_FACTORY")) {
   throw new Error("Basic funded harness does not require an independently configured factory");
 }
 
-const scenarioRawSource = await readFile("scripts/testnet-scenario.ts", "utf8");
-const scenarioSource = maskSourceCommentsAndLiterals(scenarioRawSource);
-const scenarioAst = parseTypeScript(scenarioRawSource, "scripts/testnet-scenario.ts");
-const scenarioMainBody = functionBody(scenarioSource, "main");
-const scenarioLiquidityBody = functionBody(scenarioSource, "addPrivateLiquidity");
-if (
-  scenarioMainBody.indexOf("ethers.provider.getNetwork()") < 0 ||
-  scenarioMainBody.indexOf("ethers.provider.getNetwork()") >
-    scenarioMainBody.indexOf("resolvePrivateTokenCodehashes(")
-) {
-  throw new Error("Full funded scenario validates the chain after network-dependent work");
-}
-if (
-  !scenarioMainBody.includes("assertReviewedPrivateTokens(deploymentRecord") ||
-  scenarioMainBody.indexOf("assertReviewedPrivateTokens(deploymentRecord") >
-    scenarioMainBody.indexOf("ethers.getContractFactory(")
-) {
-  throw new Error("Full funded scenario can move assets through unreviewed token instances");
-}
-if (
-  !scenarioLiquidityBody.includes("confidentialLiquidityBounds(") ||
-  !scenarioLiquidityBody.includes("bounds.minShares") ||
-  !scenarioLiquidityBody.includes("bounds.minPriceX18") ||
-  !scenarioLiquidityBody.includes("bounds.maxPriceX18")
-) {
-  throw new Error("Full funded scenario uses ineffective liquidity bounds");
-}
-for (const name of [
-  "COTI_SECOND_LP_REMOVE_MIN0",
-  "COTI_SECOND_LP_REMOVE_MIN1",
-  "COTI_PERSONAL_REMOVE_MIN0",
-  "COTI_PERSONAL_REMOVE_MIN1",
-  "COTI_FULL_EXIT_MIN0",
-  "COTI_FULL_EXIT_MIN1",
-]) {
-  if (!hasStringCall(scenarioAst, "requiredPositiveBigInt", name)) {
-    throw new Error(`Full funded scenario does not require positive ${name}`);
-  }
-}
-if (
-  /(?:secondRemoveMinimum[01]|removeMinimum[01]|quoteRemoveMinimum[01])\s*=\s*await[\s\S]{0,160}?encryptValue256\(\s*0n/.test(
-    scenarioSource,
-  )
-) {
-  throw new Error("Full funded scenario uses a zero encrypted withdrawal minimum");
-}
-
 const feeCollectionRawSource = await readFile("scripts/testnet-fee-collection.ts", "utf8");
 const feeCollectionSource = maskSourceCommentsAndLiterals(feeCollectionRawSource);
 const feeCollectionAst = parseTypeScript(
@@ -586,7 +568,6 @@ if (
 
 for (const [file, source, ast] of [
   ["scripts/testnet-harness.ts", harnessSource, harnessAst],
-  ["scripts/testnet-scenario.ts", scenarioSource, scenarioAst],
   ["scripts/testnet-fee-collection.ts", feeCollectionSource, feeCollectionAst],
 ]) {
   for (const fragment of [
@@ -694,6 +675,8 @@ for (const required of [
   "journal.activeResources.length !== 0",
   "requireRunnerPolicy(",
   "requireTransactionBindings(",
+  "targetArtifactLabel",
+  "requirement.selectors.includes(transaction.selector.toLowerCase())",
   "creationTransactionHash",
 ]) {
   if (!fundedEvidenceSource.includes(required)) {
@@ -703,6 +686,7 @@ for (const required of [
 for (const required of [
   "cipherdex.funded-run-evidence/v2",
   "funded run cannot produce evidence with unresolved transactions",
+  "funded evidence lacks a selector-bound semantic transaction",
 ]) {
   if (!fundedEvidenceRawSource.includes(required)) {
     throw new Error(`Funded evidence omits required literal control: ${required}`);
@@ -761,7 +745,9 @@ for (const literal of [
   "full disposable launchpad-pool exit",
   "successful launchpad migration has no canonical pool to recover",
   "launchpad pool recovery canonical provenance changed",
-  "creationTransactionHash: successfulMigrations[0].hash",
+  "launchpad recovery cannot uniquely prove canonical pool creation",
+  "factory.filters.PoolCreated(token0Address, token1Address)",
+  "atomic launchpad migration recovery",
   'markRun("passed")',
 ]) {
   if (!launchpadRawSource.includes(literal)) {
@@ -820,7 +806,6 @@ for (const file of [
   "scripts/testnet-harness.ts",
   "scripts/testnet-preflight.ts",
   "scripts/testnet-quote-call-probe.ts",
-  "scripts/testnet-scenario.ts",
   "scripts/testnet-launchpad.ts",
   "scripts/testnet-fee-collection.ts",
   "scripts/testnet-best-execution-feasibility.ts",
@@ -965,23 +950,10 @@ for (const required of [
   }
 }
 
-const destructiveScenario = maskSourceCommentsAndLiterals(
-  await readFile("scripts/testnet-scenario.ts", "utf8"),
-);
-if (
-  !destructiveScenario.includes(
-    "process.env.COTI_POOL?.trim() || process.env.COTI_QUOTE_POOL?.trim()",
-  ) ||
-  destructiveScenario.includes("usesConfiguredDeployment")
-) {
-  throw new Error("Destructive scenario can reuse configured canonical pool state");
-}
-
 for (const file of [
   "scripts/deploy-testnet.ts",
   "scripts/testnet-harness.ts",
   "scripts/testnet-quote-call-probe.ts",
-  "scripts/testnet-scenario.ts",
   "scripts/testnet-launchpad.ts",
   "scripts/testnet-fee-collection.ts",
   "scripts/testnet-best-execution-feasibility.ts",

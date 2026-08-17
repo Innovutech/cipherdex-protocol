@@ -65,15 +65,15 @@ only effective reserves.
 `collectProtocolFees(collectToken0, collectToken1)` is permissionless but can
 transfer only to the pool's immutable `CipherDEXFeeVault`. Each side is selected
 independently, so a reverting token cannot block collection of its paired asset.
-Collection measures both the pool debit and vault credit and requires each to
-equal the selected claim exactly. A short-credit, taxed or otherwise
-non-conforming transfer reverts atomically without clearing the claim. A prior
-external token loss is reconciled conservatively against protocol-owned claims
-before effective reserves are used; LP-owned liquidity is never silently
-reclassified as a protocol fee. A successful collection removes the same nominal
-amount from raw balance and protocol claims, so effective reserves and price do
-not change. A full LP exit withdraws all effective reserves but leaves
-protocol-owned balances behind.
+Collection requires the pool debit to equal the selected claim exactly, while the
+vault records only its measured net credit. This permits a sender-taxed token
+without charging LP-owned reserves or inflating the vault claim. A prior external
+token loss is reconciled conservatively against protocol-owned claims before
+effective reserves are used; LP-owned liquidity is never silently reclassified
+as a protocol fee. A successful collection removes the same nominal amount from
+raw balance and protocol claims, so effective reserves and price do not change. A
+full LP exit withdraws all effective reserves but leaves protocol-owned balances
+behind.
 
 ## Confidential pools
 
@@ -117,9 +117,12 @@ differencing attacks.
 The vault beneficiary is immutable. The confidential factory is configured once
 by the vault deployer and must report this exact vault; it cannot be replaced.
 Pools cannot choose another collection recipient, noncanonical pools cannot
-deposit, and an arbitrary caller cannot sweep vault assets. Public sweeps emit
-their public amount. Confidential deposit and sweep events expose token, pool,
-epoch and aggregate swap count, but never an amount. Private token balances stay
+deposit, and an arbitrary caller cannot sweep vault assets. A public sweep must
+debit the vault by the complete recorded claim before clearing it. It emits both
+that claim and a separate measured beneficiary receipt, allowing an always-taxed
+token to remain sweepable without hiding the tax. Confidential deposit and sweep
+events expose token, pool, epoch and aggregate swap count, but never an amount.
+Private token balances stay
 under encrypted per-token/per-epoch vault accounting until a matured aggregate
 sweep transfers them to the beneficiary.
 
