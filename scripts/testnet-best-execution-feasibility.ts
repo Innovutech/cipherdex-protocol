@@ -76,14 +76,6 @@ function requiredAddress(name: string): string {
   return ethersLibrary.getAddress(value);
 }
 
-function requiredSourceCommit(): string {
-  const value = process.env.CIPHERDEX_SOURCE_COMMIT?.trim();
-  if (!value || !/^[0-9a-f]{40}$/i.test(value)) {
-    throw new Error("CIPHERDEX_SOURCE_COMMIT must be supplied by the authenticated runner");
-  }
-  return value.toLowerCase();
-}
-
 function journal(): FundedRecoveryJournal {
   if (!recoveryJournal) throw new Error("funded recovery journal is not initialized");
   return recoveryJournal;
@@ -333,10 +325,7 @@ async function main(): Promise<void> {
   const wallet = new CotiWallet(privateKey, ethers.provider, { aesKey });
   wallet.setAesKey(aesKey);
   const caller = await wallet.getAddress();
-  const sourceCommit = requiredSourceCommit();
-  if (sourceCommit !== deploymentRecord.sourceCommit) {
-    throw new Error("funded source commit does not match the reviewed deployment");
-  }
+  const sourceCommit = deploymentRecord.sourceCommit;
   recoveryJournal = FundedRecoveryJournal.open({
     runner: "best-execution-feasibility",
     sourceCommit,

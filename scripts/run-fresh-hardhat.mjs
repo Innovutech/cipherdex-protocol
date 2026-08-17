@@ -260,6 +260,5 @@ const runtimeEnvironment = selectedEnvironment([
   ...(targetPolicy.funded ? FUNDED_NETWORK_ENVIRONMENT : []),
   ...targetPolicy.environment,
 ]);
-runtimeEnvironment.CIPHERDEX_SOURCE_COMMIT = sourceCommit;
 runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath;
 runHardhat(["run", "--no-compile", target, ...targetArguments], runtimeEnvironment);

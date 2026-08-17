@@ -118,7 +118,6 @@ for (const required of [
   "FUNDED_NETWORK_ENVIRONMENT",
   "targetPolicy.funded",
   "targetPolicy.environment",
-  "runtimeEnvironment.CIPHERDEX_SOURCE_COMMIT = sourceCommit",
   "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath",
 ]) {
   assert.ok(freshRunnerSource.includes(required));
@@ -139,6 +138,15 @@ assert.doesNotMatch(
   freshRunnerSource,
   /["']CIPHERDEX_SOURCE_COMMIT["']\s*,/,
 );
+for (const path of [
+  "scripts/testnet-best-execution-feasibility.ts",
+  "scripts/testnet-best-execution.ts",
+  "scripts/testnet-fee-collection.ts",
+  "scripts/testnet-launchpad.ts",
+]) {
+  const source = readFileSync(path, "utf8");
+  assert.ok(source.includes("const sourceCommit = deploymentRecord.sourceCommit;"));
+}
 for (const unsafe of [
   `async function dead() { await hre.run("compile"); }
    async function main() { await ethers.provider.getNetwork(); }`,

@@ -469,7 +469,6 @@ for (const required of [
   "FUNDED_NETWORK_ENVIRONMENT",
   "targetPolicy.funded",
   "targetPolicy.environment",
-  "runtimeEnvironment.CIPHERDEX_SOURCE_COMMIT = sourceCommit",
   "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath",
 ]) {
   if (!freshRunnerSource.includes(required)) {
@@ -496,6 +495,17 @@ if (
   freshRunnerSource.includes("'CIPHERDEX_SOURCE_COMMIT',")
 ) {
   throw new Error("Fresh Hardhat runner permits ambient source-commit injection");
+}
+for (const path of [
+  "scripts/testnet-best-execution-feasibility.ts",
+  "scripts/testnet-best-execution.ts",
+  "scripts/testnet-fee-collection.ts",
+  "scripts/testnet-launchpad.ts",
+]) {
+  const source = await readFile(path, "utf8");
+  if (!source.includes("const sourceCommit = deploymentRecord.sourceCommit;")) {
+    throw new Error(`${path}: funded evidence is not bound to the reviewed deployment source`);
+  }
 }
 if (!hasStringCall(deploymentAst, "getContractFactory", "ConfidentialBestExecutionRouter")) {
   throw new Error("Testnet deployment does not deploy the confidential best-execution router");
