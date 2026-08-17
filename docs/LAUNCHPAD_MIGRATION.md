@@ -97,11 +97,20 @@ stage/error metadata only.
 `npm run testnet:launchpad` verifies:
 
 - invalid encrypted price bounds roll back canonical creation and token pulls;
-- a deterministic-address pre-fund cannot block bootstrap or enter reserves;
 - valid arbitrary-ratio bootstrap initializes the canonical registry entry;
 - factory fee policy and immutable vault are inherited;
-- creator-held, timed-lock, and permanent-lock dispositions behave correctly;
+- creator-held shares can be fully exited from the disposable funded pool;
 - replay/pre-initialized attempts are rejected without additional token movement;
-- canonical discovery remains unchanged after rejection.
+- canonical discovery remains unchanged after rejection;
+- creator allowances and pool balances are returned to zero before evidence is
+  written.
+
+The funded runner intentionally uses creator-held disposition only so every
+private asset can be recovered after the proof. Timed-lock and permanent-lock
+semantics, including released-lock rejection, remain covered by the local unit,
+property and integration suites. The funded runner does not burn or deliberately
+pre-fund a deterministic address because such a donation cannot be recovered and
+would invalidate zero-residue evidence. Unsolicited-donation accounting remains
+covered by contract tests.
 
 This remains testnet-only and is not a mainnet-readiness or external-audit claim.

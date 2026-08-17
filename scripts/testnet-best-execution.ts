@@ -1,6 +1,6 @@
 import { Contract, TransactionReceipt, ethers as ethersLibrary } from "ethers";
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import hre, { ethers } from "hardhat";
+import { ethers } from "hardhat";
 
 import {
   CONFIDENTIAL_BEST_EXECUTION_ROUTER_TESTNET_ABI,
@@ -9,18 +9,27 @@ import {
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
+import {
+  FundedRecoveryJournal,
+  verifyRecoveryResourceCreation,
+} from "./funded-recovery-journal";
+import { writeFundedRunEvidence } from "./funded-run-evidence";
+import { createFundedDeploymentBinding } from "./funded-deployment-binding";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
-import { confidentialLiquidityBounds } from "./testnet-slippage";
+import { confidentialLiquidityBounds, minimumWithSlippage } from "./testnet-slippage";
 import {
   assertReviewedPrivateTokens,
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
 import {
+  MinedTransactionStatusError,
   requireMinedFailure,
   requireMinedSuccess,
   safeTestnetErrorSummary,
+  transactionHashFromError,
+  UnknownBroadcastOutcomeError,
 } from "./testnet-transaction-evidence";
 
 const EXPECTED_CHAIN_ID = 7_082_400n;
@@ -40,6 +49,8 @@ const UINT64_MAX = (1n << 64n) - 1n;
 const FEE_TIERS = [5, 30, 100] as const;
 let stage = "configuration";
 let requestNonce = 0;
+let recoveryJournal: FundedRecoveryJournal | undefined;
+let recoveryWallet: CotiWallet | undefined;
 
 type Submitted = Readonly<{
   receipt: TransactionReceipt;
@@ -57,6 +68,12 @@ type PoolContext = Readonly<{
   token1: Contract;
   token0Decimals: number;
   token1Decimals: number;
+  model: {
+    reserve0: bigint;
+    reserve1: bigint;
+    protocolFee0: bigint;
+    protocolFee1: bigint;
+  };
 }>;
 
 type BestResult = Readonly<{
@@ -118,6 +135,19 @@ function requiredAddress(name: string): string {
     throw new Error(`${name} must be a valid address`);
   }
   return ethersLibrary.getAddress(value);
+}
+
+function requiredSourceCommit(): string {
+  const value = process.env.CIPHERDEX_SOURCE_COMMIT?.trim();
+  if (!value || !/^[0-9a-f]{40}$/i.test(value)) {
+    throw new Error("CIPHERDEX_SOURCE_COMMIT must be supplied by the authenticated runner");
+  }
+  return value.toLowerCase();
+}
+
+function journal(): FundedRecoveryJournal {
+  if (!recoveryJournal) throw new Error("funded recovery journal is not initialized");
+  return recoveryJournal;
 }
 
 function optionalPositiveAmount(name: string, fallback: bigint): bigint {
@@ -214,12 +244,27 @@ async function submit(
 ): Promise<Submitted> {
   stage = label;
   const started = Date.now();
-  const evidence = await requireMinedSuccess(
-    label,
-    () => operation,
-    (hash) => ethers.provider.getTransactionReceipt(hash),
-  );
+  let evidence: Awaited<ReturnType<typeof requireMinedSuccess<TransactionReceipt>>>;
+  try {
+    evidence = await requireMinedSuccess(
+      label,
+      () => operation,
+      (hash) => ethers.provider.getTransactionReceipt(hash),
+      (hash) => journal().recordBroadcast(label, hash),
+    );
+  } catch (error) {
+    const hash = transactionHashFromError(error);
+    if (hash) {
+      journal().recordBroadcast(label, hash);
+      journal().recordTransaction(
+        hash,
+        error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
+      );
+    }
+    throw error;
+  }
   const receipt = evidence.receipt;
+  journal().recordTransaction(evidence.transactionHash, "mined-success", receipt.blockNumber);
   console.log(
     `${label}: tx=${evidence.transactionHash} gas=${receipt.gasUsed.toString()} ` +
       `latencyMs=${Date.now() - started}`,
@@ -262,7 +307,9 @@ async function expectFailure(
     label,
     operation,
     (hash) => ethers.provider.getTransactionReceipt(hash),
+    (hash) => journal().recordBroadcast(label, hash),
   );
+  journal().recordTransaction(evidence.transactionHash, "mined-failure", evidence.receipt.blockNumber);
   console.log(`${label}: rejected onchain tx=${evidence.transactionHash}`);
 }
 
@@ -444,6 +491,12 @@ async function loadPool(address: string, wallet: CotiWallet): Promise<PoolContex
     token1: new Contract(String(token1Address), PRIVATE_ERC20_TESTNET_ABI, wallet),
     token0Decimals: Number(token0Decimals),
     token1Decimals: Number(token1Decimals),
+    model: {
+      reserve0: 0n,
+      reserve1: 0n,
+      protocolFee0: 0n,
+      protocolFee1: 0n,
+    },
   };
 }
 
@@ -456,7 +509,7 @@ async function createPool(
   decimalsB: number,
   feeBps: number,
 ): Promise<PoolContext> {
-  await submit(
+  const creation = await submit(
     `create canonical ${feeBps} bps pool`,
     factory.createPool(
       tokenA,
@@ -478,7 +531,20 @@ async function createPool(
   if (address === ethersLibrary.ZeroAddress || !(await factory.isPool(address))) {
     throw new Error("factory did not register the canonical pool");
   }
-  return loadPool(address, wallet);
+  const context = await loadPool(address, wallet);
+  journal().recordResource({
+    id: `pool-${feeBps}`,
+    kind: "confidential-pool",
+    address,
+    creationTransactionHash: creation.hash,
+    metadata: {
+      factoryAddress: ethersLibrary.getAddress(String(factory.target)),
+      token0Address: context.token0Address,
+      token1Address: context.token1Address,
+      feeBps,
+    },
+  });
+  return context;
 }
 
 async function initializePool(
@@ -556,28 +622,39 @@ async function initializePool(
   ) {
     throw new Error("pool initialization did not consume exact liquidity");
   }
+  context.model.reserve0 = amount0;
+  context.model.reserve1 = amount1;
 }
 
 async function removeAllLiquidity(
   context: PoolContext,
   wallet: CotiWallet,
+  recoveryFloor = false,
 ): Promise<void> {
   const owner = await wallet.getAddress();
   const shares = await privateShares(context, wallet);
   if (shares <= 0n) throw new Error(`${context.feeBps} bps pool has no removable LP shares`);
   const selector = context.pool.interface.getFunction("removeLiquidity")?.selector;
   if (!selector) throw new Error("remove-liquidity selector unavailable");
-  const [encryptedShares, zero0, zero1] = await Promise.all([
+  if (!recoveryFloor && (context.model.reserve0 <= 0n || context.model.reserve1 <= 0n)) {
+    throw new Error(`${context.feeBps} bps pool has no positive modeled exit bounds`);
+  }
+  const minimum0 = recoveryFloor ? 1n : minimumWithSlippage(context.model.reserve0);
+  const minimum1 = recoveryFloor ? 1n : minimumWithSlippage(context.model.reserve1);
+  if (minimum0 <= 0n || minimum1 <= 0n) {
+    throw new Error(`${context.feeBps} bps pool cleanup minimum is not positive`);
+  }
+  const [encryptedShares, encryptedMinimum0, encryptedMinimum1] = await Promise.all([
     wallet.encryptValue256(shares, context.address, selector),
-    wallet.encryptValue256(0n, context.address, selector),
-    wallet.encryptValue256(0n, context.address, selector),
+    wallet.encryptValue256(minimum0, context.address, selector),
+    wallet.encryptValue256(minimum1, context.address, selector),
   ]);
   await submit(
     `full cleanup exit for ${context.feeBps} bps pool`,
     context.pool.removeLiquidity(
       encryptedShares,
-      zero0,
-      zero1,
+      encryptedMinimum0,
+      encryptedMinimum1,
       deadline(),
       { gasLimit: CALL_GAS_LIMIT },
     ),
@@ -601,6 +678,61 @@ async function removeAllLiquidity(
     allowance1 !== 0n
   ) {
     throw new Error(`${context.feeBps} bps pool cleanup left shares, assets, or allowances`);
+  }
+  context.model.reserve0 = 0n;
+  context.model.reserve1 = 0n;
+  context.model.protocolFee0 = 0n;
+  context.model.protocolFee1 = 0n;
+}
+
+async function recoverJournalPools(): Promise<void> {
+  if (!recoveryJournal || !recoveryWallet) return;
+  for (const resource of recoveryJournal.activeResources) {
+    await verifyRecoveryResourceCreation(recoveryJournal, resource, ethers.provider);
+    if (resource.kind !== "confidential-pool") {
+      throw new Error(`unsupported active recovery resource ${resource.kind}`);
+    }
+    const factoryAddress = String(resource.metadata.factoryAddress ?? "");
+    const token0Address = String(resource.metadata.token0Address ?? "");
+    const token1Address = String(resource.metadata.token1Address ?? "");
+    const feeBps = Number(resource.metadata.feeBps);
+    if (
+      !ethersLibrary.isAddress(factoryAddress) ||
+      !ethersLibrary.isAddress(token0Address) ||
+      !ethersLibrary.isAddress(token1Address) ||
+      !FEE_TIERS.includes(feeBps as (typeof FEE_TIERS)[number])
+    ) throw new Error("funded recovery pool metadata is invalid");
+
+    await verifyDeployedRuntimeArtifact("ConfidentialCPMM", resource.address);
+    const factory = new Contract(
+      factoryAddress,
+      CONFIDENTIAL_FACTORY_TESTNET_ABI,
+      ethers.provider,
+    );
+    if (!(await factory.isPool(resource.address))) {
+      throw new Error("funded recovery resource is not canonical to its recorded factory");
+    }
+    const context = await loadPool(resource.address, recoveryWallet);
+    if (
+      context.feeBps !== feeBps ||
+      context.token0Address.toLowerCase() !== token0Address.toLowerCase() ||
+      context.token1Address.toLowerCase() !== token1Address.toLowerCase() ||
+      String(await context.pool.bootstrapper()).toLowerCase() !== factoryAddress.toLowerCase()
+    ) throw new Error("funded recovery pool provenance changed");
+
+    const shares = await privateShares(context, recoveryWallet);
+    if (shares > 0n) {
+      await removeAllLiquidity(context, recoveryWallet, true);
+    } else {
+      const [balance0, balance1] = await Promise.all([
+        privateBalance(context.token0, recoveryWallet, context.address),
+        privateBalance(context.token1, recoveryWallet, context.address),
+      ]);
+      if (balance0 !== 0n || balance1 !== 0n) {
+        throw new Error("funded recovery pool holds assets without recoverable LP shares");
+      }
+    }
+    recoveryJournal.markRecovered(resource.id);
   }
 }
 
@@ -918,12 +1050,28 @@ async function swapWithRollbackProof(
   ) {
     throw new Error("best swap touched an unselected candidate pool");
   }
+  const protocolFee = modeledProtocolFee(amountIn, selectedContext.feeBps);
+  if (tokenIn.toLowerCase() === selectedContext.token0Address.toLowerCase()) {
+    if (actualOutput >= selectedContext.model.reserve1) {
+      throw new Error("modeled selected-pool token1 reserve was exhausted");
+    }
+    selectedContext.model.reserve0 += amountIn - protocolFee;
+    selectedContext.model.reserve1 -= actualOutput;
+    selectedContext.model.protocolFee0 += protocolFee;
+  } else if (tokenIn.toLowerCase() === selectedContext.token1Address.toLowerCase()) {
+    if (actualOutput >= selectedContext.model.reserve0) {
+      throw new Error("modeled selected-pool token0 reserve was exhausted");
+    }
+    selectedContext.model.reserve1 += amountIn - protocolFee;
+    selectedContext.model.reserve0 -= actualOutput;
+    selectedContext.model.protocolFee1 += protocolFee;
+  } else {
+    throw new Error("selected pool does not contain the input token");
+  }
   return transaction;
 }
 
 async function main(): Promise<void> {
-  await hre.run("clean");
-  await hre.run("compile");
   stage = "current artifacts compiled";
 
   const primaryKey = requiredPrivateKey("COTI_TESTNET_PRIVATE_KEY");
@@ -951,6 +1099,7 @@ async function main(): Promise<void> {
   second.setAesKey(secondAes);
   quoteWallet.setAesKey(quoteAes);
   const primaryAddress = await primary.getAddress();
+  const secondAddress = await second.getAddress();
   const quoteAddress = await quoteWallet.getAddress();
   if (primaryAddress === quoteAddress) throw new Error("quote identity must be distinct");
 
@@ -977,6 +1126,26 @@ async function main(): Promise<void> {
     ],
   );
   assertReviewedPrivateTokens(deploymentRecord, [tokenAAddress, tokenBAddress]);
+  const sourceCommit = requiredSourceCommit();
+  if (sourceCommit !== deploymentRecord.sourceCommit) {
+    throw new Error("funded source commit does not match the reviewed deployment");
+  }
+  recoveryJournal = FundedRecoveryJournal.open({
+    runner: "best-execution",
+    sourceCommit,
+    chainId: Number(network.chainId),
+    owner: primaryAddress,
+    deployment: await createFundedDeploymentBinding(deploymentRecord),
+  });
+  recoveryWallet = primary;
+  const unresolved = await recoveryJournal.reconcileTransactions(ethers.provider);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `funded recovery has ${unresolved.length} transaction(s) with unknown outcome; do not retry`,
+    );
+  }
+  await recoverJournalPools();
+
 
   const tokenA = new Contract(tokenAAddress, PRIVATE_ERC20_TESTNET_ABI, primary);
   const tokenB = new Contract(tokenBAddress, PRIVATE_ERC20_TESTNET_ABI, primary);
@@ -1316,6 +1485,7 @@ async function main(): Promise<void> {
   stage = "disposable candidate cleanup";
   for (const context of allPools) {
     await removeAllLiquidity(context, primary);
+    recoveryJournal.markRecovered(`pool-${context.feeBps}`);
   }
   const expectedProtocolFeeA = modeledProtocolFee(swapA, reverseQuote.selectedFeeBps);
   const expectedProtocolFeeB =
@@ -1351,12 +1521,97 @@ async function main(): Promise<void> {
       "private selection, exact lower-tier tie-breaking, both directions, every v1 tier, encrypted candidate isolation, " +
       "caller/replay/deadline protection, atomic rollback, exact escrow, quote parity, full LP exits, and zero-residue cleanup",
   );
+  const lpArtifacts = await Promise.all(allPools.map(async (context) => ({
+    label: `${context.feeBps} bps private LP token`,
+    contractName: "PrivateLPToken",
+    address: ethersLibrary.getAddress(await context.pool.lpToken()),
+  })));
+  recoveryJournal.markRun("passed");
+  const finalEvidence = await writeFundedRunEvidence({
+    journal: recoveryJournal,
+    provider: ethers.provider,
+    participants: [primaryAddress, secondAddress, quoteAddress],
+    configuration: {
+      chainId: Number(network.chainId),
+      confidentialPoolVersion: 2,
+      routerVersion: 1,
+      privacyMode: 1,
+      quoteTransport: "paid-transaction",
+      candidateTiers: "5,30,100",
+      tokenA: tokenAAddress,
+      tokenB: tokenBAddress,
+      feeBeneficiary,
+    },
+    artifacts: [
+      {
+        label: "disposable fee vault",
+        contractName: "CipherDEXFeeVault",
+        address: feeVaultDeployment.address,
+      },
+      {
+        label: "disposable private LP factory",
+        contractName: "PrivateLPTokenFactory",
+        address: lpFactoryDeployment.address,
+      },
+      {
+        label: "disposable confidential factory",
+        contractName: "ConfidentialCPMMFactory",
+        address: factoryDeployment.address,
+      },
+      {
+        label: "disposable best execution router",
+        contractName: "ConfidentialBestExecutionRouter",
+        address: routerDeployment.address,
+      },
+      ...allPools.map((context) => ({
+        label: `${context.feeBps} bps canonical pool`,
+        contractName: "ConfidentialCPMM",
+        address: context.address,
+      })),
+      ...lpArtifacts,
+    ],
+    assertions: [
+      "canonical candidates resolved from factory",
+      "paid quote selected best encrypted output",
+      "deterministic lower-tier tie break enforced",
+      "quote-only pool state remained unchanged",
+      "quote and settlement output parity enforced",
+      "both swap directions exercised",
+      "all approved fee tiers exercised",
+      "request replay caller and deadline guards enforced",
+      "slippage failure rolled back atomically",
+      "router escrow and allowances returned to zero",
+      "full LP exits used positive modeled minima",
+      "disposable pools recovered with zero residue",
+    ],
+  });
+  console.log(`fundedEvidence=${finalEvidence.path}`);
 }
 
-void main().catch((error: unknown) => {
+void main().catch(async (error: unknown) => {
+  if (error instanceof UnknownBroadcastOutcomeError) {
+    recoveryJournal?.markRun("failed");
+    console.error(
+      `COTI production best-execution validation paused with an uncertain broadcast: ` +
+        `stage=${stage} ${safeTestnetErrorSummary(error)}; cleanup is deferred until receipt reconciliation.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  let reportedError = error;
+  try {
+    await recoverJournalPools();
+    recoveryJournal?.markRun("failed");
+  } catch (recoveryError) {
+    recoveryJournal?.markRun("recovery-failed");
+    reportedError = new AggregateError(
+      [error, recoveryError],
+      "best-execution validation and funded recovery both failed",
+    );
+  }
   console.error(
     `COTI production best-execution validation failed: stage=${stage} ` +
-      safeTestnetErrorSummary(error),
+      safeTestnetErrorSummary(reportedError),
   );
   process.exitCode = 1;
 });

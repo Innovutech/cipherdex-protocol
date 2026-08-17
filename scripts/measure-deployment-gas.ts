@@ -1,5 +1,5 @@
 import { BaseContract, ContractFactory } from "ethers";
-import hre, { ethers } from "hardhat";
+import { ethers } from "hardhat";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 
 async function deployAndMeasure(
@@ -17,8 +17,6 @@ async function deployAndMeasure(
 }
 
 async function main(): Promise<void> {
-  await hre.run("clean");
-  await hre.run("compile");
   const [beneficiary] = await ethers.getSigners();
   const feeVault = await deployAndMeasure(
     "CipherDEXFeeVault",

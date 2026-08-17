@@ -169,13 +169,13 @@ contract CipherDEXFeeVault {
         if (
             sourceBalanceAfter > sourceBalanceBefore ||
             vaultBalanceAfter < vaultBalanceBefore ||
-            sourceBalanceBefore - sourceBalanceAfter != amount ||
-            vaultBalanceAfter - vaultBalanceBefore != amount
+            sourceBalanceBefore - sourceBalanceAfter != amount
         ) revert PublicTransferAmountMismatch();
 
-        publicFees[token] += amount;
-        received = amount;
-        emit PublicFeesDeposited(token, msg.sender, amount);
+        received = vaultBalanceAfter - vaultBalanceBefore;
+        if (received == 0) revert PublicTransferAmountMismatch();
+        publicFees[token] += received;
+        emit PublicFeesDeposited(token, msg.sender, received);
     }
 
     function sweepPublicToken(address token)

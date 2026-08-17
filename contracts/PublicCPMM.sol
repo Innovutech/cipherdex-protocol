@@ -335,9 +335,9 @@ contract PublicCPMM is CipherDEXFeePolicy {
      * @notice Moves selected protocol-owned balances to the immutable vault.
      * @dev Collection is permissionless because the destination is immutable.
      *      Each token can be collected independently so a reverting token cannot
-     *      block the paired asset. A selected token must credit the immutable
-     *      vault by the full protocol-owned amount; short-credit tokens revert
-     *      atomically so the nominal claim is never silently erased.
+     *      block the paired asset. The pool must lose exactly the protocol-owned
+     *      amount. The immutable vault accounts the amount it actually receives,
+     *      which permits sender-taxed tokens without charging LP-owned reserves.
      */
     function collectProtocolFees(bool collectToken0, bool collectToken1)
         external
@@ -353,13 +353,11 @@ contract PublicCPMM is CipherDEXFeePolicy {
         if (amount0 != 0) {
             protocolFees0 = 0;
             received0 = _depositPublicOwnedBalance(IERC20(token0), amount0);
-            if (received0 != amount0) revert TransferAmountMismatch();
             emit ProtocolFeeCollected(token0, feeVault, amount0, received0);
         }
         if (amount1 != 0) {
             protocolFees1 = 0;
             received1 = _depositPublicOwnedBalance(IERC20(token1), amount1);
-            if (received1 != amount1) revert TransferAmountMismatch();
             emit ProtocolFeeCollected(token1, feeVault, amount1, received1);
         }
     }

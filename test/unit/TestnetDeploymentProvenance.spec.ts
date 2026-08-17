@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import type { RuntimeArtifactProvenance } from "../../scripts/runtime-artifact";
 import {
   assertReviewedPrivateTokens,
+  listTouchedPathsAcrossCommitRange,
   verifyConfiguredTestnetDeployment,
   type VerifiedTestnetDeploymentRecord,
 } from "../../scripts/testnet-deployment-provenance";
@@ -239,7 +240,7 @@ describe("configured testnet deployment provenance", function () {
     }
   });
 
-  it("allows only the tracked manifest and verification report after the source commit", async function () {
+  it("allows only the tracked manifest, exact funded evidence and verification report after source", async function () {
     const { cwd, relativePath } = await fixture();
     try {
       await verifyConfiguredTestnetDeployment(
@@ -258,7 +259,11 @@ describe("configured testnet deployment provenance", function () {
             recordTracked: true,
             recordMatchesHead: true,
             sourceCommitIsAncestor: true,
-            changedPathsSinceSource: [relativePath, "docs/VERIFICATION_REPORT.md"],
+            changedPathsSinceSource: [
+              relativePath,
+              `evidence/coti-testnet-${sourceCommit}.json`,
+              "docs/VERIFICATION_REPORT.md",
+            ],
           }),
           verifyRuntime: async () => artifact,
           verifyTransactions: async () => undefined,
@@ -295,6 +300,43 @@ describe("configured testnet deployment provenance", function () {
         message = error instanceof Error ? error.message : String(error);
       }
       expect(message).to.include("post-source executable or unauthorized change");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("retains executable paths changed and reverted in intermediate commits", async function () {
+    const cwd = await mkdtemp(join(tmpdir(), "cipherdex-provenance-history-"));
+    try {
+      await mkdir(join(cwd, "scripts"));
+      const executable = join(cwd, "scripts", "runner.ts");
+      await writeFile(executable, "export const reviewed = true;\n", "utf8");
+      await execFileAsync("git", ["init"], { cwd });
+      await execFileAsync("git", ["config", "user.email", "cipherdex-test@example.invalid"], { cwd });
+      await execFileAsync("git", ["config", "user.name", "CipherDEX Test"], { cwd });
+      await execFileAsync("git", ["add", "scripts/runner.ts"], { cwd });
+      await execFileAsync("git", ["commit", "-m", "source"], { cwd });
+      const source = (await execFileAsync(
+        "git",
+        ["rev-parse", "--verify", "HEAD"],
+        { cwd },
+      )).stdout.trim();
+
+      await writeFile(executable, "export const reviewed = false;\n", "utf8");
+      await execFileAsync("git", ["add", "scripts/runner.ts"], { cwd });
+      await execFileAsync("git", ["commit", "-m", "modify executable"], { cwd });
+      await writeFile(executable, "export const reviewed = true;\n", "utf8");
+      await execFileAsync("git", ["add", "scripts/runner.ts"], { cwd });
+      await execFileAsync("git", ["commit", "-m", "revert executable"], { cwd });
+
+      const endpointDiff = await execFileAsync(
+        "git",
+        ["diff", "--name-only", `${source}..HEAD`, "--", "."],
+        { cwd },
+      );
+      expect(endpointDiff.stdout.trim()).to.equal("");
+      expect(await listTouchedPathsAcrossCommitRange(cwd, source))
+        .to.deep.equal(["scripts/runner.ts"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

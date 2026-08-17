@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { Interface, ZeroHash, keccak256 } from "ethers";
+import { AbiCoder, Interface, ZeroHash, keccak256, zeroPadValue } from "ethers";
 import {
   CONFIDENTIAL_CPMM_ABI,
   CONFIDENTIAL_CPMM_FACTORY_ABI,
@@ -8,13 +8,19 @@ import {
   CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
   CONFIDENTIAL_BEST_QUOTE_SELECTOR,
   CONFIDENTIAL_BEST_SWAP_SELECTOR,
+  CONFIDENTIAL_LIQUIDITY_LOCKED_TOPIC,
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
+  CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION,
   CONFIDENTIAL_QUOTE_TRANSPORT,
   CIPHERDEX_FEE_VAULT_ABI,
   CIPHERDEX_PROTOCOL_VERSION,
   CIPHERDEX_V1_FEE_POLICY,
   DISCLOSURE_SCHEMA_VERSION,
   LAUNCHPAD_MIGRATION_EIP712_TYPES,
+  LAUNCHPAD_LOCK_DISPOSITION_TOPIC,
+  LAUNCHPAD_MIGRATE_SELECTOR,
+  LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR,
+  LAUNCHPAD_MIGRATION_TOPIC,
   LP_DISPOSITION,
   PRIVACY_MODE,
   PRIVATE_LP_TOKEN_ABI,
@@ -31,12 +37,15 @@ import {
   getCipherDEXV1FeePolicy,
   getConfidentialBestExecutionEncryptionBinding,
   isConfidentialLockDiscovery,
+  isConfidentialLockDiscoveryShape,
   isConfidentialPoolDiscovery,
   isLaunchpadMigrationMetadata,
+  isLaunchpadMigrationMetadataShape,
   isPublicPoolDiscovery,
   minimumCipherDEXV1ConfidentialInput,
   verifyConfidentialPoolDiscovery,
   verifyConfidentialBestExecutionRouter,
+  verifyLaunchpadMigrationMetadata,
   verifyPublicPoolDiscovery,
 } from "../../sdk/src/index";
 
@@ -220,6 +229,208 @@ describe("stable SDK surface", function () {
         totalShares: "private",
       }),
     ).to.equal(false);
+  });
+
+  it("separates lock and migration shape parsing from semantic validation", function () {
+    const pool = "0x0000000000000000000000000000000000000011";
+    const creator = "0x0000000000000000000000000000000000000022";
+    const lockId = `0x${"33".repeat(32)}`;
+    const contradictoryLock = {
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      pool,
+      lockId,
+      owner: creator,
+      unlockTime: "10",
+      permanent: true,
+      released: false,
+    };
+    expect(isConfidentialLockDiscoveryShape(contradictoryLock)).to.equal(true);
+    expect(isConfidentialLockDiscovery(contradictoryLock)).to.equal(false);
+
+    const contradictoryMigration = {
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      creator,
+      pool,
+      disposition: LP_DISPOSITION.CREATOR_HELD,
+      lockId,
+      unlockTime: 0n,
+    };
+    expect(isLaunchpadMigrationMetadataShape(contradictoryMigration)).to.equal(true);
+    expect(isLaunchpadMigrationMetadata(contradictoryMigration)).to.equal(false);
+    expect(isLaunchpadMigrationMetadata({
+      ...contradictoryMigration,
+      disposition: LP_DISPOSITION.TIMED_LOCK,
+      unlockTime: 100n,
+    })).to.equal(true);
+    expect(isLaunchpadMigrationMetadata({
+      ...contradictoryMigration,
+      disposition: LP_DISPOSITION.PERMANENT_LOCK,
+    })).to.equal(true);
+  });
+
+  it("authenticates launchpad metadata against receipt, factory, canonical pool, and lock state", async function () {
+    const chainId = 7_082_400;
+    const factory = "0x0000000000000000000000000000000000000011";
+    const migrator = "0x0000000000000000000000000000000000000022";
+    const creator = "0x0000000000000000000000000000000000000033";
+    const pool = "0x0000000000000000000000000000000000000044";
+    const token0 = "0x0000000000000000000000000000000000000055";
+    const token1 = "0x0000000000000000000000000000000000000066";
+    const feeVault = "0x0000000000000000000000000000000000000077";
+    const lpToken = "0x0000000000000000000000000000000000000088";
+    const transactionHash = `0x${"99".repeat(32)}`;
+    const lockId = `0x${"aa".repeat(32)}`;
+    const factoryCode = "0x6001600055";
+    const migratorCode = "0x6002600055";
+    const metadata = {
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      creator,
+      pool,
+      disposition: LP_DISPOSITION.TIMED_LOCK,
+      lockId,
+      unlockTime: 100n,
+    } as const;
+    const abi = AbiCoder.defaultAbiCoder();
+    const topicAddress = (address: string) => zeroPadValue(address, 32);
+    const receipt = {
+      transactionHash,
+      status: 1,
+      logs: [
+        {
+          address: migrator,
+          topics: [LAUNCHPAD_MIGRATION_TOPIC, topicAddress(creator), topicAddress(pool)],
+          data: "0x",
+        },
+        {
+          address: pool,
+          topics: [CONFIDENTIAL_LIQUIDITY_LOCKED_TOPIC, lockId, topicAddress(creator)],
+          data: abi.encode(["uint64", "bool"], [100n, false]),
+        },
+        {
+          address: migrator,
+          topics: [LAUNCHPAD_LOCK_DISPOSITION_TOPIC, topicAddress(creator), topicAddress(pool)],
+          data: abi.encode(["uint8", "bytes32", "uint64"], [
+            LP_DISPOSITION.TIMED_LOCK,
+            lockId,
+            100n,
+          ]),
+        },
+      ],
+    };
+    const adapter = {
+      readChainId: async () => chainId,
+      getCode: async (address: string) => address.toLowerCase() === factory.toLowerCase()
+        ? factoryCode
+        : migratorCode,
+      hashRuntimeCode: (code: string) => keccak256(code),
+      getTransaction: async () => ({
+        chainId,
+        hash: transactionHash,
+        from: creator,
+        to: migrator,
+        data: `${LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR}${"00".repeat(32)}`,
+      }),
+      getTransactionReceipt: async () => receipt,
+      readFactoryProtocolVersion: async () => CIPHERDEX_PROTOCOL_VERSION,
+      readFactoryBootstrapAdapter: async () => migrator,
+      isFactoryPool: async () => true,
+      readMigratorProtocolVersion: async () => CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION,
+      readMigratorFactory: async () => factory,
+      readPoolState: async () => ({
+        protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+        privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
+        token0,
+        token1,
+        token0Decimals: 18,
+        token1Decimals: 6,
+        feeBps: 30,
+        feeVault,
+        lpToken,
+      }),
+      getCanonicalPool: async () => pool,
+      readLockInfo: async () => ({
+        owner: creator,
+        unlockTime: 100n,
+        permanent: false,
+        released: false,
+      }),
+    };
+    const policy = {
+      expectedChainId: chainId,
+      expectedFactory: factory,
+      expectedFactoryRuntimeCodehash: keccak256(factoryCode),
+      expectedMigrator: migrator,
+      expectedMigratorRuntimeCodehash: keccak256(migratorCode),
+      expectedFeeVault: feeVault,
+      expectedFactoryProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      expectedPoolProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      expectedMigratorProtocolVersion: CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION,
+    };
+
+    const verified = await verifyLaunchpadMigrationMetadata(
+      { transactionHash, metadata },
+      policy,
+      adapter,
+    );
+    expect(verified.pool).to.equal(pool);
+    expect(verified.factory).to.equal(factory);
+    expect(Object.isFrozen(verified)).to.equal(true);
+
+    for (const overrides of [
+      { getTransaction: async () => ({ ...(await adapter.getTransaction()), from: token0 }) },
+      { getTransactionReceipt: async () => ({ ...receipt, status: 0 }) },
+      { readFactoryBootstrapAdapter: async () => token0 },
+      { isFactoryPool: async () => false },
+      { getCanonicalPool: async () => token0 },
+      { readLockInfo: async () => ({ owner: creator, unlockTime: 100n, permanent: false, released: true }) },
+    ]) {
+      let rejected = false;
+      try {
+        await verifyLaunchpadMigrationMetadata(
+          { transactionHash, metadata },
+          policy,
+          { ...adapter, ...overrides },
+        );
+      } catch {
+        rejected = true;
+      }
+      expect(rejected).to.equal(true);
+    }
+
+    const creatorHeldMetadata = {
+      ...metadata,
+      disposition: LP_DISPOSITION.CREATOR_HELD,
+      lockId: ZeroHash,
+      unlockTime: 0n,
+    } as const;
+    const creatorHeldAdapter = {
+      ...adapter,
+      getTransaction: async () => ({
+        chainId,
+        hash: transactionHash,
+        from: creator,
+        to: migrator,
+        data: `${LAUNCHPAD_MIGRATE_SELECTOR}${"00".repeat(32)}`,
+      }),
+      getTransactionReceipt: async () => ({
+        transactionHash,
+        status: 1,
+        logs: [{
+          address: migrator,
+          topics: [LAUNCHPAD_MIGRATION_TOPIC, topicAddress(creator), topicAddress(pool)],
+          data: "0x",
+        }],
+      }),
+      readLockInfo: async () => {
+        throw new Error("creator-held migration must not read lock state");
+      },
+    };
+    const creatorHeld = await verifyLaunchpadMigrationMetadata(
+      { transactionHash, metadata: creatorHeldMetadata },
+      policy,
+      creatorHeldAdapter,
+    );
+    expect(creatorHeld.disposition).to.equal(LP_DISPOSITION.CREATOR_HELD);
   });
 
   it("builds immutable caller-encrypted best quote and swap calls", function () {

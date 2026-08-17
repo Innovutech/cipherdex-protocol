@@ -382,7 +382,7 @@ describe("CipherDEX v1 fee economics", function () {
     expect(await token1.balanceOf(await vault.getAddress())).to.equal(10n);
   });
 
-  it("collects a conforming side independently and preserves a short-credit fee claim", async function () {
+  it("collects each side independently and accounts the measured taxed-token credit", async function () {
     const [lp, trader] = await ethers.getSigners();
     const { vault, factory } = await deployPublicFactory();
     const normal = await (await ethers.getContractFactory("MockERC20")).deploy(
@@ -444,12 +444,15 @@ describe("CipherDEX v1 fee economics", function () {
     expect(taxedIsToken0 ? await pool.protocolFees0() : await pool.protocolFees1())
       .to.equal(taxedAccrued);
 
+    const taxedReceived = taxedAccrued - ((taxedAccrued * 100n) / 10_000n);
     await expect(pool.collectProtocolFees(taxedIsToken0, !taxedIsToken0))
-      .to.be.revertedWithCustomError(vault, "PublicTransferAmountMismatch");
-    expect(await taxed.balanceOf(await vault.getAddress())).to.equal(0n);
+      .to.emit(pool, "ProtocolFeeCollected")
+      .withArgs(await taxed.getAddress(), await vault.getAddress(), taxedAccrued, taxedReceived);
+    expect(await taxed.balanceOf(await vault.getAddress())).to.equal(taxedReceived);
+    expect(await vault.publicFees(await taxed.getAddress())).to.equal(taxedReceived);
     expect(await pool.effectiveReserves()).to.deep.equal(reservesBefore);
     expect(taxedIsToken0 ? await pool.protocolFees0() : await pool.protocolFees1())
-      .to.equal(taxedAccrued);
+      .to.equal(0n);
     expect(taxedIsToken0 ? await pool.protocolFees1() : await pool.protocolFees0())
       .to.equal(0n);
   });

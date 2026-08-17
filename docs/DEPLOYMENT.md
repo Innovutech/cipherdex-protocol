@@ -72,9 +72,10 @@ module initialization or imported helpers from observing stale artifacts.
     commit.
 
 12. Configure `COTI_FACTORY`, `COTI_FEE_VAULT` and
-    `COTI_BEST_EXECUTION_ROUTER` from that reviewed record and run
-    `npm run testnet:best-execution-feasibility`, followed by
-    `npm run testnet:best-execution`. Both runners reject a dirty worktree,
+    `COTI_BEST_EXECUTION_ROUTER` from that reviewed record and run, in order,
+    `npm run testnet:best-execution-feasibility`,
+    `npm run testnet:best-execution`, `npm run testnet:fee-collection`, and
+    `npm run testnet:launchpad`. All four runners reject a dirty worktree,
     untracked or modified evidence, a record whose source commit is not an
     ancestor of `HEAD`, any post-source path other than the deployment record and
     verification report, and token instances absent from the reviewed record.
@@ -82,7 +83,18 @@ module initialization or imported helpers from observing stale artifacts.
     compiler/runtime provenance and current on-chain relationships before any
     funded probe deployment or disposable canonical test-pool creation. The
     production-router runner deploys and cleans a separate runtime-verified
-    stack; it never creates pools in or mutates the reviewed deployment.
+    stack; it never creates pools in or mutates the reviewed deployment. Each
+    runner writes a private-permission recovery journal before using disposable
+    resources, binds resource creation to the exact deployment manifest and
+    owner-created receipt, and produces evidence only after all resources have
+    been recovered.
+
+13. Run `npm run evidence:finalize` and `npm run evidence:verify`. The suite
+    requires exactly the feasibility, best-execution, fee-collection and
+    launchpad records from the same source commit, chain, owner and deployment
+    manifest. It rejects duplicate transaction hashes, changed runner source,
+    unreviewed senders or targets, unresolved outcomes, and runtime-provenance
+    mismatches.
 
 The deploy script prints only public contract configuration. It does not onboard
 accounts, handle AES keys, create a pool, or manufacture encrypted inputs. Use the

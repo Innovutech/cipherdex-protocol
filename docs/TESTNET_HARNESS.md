@@ -161,32 +161,35 @@ npm run testnet:launchpad
 
 It first verifies the tracked deployment, clean source/evidence state, and exact
 reviewed token instances. It then deploys and runtime-verifies a disposable fresh
-factory and migrator, sends one encrypted raw token unit to
-the predicted CREATE2 pool address before deployment, creates exact encrypted
-creator allowances and normalized price bounds, then executes canonical pool
-resolution, migrator escrow, pool allowances, exact pool pulls and bootstrap
-atomically. The valid migration must deploy at that pre-funded address, proving
-an unsolicited raw balance cannot block bootstrap or change canonical discovery.
-An impossible price interval first proves that token pulls and new canonical
-pool creation roll back. A valid migration then succeeds, and replay proves
-there is no additional movement or discovery change.
+factory and migrator, creates exact encrypted creator allowances and normalized
+price bounds, and executes canonical pool resolution, migrator escrow, pool
+allowances, exact pool pulls and bootstrap atomically. An impossible price
+interval first proves that token pulls and new canonical pool creation roll back.
+A valid migration then succeeds, replay proves there is no additional movement
+or discovery change, and a full creator-held LP exit plus allowance cleanup
+returns all disposable private balances and allowances to zero.
 
-Set `COTI_LAUNCHPAD_DISPOSITION=0` for creator-held shares, `=1` with a future
-`COTI_LAUNCHPAD_UNLOCK_TIME` for a timed lock, or `=2` for a permanent lock. Run
-the three modes against separate fresh deployments for the complete gate.
+The funded recovery/evidence gate requires `COTI_LAUNCHPAD_DISPOSITION=0` (or
+unset). Timed-lock and permanent-lock dispositions remain production features
+covered by local unit, property and integration tests, but are not used in a
+funded disposable run because they intentionally prevent immediate complete
+asset recovery. Deliberate deterministic-address pre-funding is likewise kept
+out of this runner; donation accounting is tested locally without sacrificing a
+funded private-token unit.
 
 ## Mature confidential fee collection
-
-Set `COTI_FEE_COLLECTION_POOL` to a disposable fee-enabled pool controlled by
-the primary identity, then run:
 
 ```text
 npm run testnet:fee-collection
 ```
 
-The runner brings each token-side batch to eight successful swaps. If the
+The runner verifies the reviewed deployment, then creates and runtime-verifies a
+separate disposable fee vault, LP-token factory, confidential factory and
+100-bps pool. It never mutates the reviewed deployment. The runner brings each
+token-side batch to eight successful swaps. If the
 immutable one-hour window has not elapsed, it reports only the public `readyAt`
-time and fails without claiming collection. A later run deposits both mature
+time and exits with a dedicated retry status while retaining the source-bound
+recovery journal. A later run deposits both mature
 encrypted aggregates into the fixed vault, then performs one new token0 swap and
 a full LP exit. The exit must deposit that one-swap terminal encrypted fee into
 the same vault epoch before clearing counters, proving that LP withdrawal cannot

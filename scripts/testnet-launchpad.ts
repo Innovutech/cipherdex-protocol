@@ -7,13 +7,18 @@ import {
 } from "../sdk/src/index";
 import {
   CONFIDENTIAL_POOL_TESTNET_ABI,
-  CT_UINT256,
-  IT_UINT256,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
+import {
+  FundedRecoveryJournal,
+  type RecoveryResource,
+  verifyRecoveryResourceCreation,
+} from "./funded-recovery-journal";
+import { writeFundedRunEvidence } from "./funded-run-evidence";
+import { createFundedDeploymentBinding } from "./funded-deployment-binding";
 import {
   assertReviewedPrivateTokens,
   requiredTestnetDeploymentRecordPath,
@@ -23,14 +28,8 @@ import {
   requireMinedFailure,
   requireMinedSuccess,
   safeTestnetErrorSummary,
+  UnknownBroadcastOutcomeError,
 } from "./testnet-transaction-evidence";
-
-const MIGRATOR_ABI = [
-  `function migrate((address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,${IT_UINT256} amountA,${IT_UINT256} amountB,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,uint64 deadline,bytes authorization) request) returns (address pool,${CT_UINT256} shares)`,
-  `function migrateWithDisposition((address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,${IT_UINT256} amountA,${IT_UINT256} amountB,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,uint64 deadline,bytes authorization) request,uint8 disposition,uint64 unlockTime) returns (address pool,${CT_UINT256} shares,bytes32 lockId)`,
-  "event LaunchpadMigration(address indexed creator,address indexed pool)",
-  "event LaunchpadLockDisposition(address indexed creator,address indexed pool,uint8 disposition,bytes32 lockId,uint64 unlockTime)",
-];
 
 const FEE_VAULT_DEPLOY_GAS_LIMIT = 1_000_000n;
 const PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT = 8_000_000n;
@@ -44,8 +43,24 @@ if (!/^\d+$/.test(gasLimitText) || BigInt(gasLimitText) === 0n) {
 }
 const COTI_TESTNET_TX_GAS_LIMIT = BigInt(gasLimitText);
 const EXPECTED_CHAIN_ID = 7_082_400n;
+const STACK_RESOURCE_ID = "launchpad-stack";
+const POOL_RESOURCE_ID = "launchpad-pool";
 
 let stage = "configuration";
+let recoveryJournal: FundedRecoveryJournal | undefined;
+let recoveryWallet: CotiWallet | undefined;
+let recoveryOwner: string | undefined;
+
+type Submitted = Readonly<{
+  transactionHash: string;
+  receipt: TransactionReceipt;
+}>;
+
+type FundedDeployment = Readonly<{
+  contract: any;
+  address: string;
+  transactionHash: string;
+}>;
 
 const requiredAddress = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -61,11 +76,18 @@ const requiredPrivateKey = (): string => {
   return value;
 };
 
-const requiredBigInt = (name: string): bigint => {
-  const value = process.env[name]?.trim();
-  if (!value || !/^\d+$/.test(value)) throw new Error(`missing ${name}`);
-  return BigInt(value);
+const requiredSourceCommit = (): string => {
+  const value = process.env.CIPHERDEX_SOURCE_COMMIT?.trim();
+  if (!value || !/^[0-9a-f]{40}$/i.test(value)) {
+    throw new Error("CIPHERDEX_SOURCE_COMMIT must be supplied by the authenticated runner");
+  }
+  return value.toLowerCase();
 };
+
+function journal(): FundedRecoveryJournal {
+  if (!recoveryJournal) throw new Error("funded recovery journal is not initialized");
+  return recoveryJournal;
+}
 
 const optionalBigInt = (name: string, fallback: bigint): bigint => {
   const value = process.env[name]?.trim();
@@ -107,27 +129,33 @@ const requiredUInt = (name: string, fallback?: number): number => {
 const submit = async (
   label: string,
   transaction: Promise<{ hash: string; wait(): Promise<any> }>,
-): Promise<any> => {
+): Promise<Submitted> => {
   const started = Date.now();
   const evidence = await requireMinedSuccess(
     label,
     () => transaction,
     (hash) => hardhatEthers.provider.getTransactionReceipt(hash),
+    (hash) => journal().recordBroadcast(label, hash),
+  );
+  journal().recordTransaction(
+    evidence.transactionHash,
+    "mined-success",
+    evidence.receipt.blockNumber,
   );
   const receipt = evidence.receipt;
   console.log(
     `${label}: tx=${evidence.transactionHash} gas=${receipt.gasUsed.toString()} ` +
       `latencyMs=${Date.now() - started}`,
   );
-  return receipt;
+  return Object.freeze({ transactionHash: evidence.transactionHash, receipt });
 };
 
 const deployFunded = async (
   label: string,
   operation: () => Promise<any>,
-): Promise<any> => {
+): Promise<FundedDeployment> => {
   let contract: any;
-  await submit(
+  const submitted = await submit(
     label,
     (async () => {
       contract = await operation();
@@ -139,7 +167,11 @@ const deployFunded = async (
   if (!contract) {
     throw new Error(`${label} mined without a contract handle; do not retry automatically`);
   }
-  return contract;
+  return Object.freeze({
+    contract,
+    address: ethers.getAddress(await contract.getAddress()),
+    transactionHash: submitted.transactionHash,
+  });
 };
 
 const expectMinedFailure = async (
@@ -154,6 +186,12 @@ const expectMinedFailure = async (
     label,
     operation,
     (hash) => hardhatEthers.provider.getTransactionReceipt(hash),
+    (hash) => journal().recordBroadcast(label, hash),
+  );
+  journal().recordTransaction(
+    evidence.transactionHash,
+    "mined-failure",
+    evidence.receipt.blockNumber,
   );
   console.log(`${label}: rejected onchain tx=${evidence.transactionHash}`);
 };
@@ -184,6 +222,228 @@ const encryptedInputsHash = (...inputs: Parameters<typeof inputCommitment>[0][])
       inputs.map(inputCommitment),
     ),
   );
+
+function metadataAddress(resource: RecoveryResource, key: string): string {
+  const value = resource.metadata[key];
+  if (typeof value !== "string" || !ethers.isAddress(value)) {
+    throw new Error(`launchpad recovery metadata ${key} is invalid`);
+  }
+  return ethers.getAddress(value);
+}
+
+async function readPrivateAllowance(
+  token: Contract,
+  owner: string,
+  spender: string,
+  wallet: CotiWallet,
+): Promise<bigint> {
+  const allowance = await token.allowance.staticCall(owner, spender);
+  return decryptPrivateValue256(wallet, allowance.ownerCiphertext);
+}
+
+async function clearPrivateAllowance(
+  token: Contract,
+  tokenAddress: string,
+  spender: string,
+  wallet: CotiWallet,
+  label: string,
+): Promise<void> {
+  if (await readPrivateAllowance(token, await wallet.getAddress(), spender, wallet) === 0n) return;
+  const selector = token.interface.getFunction("approve")?.selector;
+  if (!selector) throw new Error("launchpad recovery approval selector unavailable");
+  await submit(
+    label,
+    token.approve(
+      spender,
+      await wallet.encryptValue256(0n, tokenAddress, selector),
+      { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },
+    ),
+  );
+}
+
+async function recoverLaunchpadResources(): Promise<void> {
+  if (!recoveryJournal || !recoveryWallet || !recoveryOwner) return;
+  const stack = recoveryJournal.activeResources.find((resource) =>
+    resource.id === STACK_RESOURCE_ID
+  );
+  let poolResource = recoveryJournal.activeResources.find((resource) =>
+    resource.id === POOL_RESOURCE_ID
+  );
+
+  if (!poolResource && stack) {
+    const successfulMigrations = recoveryJournal.transactions.filter((transaction) =>
+      transaction.label === "atomic launchpad migration" &&
+      transaction.status === "mined-success"
+    );
+    if (successfulMigrations.length > 1) {
+      throw new Error("launchpad recovery found multiple successful migrations");
+    }
+    if (successfulMigrations.length === 1) {
+      await verifyRecoveryResourceCreation(recoveryJournal, stack, hardhatEthers.provider);
+      const factoryAddress = metadataAddress(stack, "factoryAddress");
+      const migratorAddress = metadataAddress(stack, "migratorAddress");
+      const token0Address = metadataAddress(stack, "token0Address");
+      const token1Address = metadataAddress(stack, "token1Address");
+      const decimals0 = Number(stack.metadata.decimals0);
+      const decimals1 = Number(stack.metadata.decimals1);
+      const feeBps = Number(stack.metadata.feeBps);
+      if (
+        !Number.isInteger(decimals0) ||
+        !Number.isInteger(decimals1) ||
+        decimals0 < 0 ||
+        decimals1 < 0 ||
+        decimals0 > 18 ||
+        decimals1 > 18 ||
+        !Number.isInteger(feeBps) ||
+        feeBps <= 0
+      ) throw new Error("launchpad recovery metadata is invalid");
+      const factory = await hardhatEthers.getContractAt(
+        "ConfidentialCPMMFactory",
+        factoryAddress,
+        recoveryWallet,
+      );
+      const key = await factory.poolKey(
+        token0Address,
+        token1Address,
+        decimals0,
+        decimals1,
+        feeBps,
+      );
+      const poolAddress = ethers.getAddress(await factory.getPool(key));
+      if (poolAddress === ethers.ZeroAddress || !(await factory.isPool(poolAddress))) {
+        throw new Error("successful launchpad migration has no canonical pool to recover");
+      }
+      recoveryJournal.recordResource({
+        id: POOL_RESOURCE_ID,
+        kind: "launchpad-pool",
+        address: poolAddress,
+        creationTransactionHash: successfulMigrations[0].hash,
+        metadata: {
+          factoryAddress,
+          migratorAddress,
+          token0Address,
+          token1Address,
+          decimals0,
+          decimals1,
+          feeBps,
+        },
+      });
+      poolResource = recoveryJournal.activeResources.find((resource) =>
+        resource.id === POOL_RESOURCE_ID
+      );
+      if (!poolResource) {
+        throw new Error("launchpad recovery could not persist the reconstructed pool");
+      }
+    }
+  }
+
+  if (poolResource) {
+    await verifyRecoveryResourceCreation(recoveryJournal, poolResource, hardhatEthers.provider);
+    if (poolResource.kind !== "launchpad-pool") {
+      throw new Error("unsupported launchpad pool recovery resource");
+    }
+    const factoryAddress = metadataAddress(poolResource, "factoryAddress");
+    const migratorAddress = metadataAddress(poolResource, "migratorAddress");
+    const token0Address = metadataAddress(poolResource, "token0Address");
+    const token1Address = metadataAddress(poolResource, "token1Address");
+    const decimals0 = Number(poolResource.metadata.decimals0);
+    const decimals1 = Number(poolResource.metadata.decimals1);
+    const feeBps = Number(poolResource.metadata.feeBps);
+    if (
+      !Number.isInteger(decimals0) ||
+      !Number.isInteger(decimals1) ||
+      decimals0 < 0 ||
+      decimals1 < 0 ||
+      decimals0 > 18 ||
+      decimals1 > 18 ||
+      !Number.isInteger(feeBps) ||
+      feeBps <= 0
+    ) throw new Error("launchpad pool recovery metadata is invalid");
+    await Promise.all([
+      verifyDeployedRuntimeArtifact("ConfidentialCPMMFactory", factoryAddress),
+      verifyDeployedRuntimeArtifact("ConfidentialLaunchpadMigrator", migratorAddress),
+      verifyDeployedRuntimeArtifact("ConfidentialCPMM", poolResource.address),
+    ]);
+    const factory = await hardhatEthers.getContractAt(
+      "ConfidentialCPMMFactory",
+      factoryAddress,
+      recoveryWallet,
+    );
+    const pool = new Contract(poolResource.address, CONFIDENTIAL_POOL_TESTNET_ABI, recoveryWallet);
+    const key = await factory.poolKey(
+      token0Address,
+      token1Address,
+      decimals0,
+      decimals1,
+      feeBps,
+    );
+    if (
+      ethers.getAddress(await factory.getPool(key)) !== ethers.getAddress(poolResource.address) ||
+      !(await factory.isPool(poolResource.address)) ||
+      ethers.getAddress(await pool.token0()) !== token0Address ||
+      ethers.getAddress(await pool.token1()) !== token1Address ||
+      Number(await pool.feeBps()) !== feeBps ||
+      ethers.getAddress(await pool.bootstrapper()) !== factoryAddress
+    ) throw new Error("launchpad pool recovery canonical provenance changed");
+    const shares = await decryptPrivateValue256(
+      recoveryWallet,
+      await pool.myShares.staticCall(),
+    );
+    if (shares > 0n) {
+      const selector = pool.interface.getFunction("removeLiquidity")?.selector;
+      if (!selector) throw new Error("launchpad recovery remove-liquidity selector unavailable");
+      await submit(
+        "full disposable launchpad-pool exit",
+        pool.removeLiquidity(
+          await recoveryWallet.encryptValue256(shares, poolResource.address, selector),
+          await recoveryWallet.encryptValue256(1n, poolResource.address, selector),
+          await recoveryWallet.encryptValue256(1n, poolResource.address, selector),
+          BigInt(Math.floor(Date.now() / 1000) + 600),
+          { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },
+        ),
+      );
+    }
+    const token0 = new Contract(token0Address, PRIVATE_ERC20_TESTNET_ABI, recoveryWallet);
+    const token1 = new Contract(token1Address, PRIVATE_ERC20_TESTNET_ABI, recoveryWallet);
+    if (
+      await readPrivateBalance(token0, poolResource.address, recoveryWallet) !== 0n ||
+      await readPrivateBalance(token1, poolResource.address, recoveryWallet) !== 0n ||
+      Boolean(await pool.initialized())
+    ) throw new Error("disposable launchpad pool recovery left private-token residue");
+    recoveryJournal.markRecovered(POOL_RESOURCE_ID);
+  }
+
+  if (stack) {
+    await verifyRecoveryResourceCreation(recoveryJournal, stack, hardhatEthers.provider);
+    if (stack.kind !== "launchpad-stack") {
+      throw new Error("unsupported launchpad stack recovery resource");
+    }
+    const migratorAddress = metadataAddress(stack, "migratorAddress");
+    const token0Address = metadataAddress(stack, "token0Address");
+    const token1Address = metadataAddress(stack, "token1Address");
+    const token0 = new Contract(token0Address, PRIVATE_ERC20_TESTNET_ABI, recoveryWallet);
+    const token1 = new Contract(token1Address, PRIVATE_ERC20_TESTNET_ABI, recoveryWallet);
+    await clearPrivateAllowance(
+      token0,
+      token0Address,
+      migratorAddress,
+      recoveryWallet,
+      "launchpad token0 allowance recovery",
+    );
+    await clearPrivateAllowance(
+      token1,
+      token1Address,
+      migratorAddress,
+      recoveryWallet,
+      "launchpad token1 allowance recovery",
+    );
+    if (
+      await readPrivateAllowance(token0, recoveryOwner, migratorAddress, recoveryWallet) !== 0n ||
+      await readPrivateAllowance(token1, recoveryOwner, migratorAddress, recoveryWallet) !== 0n
+    ) throw new Error("launchpad allowance recovery left private allowance");
+    recoveryJournal.markRecovered(STACK_RESOURCE_ID);
+  }
+}
 
 async function main(): Promise<void> {
   const privateKey = requiredPrivateKey();
@@ -268,49 +528,77 @@ async function main(): Promise<void> {
   const minPrice = optionalBigInt("COTI_LAUNCHPAD_MIN_PRICE_X18", minDerivedPrice);
   const maxPrice = optionalBigInt("COTI_LAUNCHPAD_MAX_PRICE_X18", maxDerivedPrice);
   const disposition = optionalDisposition();
-  const unlockTime = disposition === 1
-    ? requiredBigInt("COTI_LAUNCHPAD_UNLOCK_TIME")
-    : 0n;
-  if (disposition === 1 && unlockTime <= BigInt(Math.floor(Date.now() / 1000))) {
-    throw new Error("COTI_LAUNCHPAD_UNLOCK_TIME must be in the future");
+  if (disposition !== undefined && disposition !== 0) {
+    throw new Error(
+      "funded launchpad validation requires creator-held LP so every disposable asset can be recovered",
+    );
   }
-  if (disposition !== undefined && disposition !== 1 && process.env.COTI_LAUNCHPAD_UNLOCK_TIME) {
-    throw new Error("COTI_LAUNCHPAD_UNLOCK_TIME is only valid for a timed lock");
+  const unlockTime = 0n;
+  if (process.env.COTI_LAUNCHPAD_UNLOCK_TIME) {
+    throw new Error("funded creator-held launchpad validation does not accept an unlock time");
   }
 
   const [deployer] = await hardhatEthers.getSigners();
   const wallet = new CotiWallet(privateKey, hardhatEthers.provider, { aesKey });
+  wallet.setAesKey(aesKey);
   const walletAddress = await wallet.getAddress();
   if ((await deployer.getAddress()).toLowerCase() !== walletAddress.toLowerCase()) {
     throw new Error("configured deployer and COTI wallet do not match");
   }
+  const sourceCommit = requiredSourceCommit();
+  if (sourceCommit !== deploymentRecord.sourceCommit) {
+    throw new Error("funded source commit does not match the reviewed deployment");
+  }
+  recoveryJournal = FundedRecoveryJournal.open({
+    runner: "launchpad",
+    sourceCommit,
+    chainId: Number(network.chainId),
+    owner: walletAddress,
+    deployment: await createFundedDeploymentBinding(deploymentRecord),
+  });
+  recoveryWallet = wallet;
+  recoveryOwner = walletAddress;
+  const unresolved = await recoveryJournal.reconcileTransactions(hardhatEthers.provider);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `funded launchpad recovery has ${unresolved.length} transaction(s) with unknown outcome; do not retry`,
+    );
+  }
+  if (recoveryJournal.activeResources.length > 0) {
+    await recoverLaunchpadResources();
+    recoveryJournal.markRun("failed");
+    throw new Error("interrupted launchpad proof was recovered; rerun from a fresh journal");
+  }
 
   const feeVaultFactory = await hardhatEthers.getContractFactory("CipherDEXFeeVault", deployer);
-  const feeVault = await deployFunded(
+  const feeVaultDeployment = await deployFunded(
     "fee vault deployment",
     () => feeVaultFactory.deploy(walletAddress, { gasLimit: FEE_VAULT_DEPLOY_GAS_LIMIT }),
   );
-  await verifyDeployedRuntimeArtifact("CipherDEXFeeVault", await feeVault.getAddress());
+  const feeVault = feeVaultDeployment.contract;
+  await verifyDeployedRuntimeArtifact("CipherDEXFeeVault", feeVaultDeployment.address);
   const privateLpFactory = await hardhatEthers.getContractFactory("PrivateLPTokenFactory", deployer);
-  const lpTokenFactory = await deployFunded(
+  const lpTokenFactoryDeployment = await deployFunded(
     "private LP token factory deployment",
     () => privateLpFactory.deploy({ gasLimit: PRIVATE_LP_FACTORY_DEPLOY_GAS_LIMIT }),
   );
+  const lpTokenFactory = lpTokenFactoryDeployment.contract;
   await verifyDeployedRuntimeArtifact(
     "PrivateLPTokenFactory",
-    await lpTokenFactory.getAddress(),
+    lpTokenFactoryDeployment.address,
   );
   const factoryFactory = await hardhatEthers.getContractFactory("ConfidentialCPMMFactory", deployer);
-  const factory = await deployFunded(
+  const factoryDeployment = await deployFunded(
     "confidential factory deployment",
     async () => factoryFactory.deploy(
-      await feeVault.getAddress(),
-      await lpTokenFactory.getAddress(),
+      feeVaultDeployment.address,
+      lpTokenFactoryDeployment.address,
       privateTokenCodehashes,
       { gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT },
     ),
   );
-  const factoryAddress = await factory.getAddress();
+  const factory = factoryDeployment.contract;
+  const factoryAddress = factoryDeployment.address;
   await verifyDeployedRuntimeArtifact("ConfidentialCPMMFactory", factoryAddress);
   await submit(
     "confidential fee-vault factory binding",
@@ -329,7 +617,8 @@ async function main(): Promise<void> {
       gasLimit: LAUNCHPAD_MIGRATOR_DEPLOY_GAS_LIMIT,
     }),
   );
-  const migratorAddress = await migratorDeployment.getAddress();
+  const migrator = migratorDeployment.contract;
+  const migratorAddress = migratorDeployment.address;
   await verifyDeployedRuntimeArtifact("ConfidentialLaunchpadMigrator", migratorAddress);
   await submit(
     "launchpad adapter binding",
@@ -344,15 +633,35 @@ async function main(): Promise<void> {
   console.log(`disposable launchpad factory deployed: ${factoryAddress}`);
   console.log(`disposable launchpad migrator deployed: ${migratorAddress}`);
 
+  recoveryJournal.recordResource({
+    id: STACK_RESOURCE_ID,
+    kind: "launchpad-stack",
+    address: factoryAddress,
+    creationTransactionHash: factoryDeployment.transactionHash,
+    metadata: {
+      factoryAddress,
+      migratorAddress,
+      token0Address: canonicalToken0,
+      token1Address: canonicalToken1,
+      decimals0: canonicalDecimals0,
+      decimals1: canonicalDecimals1,
+      feeBps,
+      feeVaultAddress: feeVaultDeployment.address,
+      lpFactoryAddress: lpTokenFactoryDeployment.address,
+      feeVaultTx: feeVaultDeployment.transactionHash,
+      lpFactoryTx: lpTokenFactoryDeployment.transactionHash,
+      factoryTx: factoryDeployment.transactionHash,
+      migratorTx: migratorDeployment.transactionHash,
+    },
+  });
+
   const token0 = new Contract(canonicalToken0, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const token1 = new Contract(canonicalToken1, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const approveSelector0 = token0.interface.getFunction("approve")?.selector;
   const approveSelector1 = token1.interface.getFunction("approve")?.selector;
-  const transferSelector0 = token0.interface.getFunction("transfer")?.selector;
-  const migrator = new Contract(migratorAddress, MIGRATOR_ABI, wallet);
   const migrateSelector = migrator.interface
     .getFunction(disposition === undefined ? "migrate" : "migrateWithDisposition")?.selector;
-  if (!approveSelector0 || !approveSelector1 || !transferSelector0 || !migrateSelector) {
+  if (!approveSelector0 || !approveSelector1 || !migrateSelector) {
     throw new Error("required selector unavailable");
   }
 
@@ -383,30 +692,6 @@ async function main(): Promise<void> {
   );
   if (await hardhatEthers.provider.getCode(predictedPoolAddress) !== "0x") {
     throw new Error("predicted canonical pool address is already deployed");
-  }
-
-  const prefundAmount = 1n;
-  const beforePrefund = await readPrivateBalance(token0, walletAddress, wallet);
-  if (beforePrefund < amount0 + prefundAmount) {
-    throw new Error("token0 balance cannot cover launchpad amount and pre-fund proof");
-  }
-  const prefundInput = await wallet.encryptValue256(
-    prefundAmount,
-    canonicalToken0,
-    transferSelector0,
-  );
-  stage = "deterministic pool pre-fund proof";
-  await submit(stage, token0.transfer(predictedPoolAddress, prefundInput, {
-    gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
-  }));
-  if ((await readPrivateBalance(token0, walletAddress, wallet)) !== beforePrefund - prefundAmount) {
-    throw new Error("deterministic pool pre-fund did not move the exact private amount");
-  }
-  if (
-    await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress ||
-    await hardhatEthers.provider.getCode(predictedPoolAddress) !== "0x"
-  ) {
-    throw new Error("pre-fund unexpectedly changed canonical pool discovery or deployment");
   }
 
   const zeroApproval0 = await wallet.encryptValue256(0n, canonicalToken0, approveSelector0);
@@ -564,7 +849,7 @@ async function main(): Promise<void> {
   }
 
   stage = "atomic launchpad migration";
-  const receipt = await submit(
+  const migration = await submit(
     stage,
     disposition === undefined
       ? migrator.migrate(
@@ -587,7 +872,7 @@ async function main(): Promise<void> {
     unlockTime: bigint;
   } | null = null;
   let dispositionEventCount = 0;
-  for (const log of receipt?.logs ?? []) {
+  for (const log of migration.receipt.logs) {
     if (String(log.address).toLowerCase() !== migratorAddress.toLowerCase()) continue;
     try {
       const parsed = migrator.interface.parseLog({ topics: log.topics, data: log.data });
@@ -616,21 +901,30 @@ async function main(): Promise<void> {
   if (poolAddress.toLowerCase() !== predictedPoolAddress.toLowerCase()) {
     throw new Error("launchpad did not deploy the predicted canonical pool");
   }
+  recoveryJournal.recordResource({
+    id: POOL_RESOURCE_ID,
+    kind: "launchpad-pool",
+    address: ethers.getAddress(poolAddress),
+    creationTransactionHash: migration.transactionHash,
+    metadata: {
+      factoryAddress,
+      migratorAddress,
+      token0Address: canonicalToken0,
+      token1Address: canonicalToken1,
+      decimals0: canonicalDecimals0,
+      decimals1: canonicalDecimals1,
+      feeBps,
+    },
+  });
   if (disposition === undefined) {
     if (lockDisposition) throw new Error("unexpected launchpad lock disposition event");
   } else {
     if (!lockDisposition) throw new Error("launchpad lock disposition event missing");
-    if (lockDisposition.disposition !== disposition) throw new Error("launchpad lock disposition mismatch");
-    if (disposition === 0 && lockDisposition.lockId !== ethers.ZeroHash) {
+    if (lockDisposition.disposition !== 0) throw new Error("launchpad lock disposition mismatch");
+    if (lockDisposition.lockId !== ethers.ZeroHash) {
       throw new Error("unexpected creator-held launchpad lock id");
     }
-    if (disposition !== 0 && lockDisposition.lockId === ethers.ZeroHash) {
-      throw new Error("launchpad lock id missing");
-    }
-    if (disposition === 1 && lockDisposition.unlockTime !== unlockTime) {
-      throw new Error("launchpad unlock time mismatch");
-    }
-    if (disposition !== 1 && lockDisposition.unlockTime !== 0n) {
+    if (lockDisposition.unlockTime !== 0n) {
       throw new Error("unexpected launchpad unlock time");
     }
   }
@@ -640,7 +934,7 @@ async function main(): Promise<void> {
   if (Number(await pool.feeBps()) !== feeBps) {
     throw new Error("launchpad pool total fee does not match the signed tier");
   }
-  if ((await pool.feeVault()).toLowerCase() !== (await feeVault.getAddress()).toLowerCase()) {
+  if ((await pool.feeVault()).toLowerCase() !== feeVaultDeployment.address.toLowerCase()) {
     throw new Error("launchpad pool did not inherit the factory fee vault");
   }
   if (
@@ -651,25 +945,7 @@ async function main(): Promise<void> {
   }
   const shares = await pool.myShares.staticCall();
   const decryptedShares = await decryptPrivateValue256(wallet, shares);
-  if (disposition === undefined || disposition === 0) {
-    if (decryptedShares <= 0n) throw new Error("creator-held launchpad shares were not minted");
-  } else {
-    if (decryptedShares !== 0n) throw new Error("locked launchpad shares were exposed to creator");
-    if (!lockDisposition || lockDisposition.lockId === ethers.ZeroHash) {
-      throw new Error("locked launchpad disposition state missing");
-    }
-    const lockInfo = await pool.lockInfo(lockDisposition.lockId);
-    if ((lockInfo.owner as string).toLowerCase() !== walletAddress.toLowerCase()) {
-      throw new Error("launchpad lock owner mismatch");
-    }
-    if (Boolean(lockInfo.permanent) !== (disposition === 2)) {
-      throw new Error("launchpad lock permanence mismatch");
-    }
-    if (Boolean(lockInfo.released)) throw new Error("launchpad lock was released unexpectedly");
-    if (disposition === 1 && BigInt(lockInfo.unlockTime) !== unlockTime) {
-      throw new Error("launchpad pool lock time mismatch");
-    }
-  }
+  if (decryptedShares <= 0n) throw new Error("creator-held launchpad shares were not minted");
 
   const beforeReplay0 = await readPrivateBalance(token0, walletAddress, wallet);
   const beforeReplay1 = await readPrivateBalance(token1, walletAddress, wallet);
@@ -689,14 +965,103 @@ async function main(): Promise<void> {
   if ((await factory.getPool(canonicalPoolKey)).toLowerCase() !== poolAddress.toLowerCase()) {
     throw new Error("launchpad replay changed canonical pool discovery");
   }
+  const lpTokenAddress = ethers.getAddress(await pool.lpToken());
+  stage = "launchpad private-asset and allowance recovery";
+  await recoverLaunchpadResources();
+  if (
+    (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeRejected0 ||
+    (await readPrivateBalance(token1, walletAddress, wallet)) !== beforeRejected1 ||
+    (await readPrivateAllowance(token0, walletAddress, migratorAddress, wallet)) !== 0n ||
+    (await readPrivateAllowance(token1, walletAddress, migratorAddress, wallet)) !== 0n
+  ) throw new Error("completed launchpad proof did not restore private balances and allowances");
+
+  recoveryJournal.markRun("passed");
+  const finalEvidence = await writeFundedRunEvidence({
+    journal: recoveryJournal,
+    provider: hardhatEthers.provider,
+    participants: [walletAddress],
+    configuration: {
+      chainId: Number(network.chainId),
+      confidentialPoolVersion: 2,
+      launchpadMigratorVersion: 3,
+      privacyMode: 1,
+      tokenA,
+      tokenB,
+      feeBps,
+      disposition: disposition ?? 0,
+      feeBeneficiary: walletAddress,
+    },
+    artifacts: [
+      {
+        label: "disposable launchpad fee vault",
+        contractName: "CipherDEXFeeVault",
+        address: feeVaultDeployment.address,
+      },
+      {
+        label: "disposable launchpad LP factory",
+        contractName: "PrivateLPTokenFactory",
+        address: lpTokenFactoryDeployment.address,
+      },
+      {
+        label: "disposable launchpad confidential factory",
+        contractName: "ConfidentialCPMMFactory",
+        address: factoryAddress,
+      },
+      {
+        label: "disposable launchpad migrator",
+        contractName: "ConfidentialLaunchpadMigrator",
+        address: migratorAddress,
+      },
+      {
+        label: "disposable launchpad pool",
+        contractName: "ConfidentialCPMM",
+        address: poolAddress,
+      },
+      {
+        label: "disposable launchpad private LP token",
+        contractName: "PrivateLPToken",
+        address: lpTokenAddress,
+      },
+    ],
+    assertions: [
+      "empty canonical pool slot verified",
+      "price-bound failure rolled back atomically",
+      "launchpad migration used canonical pool",
+      "LP disposition and lock state verified",
+      "replay protection rolled back atomically",
+      "private balances and allowances recovered",
+      "disposable launchpad pool recovered with zero residue",
+    ],
+  });
   console.log(`launchpad pool: ${poolAddress}`);
+  console.log(`fundedEvidence=${finalEvidence.path}`);
   console.log("COTI launchpad migration completed without printing private values.");
 }
 
-void main().catch((error: unknown) => {
+void main().catch(async (error: unknown) => {
+  if (error instanceof UnknownBroadcastOutcomeError) {
+    recoveryJournal?.markRun("failed");
+    console.error(
+      `COTI launchpad migration paused with an uncertain broadcast during ${stage}; ` +
+        `${safeTestnetErrorSummary(error)}; cleanup is deferred until receipt reconciliation.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  let reportedError = error;
+  try {
+    await recoverLaunchpadResources();
+    recoveryJournal?.markRun("failed");
+  } catch (recoveryError) {
+    recoveryJournal?.markRun("recovery-failed");
+    reportedError = new AggregateError(
+      [error, recoveryError],
+      "launchpad validation and funded recovery both failed",
+    );
+  }
   console.error(
     `COTI launchpad migration failed during ${stage}; ` +
-      `${safeTestnetErrorSummary(error)}; private payloads were suppressed.`,
+      `${safeTestnetErrorSummary(reportedError)}; private payloads were suppressed.`,
   );
   process.exitCode = 1;
 });

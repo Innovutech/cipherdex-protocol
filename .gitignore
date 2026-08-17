@@ -8,3 +8,4 @@ typechain-types/
 !.env.example
 .dependency-audit/
 deployments/*.json
+.testnet-state/

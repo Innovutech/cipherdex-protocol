@@ -36,10 +36,9 @@ persisted.
   a true full LP exit and with both public batch counters cleared;
 - second-LP exit, timed lock/unlock, permanent lock and true full exit;
 - atomic launchpad rollback for an impossible encrypted price interval;
-- deterministic-address private-token pre-funding does not block canonical
-  launchpad deployment or change the canonical pool address;
 - successful launchpad migration through the same canonical factory fee policy;
-- launchpad replay rejection without additional token movement.
+- launchpad replay rejection without additional token movement;
+- recoverable creator-held launchpad full exit and zero disposable pool residue.
 
 The staged probe proves ciphertext-only user reads work under `eth_call`, while
 raw stored-ciphertext `OnBoard`, authenticated validation, arithmetic,
@@ -102,9 +101,10 @@ The testnet behavior is demonstrated, not audited. Before any mainnet decision:
    including router gas/liveness under future candidate tiers.
 3. Operationally validate the fixed-epoch confidential vault sweep after its
    real two-epoch maturity boundary without shortening or bypassing the delay.
-4. Exercise launchpad creator-held, timed-lock and permanent-lock dispositions
-   in separate fresh testnet deployments; the core pool lock paths themselves
-   have been exercised.
+4. Re-exercise timed-lock and permanent-lock launchpad dispositions on any final
+   release candidate when operational custody of intentionally locked test
+   liquidity is explicitly approved; their contract paths are covered locally,
+   while the normal funded evidence runner remains creator-held and recoverable.
 5. Use a reviewed multisig/governance beneficiary instead of a testnet EOA.
 6. Revalidate compiler, RPC and MPC behavior against the target mainnet release.
 

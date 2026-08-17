@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { BaseContract, ContractFactory, ContractTransactionResponse } from "ethers";
-import hre, { ethers } from "hardhat";
+import { ethers } from "hardhat";
 import {
   DeploymentRecordWriter,
   type DeploymentJournalTransaction,
@@ -191,8 +191,6 @@ function requiredDeploymentRecordPath(): string {
 }
 
 async function main(): Promise<void> {
-  await hre.run("clean");
-  await hre.run("compile");
   const deploymentRecordPath = requiredDeploymentRecordPath();
   const deployedSourceCommit = await requireCleanSourceCommit();
   const createdAt = new Date().toISOString();

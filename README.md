@@ -92,13 +92,20 @@ npm run deploy:testnet
 # Review and commit only the generated deployment record and verification report.
 npm run testnet:best-execution-feasibility
 npm run testnet:best-execution
+npm run testnet:fee-collection
+npm run testnet:launchpad
+npm run evidence:finalize
+npm run evidence:verify
 ```
 
 `deploy:testnet` requires a clean, committed source tree and a commit-named
-`COTI_DEPLOYMENT_RECORD`. Both funded best-execution gates run only after the
-reviewed record is committed in a separate evidence commit; they reject dirty,
-untracked or executable post-deployment changes and token instances absent from
-the reviewed record. See
+`COTI_DEPLOYMENT_RECORD`. All four funded gates run only after the reviewed
+record is committed in a separate evidence commit; they reject dirty, untracked
+or executable post-deployment changes and token instances absent from the
+reviewed record. Every disposable asset-holding resource is journaled before use,
+recovered to zero residue, and bound to its owner-created on-chain transaction.
+The finalizer accepts exactly the four source/deployment-bound run records and
+the verifier rechecks their transactions, blocks and runtime artifacts. See
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the exact sequence.
 
 `testnet:preflight` requires explicit local `.env` values for two funded,

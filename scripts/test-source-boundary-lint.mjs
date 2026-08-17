@@ -61,11 +61,16 @@ assert.doesNotThrow(() => assertEarlyHardhatRunSequence(
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const freshRunnerSource = readFileSync("scripts/run-fresh-hardhat.mjs", "utf8");
 const freshTargets = new Map([
+  ["testnet:harness", "scripts/testnet-harness.ts --network cotiTestnet"],
   ["testnet:preflight", "scripts/testnet-preflight.ts --network cotiTestnet"],
+  ["testnet:scenario", "scripts/testnet-scenario.ts --network cotiTestnet"],
   ["testnet:quote-call-probe", "scripts/testnet-quote-call-probe.ts --network cotiTestnet"],
   ["testnet:best-execution-feasibility", "scripts/testnet-best-execution-feasibility.ts --network cotiTestnet"],
   ["testnet:best-execution", "scripts/testnet-best-execution.ts --network cotiTestnet"],
+  ["testnet:launchpad", "scripts/testnet-launchpad.ts --network cotiTestnet"],
   ["testnet:fee-collection", "scripts/testnet-fee-collection.ts --network cotiTestnet"],
+  ["evidence:finalize", "scripts/finalize-funded-evidence.ts --network cotiTestnet"],
+  ["evidence:verify", "scripts/verify-funded-suite-evidence.ts --network cotiTestnet"],
   ["gas:measure", "scripts/measure-deployment-gas.ts"],
   ["deploy:testnet", "scripts/deploy-testnet.ts --network cotiTestnet"],
 ]);
@@ -76,12 +81,43 @@ for (const [script, target] of freshTargets) {
   );
 }
 assert.doesNotMatch(freshRunnerSource, /from\s+["']\.\.?\//);
-const cleanPosition = freshRunnerSource.lastIndexOf('runHardhat(["clean"])');
-const compilePosition = freshRunnerSource.lastIndexOf('runHardhat(["compile"])');
-const runPosition = freshRunnerSource.lastIndexOf(
-  'runHardhat(["run", "--no-compile", target, ...targetArguments])',
+assert.doesNotMatch(readFileSync("hardhat.config.ts", "utf8"), /dotenv(?:\/config)?/);
+assert.doesNotMatch(freshRunnerSource, /env:\s*process\.env/);
+const sourceCheckPosition = freshRunnerSource.indexOf(
+  'runGit(["status", "--porcelain=v1", "--untracked-files=all"])',
 );
-assert.ok(cleanPosition >= 0 && cleanPosition < compilePosition && compilePosition < runPosition);
+const hardhatResolvePosition = freshRunnerSource.indexOf(
+  'require.resolve("hardhat/internal/cli/cli.js")',
+);
+const cleanPosition = freshRunnerSource.lastIndexOf('runHardhat(["clean"], systemEnvironment)');
+const compilePosition = freshRunnerSource.lastIndexOf('runHardhat(["compile"], systemEnvironment)');
+const envLoadPosition = freshRunnerSource.indexOf("process.loadEnvFile(");
+const runPosition = freshRunnerSource.lastIndexOf(
+  'runHardhat(["run", "--no-compile", target, ...targetArguments], runtimeEnvironment)',
+);
+assert.ok(
+  sourceCheckPosition >= 0 &&
+  sourceCheckPosition < hardhatResolvePosition &&
+  hardhatResolvePosition < cleanPosition &&
+  cleanPosition < compilePosition &&
+  compilePosition < envLoadPosition &&
+  envLoadPosition < runPosition,
+);
+for (const required of [
+  "Fresh Hardhat runner requires a clean committed worktree",
+  "SYSTEM_ENVIRONMENT",
+  "NETWORK_ENVIRONMENT",
+  "FUNDED_NETWORK_ENVIRONMENT",
+  "targetPolicy.funded",
+  "targetPolicy.environment",
+  "runtimeEnvironment.CIPHERDEX_SOURCE_COMMIT = sourceCommit",
+]) {
+  assert.ok(freshRunnerSource.includes(required));
+}
+assert.doesNotMatch(
+  freshRunnerSource,
+  /["']CIPHERDEX_SOURCE_COMMIT["']\s*,/,
+);
 for (const unsafe of [
   `async function dead() { await hre.run("compile"); }
    async function main() { await ethers.provider.getNetwork(); }`,

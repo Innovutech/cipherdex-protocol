@@ -8,7 +8,6 @@ import {
   keccak256,
   randomBytes,
 } from "ethers";
-import hre from "hardhat";
 import {
   CONFIDENTIAL_FACTORY_TESTNET_ABI,
   CONFIDENTIAL_POOL_TESTNET_ABI,
@@ -98,8 +97,6 @@ function encryptedQuoteFromReceipt(
 }
 
 async function main(): Promise<void> {
-  await hre.run("clean");
-  await hre.run("compile");
   stage = "configuration";
   const poolAddress = requiredAddress("COTI_POOL");
   const factoryAddress = requiredAddress("COTI_FACTORY");

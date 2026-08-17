@@ -121,6 +121,51 @@ describe("funded testnet transaction evidence", function () {
     expect((sendError as UnknownBroadcastOutcomeError).transactionHash).to.equal(hash);
   });
 
+  it("records the broadcast before waiting for a receipt", async function () {
+    const order: string[] = [];
+    const result = await requireMinedSuccess(
+      "funded action",
+      async () => ({
+        hash,
+        wait: async () => {
+          order.push("wait");
+          return successfulReceipt;
+        },
+      }),
+      async () => null,
+      (transactionHash) => {
+        expect(transactionHash).to.equal(hash);
+        order.push("journal");
+      },
+    );
+    expect(result.transactionHash).to.equal(hash);
+    expect(order).to.deep.equal(["journal", "wait"]);
+  });
+
+  it("fails closed with the known hash when broadcast journaling fails", async function () {
+    let waited = false;
+    let captured: unknown;
+    try {
+      await requireMinedSuccess(
+        "funded action",
+        async () => ({
+          hash,
+          wait: async () => {
+            waited = true;
+            return successfulReceipt;
+          },
+        }),
+        async () => null,
+        () => { throw new Error("disk unavailable"); },
+      );
+    } catch (error) {
+      captured = error;
+    }
+    expect(waited).to.equal(false);
+    expect(captured).to.be.instanceOf(UnknownBroadcastOutcomeError);
+    expect((captured as UnknownBroadcastOutcomeError).transactionHash).to.equal(hash);
+  });
+
   it("distinguishes definite failure from uncertain successful delivery", async function () {
     let definiteFailure: unknown;
     try {

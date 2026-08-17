@@ -1,15 +1,28 @@
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import { Contract } from "ethers";
-import hre, { ethers } from "hardhat";
+import { Contract, TransactionReceipt } from "ethers";
+import { ethers } from "hardhat";
+
 import {
   CONFIDENTIAL_FACTORY_TESTNET_ABI,
   CONFIDENTIAL_POOL_TESTNET_ABI,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
-import { requireFeeCollectionMature } from "./testnet-fee-collection-readiness";
+import {
+  FundedRecoveryJournal,
+  RecoveryResource,
+  verifyRecoveryResourceCreation,
+} from "./funded-recovery-journal";
+import { writeFundedRunEvidence } from "./funded-run-evidence";
+import { createFundedDeploymentBinding } from "./funded-deployment-binding";
+import {
+  FeeCollectionPendingError,
+  requireFeeCollectionMature,
+} from "./testnet-fee-collection-readiness";
+import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
+  assertReviewedPrivateTokens,
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
@@ -18,12 +31,18 @@ import {
   minimumWithSlippage,
 } from "./testnet-slippage";
 import {
+  MinedTransactionStatusError,
   requireMinedSuccess,
   safeTestnetErrorSummary,
+  transactionHashFromError,
+  UnknownBroadcastOutcomeError,
 } from "./testnet-transaction-evidence";
 
+const EXPECTED_CHAIN_ID = 7_082_400n;
 const TARGET_SWAP_COUNT = 8n;
 const COLLECTION_DELAY_SECONDS = 3_600n;
+const FEE_BPS = 100n;
+const RESOURCE_ID = "fee-collection-pool";
 const gasLimitText = process.env.COTI_TESTNET_GAS_LIMIT?.trim() ?? "30000000";
 if (!/^\d+$/.test(gasLimitText) || BigInt(gasLimitText) === 0n) {
   throw new Error("COTI_TESTNET_GAS_LIMIT must be a positive integer");
@@ -31,7 +50,39 @@ if (!/^\d+$/.test(gasLimitText) || BigInt(gasLimitText) === 0n) {
 const TX_GAS_LIMIT = BigInt(gasLimitText);
 const TX_OVERRIDES = { gasLimit: TX_GAS_LIMIT } as const;
 
+type Submitted = Readonly<{
+  transactionHash: string;
+  receipt: TransactionReceipt;
+}>;
+
+type EffectiveReserveModel = {
+  reserve0: bigint;
+  reserve1: bigint;
+  protocolFee0: bigint;
+  protocolFee1: bigint;
+};
+
+type DisposableStack = Readonly<{
+  resource: RecoveryResource;
+  poolAddress: string;
+  factoryAddress: string;
+  feeVaultAddress: string;
+  lpFactoryAddress: string;
+  token0Address: string;
+  token1Address: string;
+  decimals0: number;
+  decimals1: number;
+  pool: Contract;
+  factory: Contract;
+  feeVault: any;
+  token0: Contract;
+  token1: Contract;
+}>;
+
 let stage = "configuration";
+let recoveryJournal: FundedRecoveryJournal | undefined;
+let recoveryWallet: CotiWallet | undefined;
+let recoveryOwner: string | undefined;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -42,7 +93,20 @@ function required(name: string): string {
 function requiredAddress(name: string): string {
   const value = required(name);
   if (!ethers.isAddress(value)) throw new Error(`invalid ${name}`);
-  return value;
+  return ethers.getAddress(value);
+}
+
+function requiredSourceCommit(): string {
+  const value = process.env.CIPHERDEX_SOURCE_COMMIT?.trim();
+  if (!value || !/^[0-9a-f]{40}$/i.test(value)) {
+    throw new Error("CIPHERDEX_SOURCE_COMMIT must be supplied by the authenticated runner");
+  }
+  return value.toLowerCase();
+}
+
+function journal(): FundedRecoveryJournal {
+  if (!recoveryJournal) throw new Error("funded recovery journal is not initialized");
+  return recoveryJournal;
 }
 
 function defaultRawAmount(decimals: number, decimalPlaces: number): bigint {
@@ -58,41 +122,160 @@ function optionalRawAmount(name: string, fallback: bigint): bigint {
   return parsed;
 }
 
-function requiredPositiveRawAmount(name: string): bigint {
-  const value = required(name);
-  if (!/^\d+$/.test(value)) throw new Error(`invalid ${name}`);
-  const parsed = BigInt(value);
-  if (parsed === 0n) throw new Error(`${name} must be positive`);
-  return parsed;
+function metadataAddress(resource: RecoveryResource, name: string): string {
+  const value = resource.metadata[name];
+  if (typeof value !== "string" || !ethers.isAddress(value)) {
+    throw new Error(`disposable fee stack has invalid ${name}`);
+  }
+  return ethers.getAddress(value);
 }
 
-function minimumFromQuote(quote: bigint): bigint {
-  if (quote <= 0n) throw new Error("paid encrypted quote returned zero");
-  return minimumWithSlippage(quote);
+function metadataHash(resource: RecoveryResource, name: string): string {
+  const value = resource.metadata[name];
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error(`disposable fee stack has invalid ${name}`);
+  }
+  return value;
+}
+
+function modeledAmountOut(
+  amountIn: bigint,
+  reserveIn: bigint,
+  reserveOut: bigint,
+  feeBps: bigint,
+): bigint {
+  const netAmountIn = amountIn * (10_000n - feeBps) / 10_000n;
+  if (netAmountIn <= 0n) throw new Error("modeled fee test swap has no net input");
+  const denominator = reserveIn + netAmountIn;
+  const product = reserveIn * reserveOut;
+  const retained = product / denominator + (product % denominator === 0n ? 0n : 1n);
+  const output = retained >= reserveOut ? 0n : reserveOut - retained;
+  if (output <= 0n) throw new Error("modeled fee test swap has no output");
+  return output;
+}
+
+function applyModeledSwap(
+  model: EffectiveReserveModel,
+  amountIn: bigint,
+  zeroForOne: boolean,
+  expectedOutput?: bigint,
+): bigint {
+  const reserveIn = zeroForOne ? model.reserve0 : model.reserve1;
+  const reserveOut = zeroForOne ? model.reserve1 : model.reserve0;
+  const amountOut = modeledAmountOut(amountIn, reserveIn, reserveOut, FEE_BPS);
+  if (expectedOutput !== undefined && amountOut !== expectedOutput) {
+    throw new Error("paid quote diverged from the v1 fee and rounding model");
+  }
+  const netAmountIn = amountIn * (10_000n - FEE_BPS) / 10_000n;
+  const protocolFee = (amountIn - netAmountIn) / 6n;
+  if (protocolFee <= 0n) throw new Error("fee test amount produces no protocol fee");
+  if (zeroForOne) {
+    model.reserve0 += amountIn - protocolFee;
+    model.reserve1 -= amountOut;
+    model.protocolFee0 += protocolFee;
+  } else {
+    model.reserve1 += amountIn - protocolFee;
+    model.reserve0 -= amountOut;
+    model.protocolFee1 += protocolFee;
+  }
+  return amountOut;
+}
+
+function reconstructModel(
+  liquidity0: bigint,
+  liquidity1: bigint,
+  swap0: bigint,
+  swap1: bigint,
+  count0: bigint,
+  count1: bigint,
+): EffectiveReserveModel {
+  if (count0 > TARGET_SWAP_COUNT || count1 > TARGET_SWAP_COUNT) {
+    throw new Error("fee batch counters exceed the reproducible v1 test sequence");
+  }
+  const model: EffectiveReserveModel = {
+    reserve0: liquidity0,
+    reserve1: liquidity1,
+    protocolFee0: 0n,
+    protocolFee1: 0n,
+  };
+  const rounds = Number(count0 > count1 ? count0 : count1);
+  for (let index = 0; index < rounds; index += 1) {
+    if (BigInt(index) < count0) applyModeledSwap(model, swap0, true);
+    if (BigInt(index) < count1) applyModeledSwap(model, swap1, false);
+  }
+  return model;
 }
 
 async function submit(
   label: string,
-  transaction: Promise<{ hash: string; wait(): Promise<any> }>,
-): Promise<any> {
+  operation: Promise<{ hash: string; wait(): Promise<TransactionReceipt | null> }>,
+): Promise<Submitted> {
   stage = label;
   const started = Date.now();
-  const evidence = await requireMinedSuccess(
-    label,
-    () => transaction,
-    (hash) => ethers.provider.getTransactionReceipt(hash),
+  try {
+    const evidence = await requireMinedSuccess(
+      label,
+      () => operation,
+      (hash) => ethers.provider.getTransactionReceipt(hash),
+      (hash) => journal().recordBroadcast(label, hash),
+    );
+    journal().recordTransaction(
+      evidence.transactionHash,
+      "mined-success",
+      evidence.receipt.blockNumber,
+    );
+    console.log(
+      `${label}: tx=${evidence.transactionHash} gas=${evidence.receipt.gasUsed.toString()} ` +
+        `latencyMs=${Date.now() - started}`,
+    );
+    return evidence;
+  } catch (error) {
+    const hash = transactionHashFromError(error);
+    if (hash) {
+      journal().recordBroadcast(label, hash);
+      journal().recordTransaction(
+        hash,
+        error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
+      );
+    }
+    throw error;
+  }
+}
+
+async function deployContract(
+  contractName: "CipherDEXFeeVault" | "PrivateLPTokenFactory" | "ConfidentialCPMMFactory",
+  wallet: CotiWallet,
+  args: readonly unknown[],
+): Promise<Readonly<{ contract: any; address: string; transactionHash: string }>> {
+  const factory = await ethers.getContractFactory(contractName, wallet);
+  let contract: any;
+  const evidence = await submit(
+    `${contractName} disposable deployment`,
+    (async () => {
+      contract = await factory.deploy(...args, TX_OVERRIDES);
+      const transaction = contract.deploymentTransaction();
+      if (!transaction) throw new Error(`${contractName} deployment transaction unavailable`);
+      return transaction;
+    })(),
   );
-  const receipt = evidence.receipt;
-  console.log(
-    `${label}: tx=${evidence.transactionHash} gas=${receipt.gasUsed.toString()} ` +
-      `latencyMs=${Date.now() - started}`,
-  );
-  return receipt;
+  if (!contract) throw new Error(`${contractName} deployment handle unavailable`);
+  const address = ethers.getAddress(await contract.getAddress());
+  await verifyDeployedRuntimeArtifact(contractName, address);
+  return { contract, address, transactionHash: evidence.transactionHash };
 }
 
 async function privateBalance(token: Contract, owner: string, wallet: CotiWallet): Promise<bigint> {
-  const encrypted = await token.balanceOf.staticCall(owner);
-  return decryptPrivateValue256(wallet, encrypted);
+  return decryptPrivateValue256(wallet, await token.balanceOf.staticCall(owner));
+}
+
+async function privateAllowance(
+  token: Contract,
+  owner: string,
+  spender: string,
+  wallet: CotiWallet,
+): Promise<bigint> {
+  const value = await token.allowance.staticCall(owner, spender);
+  return decryptPrivateValue256(wallet, value.ownerCiphertext);
 }
 
 async function setPrivateAllowance(
@@ -105,66 +288,325 @@ async function setPrivateAllowance(
 ): Promise<void> {
   const selector = token.interface.getFunction("approve")?.selector;
   if (!selector) throw new Error("private approval selector unavailable");
-  const zero = await wallet.encryptValue256(0n, tokenAddress, selector);
-  const value = await wallet.encryptValue256(amount, tokenAddress, selector);
-  await submit(`${label} approval reset`, token.approve(poolAddress, zero, TX_OVERRIDES));
-  await submit(`${label} approval`, token.approve(poolAddress, value, TX_OVERRIDES));
+  await submit(
+    `${label} approval reset`,
+    token.approve(
+      poolAddress,
+      await wallet.encryptValue256(0n, tokenAddress, selector),
+      TX_OVERRIDES,
+    ),
+  );
+  if (amount > 0n) {
+    await submit(
+      `${label} approval`,
+      token.approve(
+        poolAddress,
+        await wallet.encryptValue256(amount, tokenAddress, selector),
+        TX_OVERRIDES,
+      ),
+    );
+  }
 }
 
 async function requestPrivateQuote(
-  pool: Contract,
-  poolAddress: string,
+  stack: DisposableStack,
   wallet: CotiWallet,
   amountIn: bigint,
   zeroForOne: boolean,
   label: string,
 ): Promise<bigint> {
-  const selector = pool.interface.getFunction("requestQuoteExactInput")?.selector;
+  const selector = stack.pool.interface.getFunction("requestQuoteExactInput")?.selector;
   if (!selector) throw new Error("transactional quote selector unavailable");
-  const encryptedInput = await wallet.encryptValue256(amountIn, poolAddress, selector);
   const requestId = ethers.keccak256(ethers.randomBytes(32));
   const caller = await wallet.getAddress();
-  const receipt = await submit(
+  const evidence = await submit(
     label,
-    pool.requestQuoteExactInput(
-      encryptedInput,
+    stack.pool.requestQuoteExactInput(
+      await wallet.encryptValue256(amountIn, stack.poolAddress, selector),
       zeroForOne,
       requestId,
       TX_OVERRIDES,
     ),
   );
-  const matches: Array<{
-    ciphertextHigh: bigint | number | string;
-    ciphertextLow: bigint | number | string;
-  }> = [];
-  for (const log of receipt?.logs ?? []) {
-    if (log.address.toLowerCase() !== poolAddress.toLowerCase()) continue;
+  const matches: unknown[] = [];
+  for (const log of evidence.receipt.logs) {
+    if (log.address.toLowerCase() !== stack.poolAddress.toLowerCase()) continue;
     try {
-      const parsed = pool.interface.parseLog({ topics: log.topics, data: log.data });
+      const parsed = stack.pool.interface.parseLog(log);
       if (
         parsed?.name === "ConfidentialQuoteResult" &&
         String(parsed.args.caller).toLowerCase() === caller.toLowerCase() &&
         String(parsed.args.requestId).toLowerCase() === requestId.toLowerCase() &&
         parsed.args.zeroForOne === zeroForOne
-      ) {
-        matches.push(parsed.args.result);
-      }
+      ) matches.push(parsed.args.result);
     } catch {
-      // Ignore token and unrelated contract logs.
+      // Ignore unrelated logs emitted in the quote transaction.
     }
   }
-  if (matches.length !== 1) {
-    throw new Error("encrypted quote result event is missing or ambiguous");
+  if (matches.length !== 1) throw new Error("encrypted quote result is missing or ambiguous");
+  const quote = await decryptPrivateValue256(wallet, matches[0] as never);
+  if (quote <= 0n) throw new Error("paid encrypted quote returned zero");
+  return quote;
+}
+
+async function verifyTransaction(
+  hash: string,
+  expectedFrom: string,
+  expectedTo?: string,
+  expectedContract?: string,
+): Promise<void> {
+  const [transaction, receipt] = await Promise.all([
+    ethers.provider.getTransaction(hash),
+    ethers.provider.getTransactionReceipt(hash),
+  ]);
+  if (
+    !transaction ||
+    !receipt ||
+    receipt.status !== 1 ||
+    transaction.from.toLowerCase() !== expectedFrom.toLowerCase() ||
+    (expectedTo !== undefined && transaction.to?.toLowerCase() !== expectedTo.toLowerCase()) ||
+    (expectedContract !== undefined &&
+      receipt.contractAddress?.toLowerCase() !== expectedContract.toLowerCase())
+  ) throw new Error("disposable fee stack transaction provenance failed");
+}
+
+async function validateStackResource(
+  resource: RecoveryResource,
+  wallet: CotiWallet,
+  owner: string,
+  reviewedAddresses: ReadonlySet<string>,
+): Promise<DisposableStack> {
+  await verifyRecoveryResourceCreation(journal(), resource, ethers.provider);
+  if (resource.kind !== "fee-collection-pool") {
+    throw new Error(`unsupported fee recovery resource ${resource.kind}`);
   }
-  return decryptPrivateValue256(wallet, matches[0]);
+  const poolAddress = ethers.getAddress(resource.address);
+  const factoryAddress = metadataAddress(resource, "factoryAddress");
+  const feeVaultAddress = metadataAddress(resource, "feeVaultAddress");
+  const lpFactoryAddress = metadataAddress(resource, "lpFactoryAddress");
+  const token0Address = metadataAddress(resource, "token0Address");
+  const token1Address = metadataAddress(resource, "token1Address");
+  const decimals0 = Number(resource.metadata.decimals0);
+  const decimals1 = Number(resource.metadata.decimals1);
+  if (
+    !Number.isInteger(decimals0) ||
+    !Number.isInteger(decimals1) ||
+    decimals0 < 0 ||
+    decimals1 < 0 ||
+    decimals0 > 18 ||
+    decimals1 > 18
+  ) throw new Error("disposable fee stack token decimals are invalid");
+  for (const address of [poolAddress, factoryAddress, feeVaultAddress, lpFactoryAddress]) {
+    if (reviewedAddresses.has(address.toLowerCase())) {
+      throw new Error("fee runner refuses to mutate a reviewed deployment contract");
+    }
+  }
+
+  await Promise.all([
+    verifyDeployedRuntimeArtifact("ConfidentialCPMM", poolAddress),
+    verifyDeployedRuntimeArtifact("ConfidentialCPMMFactory", factoryAddress),
+    verifyDeployedRuntimeArtifact("CipherDEXFeeVault", feeVaultAddress),
+    verifyDeployedRuntimeArtifact("PrivateLPTokenFactory", lpFactoryAddress),
+    verifyTransaction(metadataHash(resource, "feeVaultTx"), owner, undefined, feeVaultAddress),
+    verifyTransaction(metadataHash(resource, "lpFactoryTx"), owner, undefined, lpFactoryAddress),
+    verifyTransaction(metadataHash(resource, "factoryTx"), owner, undefined, factoryAddress),
+    verifyTransaction(metadataHash(resource, "bindTx"), owner, feeVaultAddress),
+    verifyTransaction(metadataHash(resource, "poolTx"), owner, factoryAddress),
+  ]);
+
+  const factory = new Contract(factoryAddress, CONFIDENTIAL_FACTORY_TESTNET_ABI, wallet);
+  const pool = new Contract(poolAddress, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
+  const feeVault = await ethers.getContractAt("CipherDEXFeeVault", feeVaultAddress, wallet);
+  const token0 = new Contract(token0Address, PRIVATE_ERC20_TESTNET_ABI, wallet);
+  const token1 = new Contract(token1Address, PRIVATE_ERC20_TESTNET_ABI, wallet);
+  const key = await factory.poolKey(token0Address, token1Address, decimals0, decimals1, FEE_BPS);
+  const [canonicalPool, token0Code, token1Code] = await Promise.all([
+    factory.getPool(key),
+    ethers.provider.getCode(token0Address),
+    ethers.provider.getCode(token1Address),
+  ]);
+  if (
+    !(await factory.isPool(poolAddress)) ||
+    String(canonicalPool).toLowerCase() !== poolAddress.toLowerCase() ||
+    String(await factory.feeVault()).toLowerCase() !== feeVaultAddress.toLowerCase() ||
+    String(await feeVault.confidentialFactory()).toLowerCase() !== factoryAddress.toLowerCase() ||
+    String(await pool.bootstrapper()).toLowerCase() !== factoryAddress.toLowerCase() ||
+    String(await pool.feeVault()).toLowerCase() !== feeVaultAddress.toLowerCase() ||
+    String(await pool.token0()).toLowerCase() !== token0Address.toLowerCase() ||
+    String(await pool.token1()).toLowerCase() !== token1Address.toLowerCase() ||
+    BigInt(await pool.feeBps()) !== FEE_BPS ||
+    BigInt(await pool.PROTOCOL_VERSION()) !== 2n ||
+    BigInt(await pool.PRIVACY_MODE()) !== 1n ||
+    !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token0Code))) ||
+    !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token1Code)))
+  ) throw new Error("disposable fee stack canonical binding validation failed");
+
+  return {
+    resource,
+    poolAddress,
+    factoryAddress,
+    feeVaultAddress,
+    lpFactoryAddress,
+    token0Address,
+    token1Address,
+    decimals0,
+    decimals1,
+    pool,
+    factory,
+    feeVault,
+    token0,
+    token1,
+  };
+}
+
+async function createDisposableStack(
+  wallet: CotiWallet,
+  owner: string,
+  tokenAAddress: string,
+  tokenBAddress: string,
+  beneficiary: string,
+  reviewedAddresses: ReadonlySet<string>,
+): Promise<DisposableStack> {
+  const tokenA = new Contract(tokenAAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
+  const tokenB = new Contract(tokenBAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
+  const [decimalsA, decimalsB, codehashes] = await Promise.all([
+    tokenA.decimals(),
+    tokenB.decimals(),
+    resolvePrivateTokenCodehashes(ethers.provider, [tokenAAddress, tokenBAddress]),
+  ]);
+  const feeVault = await deployContract("CipherDEXFeeVault", wallet, [beneficiary]);
+  const lpFactory = await deployContract("PrivateLPTokenFactory", wallet, []);
+  const factory = await deployContract(
+    "ConfidentialCPMMFactory",
+    wallet,
+    [feeVault.address, lpFactory.address, codehashes],
+  );
+  const bind = await submit(
+    "bind disposable fee vault",
+    feeVault.contract.setConfidentialFactory(factory.address, TX_OVERRIDES),
+  );
+  const poolCreation = await submit(
+    "create disposable 100 bps fee pool",
+    factory.contract.createPool(
+      tokenAAddress,
+      tokenBAddress,
+      Number(decimalsA),
+      Number(decimalsB),
+      FEE_BPS,
+      TX_OVERRIDES,
+    ),
+  );
+  const key = await factory.contract.poolKey(
+    tokenAAddress,
+    tokenBAddress,
+    Number(decimalsA),
+    Number(decimalsB),
+    FEE_BPS,
+  );
+  const poolAddress = ethers.getAddress(await factory.contract.getPool(key));
+  const pool = new Contract(poolAddress, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
+  const [token0Address, token1Address, decimals0, decimals1] = await Promise.all([
+    pool.token0(),
+    pool.token1(),
+    pool.token0Decimals(),
+    pool.token1Decimals(),
+  ]);
+  journal().recordResource({
+    id: RESOURCE_ID,
+    kind: "fee-collection-pool",
+    address: poolAddress,
+    creationTransactionHash: poolCreation.transactionHash,
+    metadata: {
+      phase: "created",
+      factoryAddress: factory.address,
+      feeVaultAddress: feeVault.address,
+      lpFactoryAddress: lpFactory.address,
+      token0Address: ethers.getAddress(String(token0Address)),
+      token1Address: ethers.getAddress(String(token1Address)),
+      decimals0: Number(decimals0),
+      decimals1: Number(decimals1),
+      feeVaultTx: feeVault.transactionHash,
+      lpFactoryTx: lpFactory.transactionHash,
+      factoryTx: factory.transactionHash,
+      bindTx: bind.transactionHash,
+      poolTx: poolCreation.transactionHash,
+    },
+  });
+  const resource = journal().activeResources.find((candidate) => candidate.id === RESOURCE_ID);
+  if (!resource) throw new Error("disposable fee stack recovery record is missing");
+  return validateStackResource(resource, wallet, owner, reviewedAddresses);
+}
+
+async function removeAllLiquidity(
+  stack: DisposableStack,
+  wallet: CotiWallet,
+  minimum0: bigint,
+  minimum1: bigint,
+): Promise<TransactionReceipt | undefined> {
+  if (minimum0 <= 0n || minimum1 <= 0n) {
+    throw new Error("fee-pool cleanup minima must be positive");
+  }
+  const shares = await decryptPrivateValue256(wallet, await stack.pool.myShares.staticCall());
+  if (shares === 0n) {
+    const [balance0, balance1] = await Promise.all([
+      privateBalance(stack.token0, stack.poolAddress, wallet),
+      privateBalance(stack.token1, stack.poolAddress, wallet),
+    ]);
+    if (balance0 !== 0n || balance1 !== 0n) {
+      throw new Error("disposable fee pool holds assets without recoverable LP shares");
+    }
+    return undefined;
+  }
+  const selector = stack.pool.interface.getFunction("removeLiquidity")?.selector;
+  if (!selector) throw new Error("remove-liquidity selector unavailable");
+  const evidence = await submit(
+    "full disposable fee-pool exit",
+    stack.pool.removeLiquidity(
+      await wallet.encryptValue256(shares, stack.poolAddress, selector),
+      await wallet.encryptValue256(minimum0, stack.poolAddress, selector),
+      await wallet.encryptValue256(minimum1, stack.poolAddress, selector),
+      BigInt(Math.floor(Date.now() / 1000) + 600),
+      TX_OVERRIDES,
+    ),
+  );
+  return evidence.receipt;
+}
+
+async function recoverDisposablePool(): Promise<void> {
+  if (!recoveryJournal || !recoveryWallet || !recoveryOwner) return;
+  const resource = recoveryJournal.activeResources.find((candidate) =>
+    candidate.id === RESOURCE_ID
+  );
+  if (!resource) return;
+  const reviewedAddresses = new Set<string>();
+  for (const name of ["COTI_FACTORY", "COTI_FEE_VAULT"]) {
+    const value = process.env[name]?.trim();
+    if (value && ethers.isAddress(value)) reviewedAddresses.add(value.toLowerCase());
+  }
+  const stack = await validateStackResource(
+    resource,
+    recoveryWallet,
+    recoveryOwner,
+    reviewedAddresses,
+  );
+  await removeAllLiquidity(stack, recoveryWallet, 1n, 1n);
+  const [balance0, balance1, allowance0, allowance1] = await Promise.all([
+    privateBalance(stack.token0, stack.poolAddress, recoveryWallet),
+    privateBalance(stack.token1, stack.poolAddress, recoveryWallet),
+    privateAllowance(stack.token0, recoveryOwner, stack.poolAddress, recoveryWallet),
+    privateAllowance(stack.token1, recoveryOwner, stack.poolAddress, recoveryWallet),
+  ]);
+  if (balance0 !== 0n || balance1 !== 0n || allowance0 !== 0n || allowance1 !== 0n) {
+    throw new Error("disposable fee-pool recovery left private-token residue or allowance");
+  }
+  recoveryJournal.markRecovered(RESOURCE_ID);
 }
 
 async function main(): Promise<void> {
-  await hre.run("clean");
-  await hre.run("compile");
-  const poolAddress = requiredAddress("COTI_FEE_COLLECTION_POOL");
-  const factoryAddress = requiredAddress("COTI_FACTORY");
-  const expectedFeeVault = requiredAddress("COTI_FEE_VAULT");
+  const reviewedFactoryAddress = requiredAddress("COTI_FACTORY");
+  const reviewedFeeVaultAddress = requiredAddress("COTI_FEE_VAULT");
+  const tokenAAddress = requiredAddress("COTI_TOKEN0");
+  const tokenBAddress = requiredAddress("COTI_TOKEN1");
   const privateKey = required("COTI_TESTNET_PRIVATE_KEY");
   const aesKey = required("COTI_AES_KEY");
   if (!/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
@@ -173,8 +615,8 @@ async function main(): Promise<void> {
 
   stage = "network and reviewed deployment provenance";
   const network = await ethers.provider.getNetwork();
-  if (network.chainId !== 7_082_400n) {
-    throw new Error(`expected COTI testnet 7082400, received ${network.chainId}`);
+  if (network.chainId !== EXPECTED_CHAIN_ID) {
+    throw new Error(`expected COTI testnet ${EXPECTED_CHAIN_ID}, received ${network.chainId}`);
   }
   const deploymentRecord = await verifyConfiguredTestnetDeployment(
     requiredTestnetDeploymentRecordPath(),
@@ -183,373 +625,411 @@ async function main(): Promise<void> {
       {
         recordKey: "confidentialFactory",
         contractName: "ConfidentialCPMMFactory",
-        address: factoryAddress,
+        address: reviewedFactoryAddress,
       },
       {
         recordKey: "feeVault",
         contractName: "CipherDEXFeeVault",
-        address: expectedFeeVault,
+        address: reviewedFeeVaultAddress,
       },
     ],
   );
-  await verifyDeployedRuntimeArtifact("ConfidentialCPMM", poolAddress);
+  assertReviewedPrivateTokens(deploymentRecord, [tokenAAddress, tokenBAddress]);
+  const reviewedVault = await ethers.getContractAt("CipherDEXFeeVault", reviewedFeeVaultAddress);
+  const feeBeneficiary = ethers.getAddress(await reviewedVault.beneficiary());
+  const reviewedAddresses = new Set(
+    Object.values(deploymentRecord.contracts)
+      .map((entry) => entry.address)
+      .filter((address): address is string => typeof address === "string")
+      .map((address) => address.toLowerCase()),
+  );
 
   const wallet = new CotiWallet(privateKey, ethers.provider, { aesKey });
   wallet.setAesKey(aesKey);
-  const walletAddress = await wallet.getAddress();
-  const pool = new Contract(poolAddress, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
-  stage = "pool metadata validation";
-  const factory = new Contract(
-    factoryAddress,
-    CONFIDENTIAL_FACTORY_TESTNET_ABI,
-    ethers.provider,
-  );
-  const [factoryCode, poolCode, vaultCode] = await Promise.all([
-    ethers.provider.getCode(factoryAddress),
-    ethers.provider.getCode(poolAddress),
-    ethers.provider.getCode(expectedFeeVault),
-  ]);
-  if (factoryCode === "0x" || poolCode === "0x" || vaultCode === "0x") {
-    throw new Error("factory, pool and fee vault must be deployed contracts");
+  const owner = await wallet.getAddress();
+  const sourceCommit = requiredSourceCommit();
+  if (sourceCommit !== deploymentRecord.sourceCommit) {
+    throw new Error("funded source commit does not match the reviewed deployment");
   }
-  const token0Address = String(await pool.token0());
-  const token1Address = String(await pool.token1());
-  const reviewedTokens = deploymentRecord.contracts.confidentialFactory.reviewedPrivateTokens;
-  if (
-    !Array.isArray(reviewedTokens) ||
-    ![token0Address, token1Address].every((token) => reviewedTokens.some(
-      (candidate) => typeof candidate === "string" &&
-        candidate.toLowerCase() === token.toLowerCase(),
-    ))
-  ) {
-    throw new Error("fee-collection tokens are absent from the reviewed deployment record");
-  }
-  const [token0Code, token1Code] = await Promise.all([
-    ethers.provider.getCode(token0Address),
-    ethers.provider.getCode(token1Address),
-  ]);
-  if (
-    token0Code === "0x" ||
-    token1Code === "0x" ||
-    !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token0Code))) ||
-    !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token1Code)))
-  ) {
-    throw new Error("pool token implementation is outside the factory policy");
-  }
-  const decimals0FromPool = Number(await pool.token0Decimals());
-  const decimals1FromPool = Number(await pool.token1Decimals());
-  const feeBps = BigInt(await pool.feeBps());
-  const feeVault = String(await pool.feeVault());
-  const canonicalKey = await factory.poolKey(
-    token0Address,
-    token1Address,
-    decimals0FromPool,
-    decimals1FromPool,
-    feeBps,
-  );
-  const canonicalPool = String(await factory.getPool(canonicalKey));
-  if (
-    BigInt(await factory.PROTOCOL_VERSION()) !== 2n ||
-    BigInt(await factory.PRIVACY_MODE()) !== 1n ||
-    BigInt(await pool.PROTOCOL_VERSION()) !== 2n ||
-    BigInt(await pool.PRIVACY_MODE()) !== 1n ||
-    !(await factory.isPool(poolAddress)) ||
-    canonicalPool.toLowerCase() !== poolAddress.toLowerCase() ||
-    String(await factory.feeVault()).toLowerCase() !== expectedFeeVault.toLowerCase() ||
-    feeVault.toLowerCase() !== expectedFeeVault.toLowerCase() ||
-    String(await pool.bootstrapper()).toLowerCase() !== factoryAddress.toLowerCase()
-  ) {
-    throw new Error("fee-collection pool failed canonical provenance validation");
-  }
-  if (
-    BigInt(await pool.PROTOCOL_FEE_SHARE_NUMERATOR()) !== 1n ||
-    BigInt(await pool.PROTOCOL_FEE_SHARE_DENOMINATOR()) !== 6n
-  ) {
-    throw new Error("pool does not use the v1 protocol fee split");
+  recoveryJournal = FundedRecoveryJournal.open({
+    runner: "fee-collection",
+    sourceCommit,
+    chainId: Number(network.chainId),
+    owner,
+    deployment: await createFundedDeploymentBinding(deploymentRecord),
+  });
+  recoveryWallet = wallet;
+  recoveryOwner = owner;
+  const unresolved = await recoveryJournal.reconcileTransactions(ethers.provider);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `funded recovery has ${unresolved.length} transaction(s) with unknown outcome; do not retry`,
+    );
   }
 
-  const token0 = new Contract(token0Address, PRIVATE_ERC20_TESTNET_ABI, wallet);
-  const token1 = new Contract(token1Address, PRIVATE_ERC20_TESTNET_ABI, wallet);
-  const decimals0 = Number(await token0.decimals());
-  const decimals1 = Number(await token1.decimals());
-  if (decimals0 !== decimals0FromPool || decimals1 !== decimals1FromPool) {
-    throw new Error("pool token decimals are inconsistent");
+  let resource = recoveryJournal.activeResources.find((candidate) => candidate.id === RESOURCE_ID);
+  const stack = resource
+    ? await validateStackResource(resource, wallet, owner, reviewedAddresses)
+    : await createDisposableStack(
+      wallet,
+      owner,
+      tokenAAddress,
+      tokenBAddress,
+      feeBeneficiary,
+      reviewedAddresses,
+    );
+  const configuredTokens = new Set([
+    tokenAAddress.toLowerCase(),
+    tokenBAddress.toLowerCase(),
+  ]);
+  const recoveredTokens = new Set([
+    stack.token0Address.toLowerCase(),
+    stack.token1Address.toLowerCase(),
+  ]);
+  if (
+    configuredTokens.size !== 2 ||
+    recoveredTokens.size !== 2 ||
+    [...configuredTokens].some((address) => !recoveredTokens.has(address))
+  ) throw new Error("source-bound disposable fee stack token pair changed");
+  resource = stack.resource;
+  const phase = String(resource.metadata.phase ?? "");
+  if (phase === "collected" || phase === "terminal-swapped") {
+    throw new Error("an interrupted post-collection fee proof must recover and restart");
   }
-  // COTI's deployed PrivateERC20 implementations may expose public overloads
-  // while still using encrypted balances and encrypted transfer methods. The
-  // publicAmountsEnabled compatibility flag is therefore informational, not a
-  // privacy or provenance boundary. The immutable factory codehash policy and
-  // the encrypted balance reads below are the authoritative checks.
+
   const liquidity0 = optionalRawAmount(
     "COTI_FEE_TEST_LIQUIDITY0",
-    defaultRawAmount(decimals0, 1),
+    defaultRawAmount(stack.decimals0, 1),
   );
   const liquidity1 = optionalRawAmount(
     "COTI_FEE_TEST_LIQUIDITY1",
-    defaultRawAmount(decimals1, 1),
+    defaultRawAmount(stack.decimals1, 1),
   );
-  const swap0 = optionalRawAmount("COTI_FEE_TEST_SWAP0", defaultRawAmount(decimals0, 2));
-  const swap1 = optionalRawAmount("COTI_FEE_TEST_SWAP1", defaultRawAmount(decimals1, 2));
+  const swap0 = optionalRawAmount(
+    "COTI_FEE_TEST_SWAP0",
+    defaultRawAmount(stack.decimals0, 2),
+  );
+  const swap1 = optionalRawAmount(
+    "COTI_FEE_TEST_SWAP1",
+    defaultRawAmount(stack.decimals1, 2),
+  );
+  let count0 = BigInt(await stack.pool.protocolFeeSwapCount0());
+  let count1 = BigInt(await stack.pool.protocolFeeSwapCount1());
+  const initialized = Boolean(await stack.pool.initialized());
+  const model = initialized
+    ? reconstructModel(liquidity0, liquidity1, swap0, swap1, count0, count1)
+    : { reserve0: 0n, reserve1: 0n, protocolFee0: 0n, protocolFee1: 0n };
 
-  let count0 = BigInt(await pool.protocolFeeSwapCount0());
-  let count1 = BigInt(await pool.protocolFeeSwapCount1());
-  const needed0 = count0 >= TARGET_SWAP_COUNT ? 0n : TARGET_SWAP_COUNT - count0;
-  const needed1 = count1 >= TARGET_SWAP_COUNT ? 0n : TARGET_SWAP_COUNT - count1;
+  const needed0 = TARGET_SWAP_COUNT - count0;
+  const needed1 = TARGET_SWAP_COUNT - count1;
+  if (needed0 < 0n || needed1 < 0n) {
+    throw new Error("disposable fee pool has unexpected batch counters");
+  }
+  const allowance0 = (initialized ? 0n : liquidity0) + needed0 * swap0;
+  const allowance1 = (initialized ? 0n : liquidity1) + needed1 * swap1;
+  if (
+    await privateBalance(stack.token0, owner, wallet) < allowance0 ||
+    await privateBalance(stack.token1, owner, wallet) < allowance1
+  ) throw new Error("fee-collection test amounts exceed the available private balance");
+  await setPrivateAllowance(
+    stack.token0,
+    stack.token0Address,
+    stack.poolAddress,
+    allowance0,
+    wallet,
+    "fee token0",
+  );
+  await setPrivateAllowance(
+    stack.token1,
+    stack.token1Address,
+    stack.poolAddress,
+    allowance1,
+    wallet,
+    "fee token1",
+  );
 
-  if (needed0 > 0n || needed1 > 0n) {
-    const liquidityRequired = !(await pool.initialized());
-    const allowance0 = (liquidityRequired ? liquidity0 : 0n) + needed0 * swap0;
-    const allowance1 = (liquidityRequired ? liquidity1 : 0n) + needed1 * swap1;
-    stage = "private balance sufficiency validation";
-    if (
-      (allowance0 > 0n && await privateBalance(token0, walletAddress, wallet) < allowance0) ||
-      (allowance1 > 0n && await privateBalance(token1, walletAddress, wallet) < allowance1)
-    ) {
-      throw new Error("fee-collection test amounts exceed the available private balance");
-    }
-
-    if (allowance0 > 0n) {
-      await setPrivateAllowance(token0, token0Address, poolAddress, allowance0, wallet, "token0");
-    }
-    if (allowance1 > 0n) {
-      await setPrivateAllowance(token1, token1Address, poolAddress, allowance1, wallet, "token1");
-    }
-
-    if (liquidityRequired) {
-      const selector = pool.interface.getFunction("addLiquidity")?.selector;
-      if (!selector) throw new Error("add-liquidity selector unavailable");
-      const bounds = confidentialLiquidityBounds(
-        liquidity0,
-        decimals0,
-        liquidity1,
-        decimals1,
+  if (!initialized) {
+    const selector = stack.pool.interface.getFunction("addLiquidity")?.selector;
+    if (!selector) throw new Error("add-liquidity selector unavailable");
+    const bounds = confidentialLiquidityBounds(
+      liquidity0,
+      stack.decimals0,
+      liquidity1,
+      stack.decimals1,
+      false,
+    );
+    await submit(
+      "initialize disposable fee pool",
+      stack.pool.addLiquidity(
+        await wallet.encryptValue256(liquidity0, stack.poolAddress, selector),
+        await wallet.encryptValue256(liquidity1, stack.poolAddress, selector),
+        await wallet.encryptValue256(bounds.minShares, stack.poolAddress, selector),
+        await wallet.encryptValue256(bounds.minPriceX18, stack.poolAddress, selector),
+        await wallet.encryptValue256(bounds.maxPriceX18, stack.poolAddress, selector),
         false,
+        BigInt(Math.floor(Date.now() / 1000) + 600),
+        TX_OVERRIDES,
+      ),
+    );
+    model.reserve0 = liquidity0;
+    model.reserve1 = liquidity1;
+    recoveryJournal.updateResourceMetadata(RESOURCE_ID, { phase: "initialized" });
+  }
+
+  const swapSelector = stack.pool.interface.getFunction("swapExactInput")?.selector;
+  if (!swapSelector) throw new Error("swap selector unavailable");
+  const rounds = Number(needed0 > needed1 ? needed0 : needed1);
+  for (let index = 0; index < rounds; index += 1) {
+    if (BigInt(index) < needed0) {
+      const quote = await requestPrivateQuote(
+        stack,
+        wallet,
+        swap0,
+        true,
+        `fee token0 quote ${index + 1}/${needed0}`,
       );
-      const input0 = await wallet.encryptValue256(liquidity0, poolAddress, selector);
-      const input1 = await wallet.encryptValue256(liquidity1, poolAddress, selector);
-      const minimum = await wallet.encryptValue256(bounds.minShares, poolAddress, selector);
-      const minimumPrice = await wallet.encryptValue256(
-        bounds.minPriceX18,
-        poolAddress,
-        selector,
-      );
-      const maximumPrice = await wallet.encryptValue256(
-        bounds.maxPriceX18,
-        poolAddress,
-        selector,
-      );
+      applyModeledSwap(model, swap0, true, quote);
       await submit(
-        "fee test liquidity initialization",
-        pool.addLiquidity(
-          input0,
-          input1,
-          minimum,
-          minimumPrice,
-          maximumPrice,
+        `fee token0 swap ${index + 1}/${needed0}`,
+        stack.pool.swapExactInput(
+          await wallet.encryptValue256(swap0, stack.poolAddress, swapSelector),
+          await wallet.encryptValue256(minimumWithSlippage(quote), stack.poolAddress, swapSelector),
+          true,
+          BigInt(Math.floor(Date.now() / 1000) + 600),
+          TX_OVERRIDES,
+        ),
+      );
+    }
+    if (BigInt(index) < needed1) {
+      const quote = await requestPrivateQuote(
+        stack,
+        wallet,
+        swap1,
+        false,
+        `fee token1 quote ${index + 1}/${needed1}`,
+      );
+      applyModeledSwap(model, swap1, false, quote);
+      await submit(
+        `fee token1 swap ${index + 1}/${needed1}`,
+        stack.pool.swapExactInput(
+          await wallet.encryptValue256(swap1, stack.poolAddress, swapSelector),
+          await wallet.encryptValue256(minimumWithSlippage(quote), stack.poolAddress, swapSelector),
           false,
           BigInt(Math.floor(Date.now() / 1000) + 600),
           TX_OVERRIDES,
         ),
       );
     }
-
-    const swapSelector = pool.interface.getFunction("swapExactInput")?.selector;
-    if (!swapSelector) throw new Error("swap selector unavailable");
-    const rounds = Number(needed0 > needed1 ? needed0 : needed1);
-    for (let index = 0; index < rounds; index += 1) {
-      if (BigInt(index) < needed0) {
-        const quote = await requestPrivateQuote(
-          pool,
-          poolAddress,
-          wallet,
-          swap0,
-          true,
-          `fee test token0 quote ${index + 1}/${needed0}`,
-        );
-        const input = await wallet.encryptValue256(swap0, poolAddress, swapSelector);
-        const minimum = await wallet.encryptValue256(
-          minimumFromQuote(quote),
-          poolAddress,
-          swapSelector,
-        );
-        await submit(
-          `fee test token0 swap ${index + 1}/${needed0}`,
-          pool.swapExactInput(
-            input,
-            minimum,
-            true,
-            BigInt(Math.floor(Date.now() / 1000) + 600),
-            TX_OVERRIDES,
-          ),
-        );
-      }
-      if (BigInt(index) < needed1) {
-        const quote = await requestPrivateQuote(
-          pool,
-          poolAddress,
-          wallet,
-          swap1,
-          false,
-          `fee test token1 quote ${index + 1}/${needed1}`,
-        );
-        const input = await wallet.encryptValue256(swap1, poolAddress, swapSelector);
-        const minimum = await wallet.encryptValue256(
-          minimumFromQuote(quote),
-          poolAddress,
-          swapSelector,
-        );
-        await submit(
-          `fee test token1 swap ${index + 1}/${needed1}`,
-          pool.swapExactInput(
-            input,
-            minimum,
-            false,
-            BigInt(Math.floor(Date.now() / 1000) + 600),
-            TX_OVERRIDES,
-          ),
-        );
-      }
-    }
   }
 
-  count0 = BigInt(await pool.protocolFeeSwapCount0());
-  count1 = BigInt(await pool.protocolFeeSwapCount1());
-  if (count0 < TARGET_SWAP_COUNT || count1 < TARGET_SWAP_COUNT) {
-    throw new Error("confidential fee batch did not reach the required swap count");
+  count0 = BigInt(await stack.pool.protocolFeeSwapCount0());
+  count1 = BigInt(await stack.pool.protocolFeeSwapCount1());
+  if (count0 !== TARGET_SWAP_COUNT || count1 !== TARGET_SWAP_COUNT) {
+    throw new Error("confidential fee batch did not reach the exact required swap count");
   }
-
-  const window0 = BigInt(await pool.protocolFeeWindowStart0());
-  const window1 = BigInt(await pool.protocolFeeWindowStart1());
+  recoveryJournal.updateResourceMetadata(RESOURCE_ID, { phase: "awaiting-maturity" });
+  const window0 = BigInt(await stack.pool.protocolFeeWindowStart0());
+  const window1 = BigInt(await stack.pool.protocolFeeWindowStart1());
   const readyAt = (window0 > window1 ? window0 : window1) + COLLECTION_DELAY_SECONDS;
   const latestBlock = await ethers.provider.getBlock("latest");
   if (!latestBlock) throw new Error("latest block unavailable");
-  console.log(`confidential fee batch readyAt=${readyAt} count0=${count0} count1=${count1}`);
   stage = "fee collection maturity gate";
   requireFeeCollectionMature(BigInt(latestBlock.timestamp), readyAt);
 
-  const vault = await ethers.getContractAt("CipherDEXFeeVault", feeVault, wallet);
-  const collectionReceipt = await submit(
+  const collection = await submit(
     "mature confidential protocol fee collection",
-    pool.collectProtocolFees(true, true, TX_OVERRIDES),
+    stack.pool.collectProtocolFees(true, true, TX_OVERRIDES),
   );
-  const collectionDeposits = collectionReceipt.logs
-    .filter((log: { address: string }) => log.address.toLowerCase() === feeVault.toLowerCase())
-    .map((log: { topics: readonly string[]; data: string }) => {
-      try {
-        return vault.interface.parseLog(log);
-      } catch {
-        return null;
-      }
-    })
-    .filter((event: any) => event?.name === "ConfidentialFeesDeposited");
+  const deposits = collection.receipt.logs.flatMap((log) => {
+    if (log.address.toLowerCase() !== stack.feeVaultAddress.toLowerCase()) return [];
+    try {
+      const parsed = stack.feeVault.interface.parseLog(log);
+      return parsed?.name === "ConfidentialFeesDeposited" ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  });
   if (
-    collectionDeposits.length !== 2 ||
-    !collectionDeposits.every((event: any) =>
-      String(event.args.pool).toLowerCase() === poolAddress.toLowerCase() &&
-      BigInt(event.args.aggregatedSwapCount) >= TARGET_SWAP_COUNT
+    deposits.length !== 2 ||
+    !deposits.every((event) =>
+      String(event.args.pool).toLowerCase() === stack.poolAddress.toLowerCase() &&
+      BigInt(event.args.aggregatedSwapCount) === TARGET_SWAP_COUNT
     )
-  ) {
-    throw new Error("mature fee collection did not produce two canonical vault deposits");
-  }
-  if (
-    BigInt(await pool.protocolFeeSwapCount0()) !== 0n ||
-    BigInt(await pool.protocolFeeSwapCount1()) !== 0n
-  ) {
-    throw new Error("confidential fee collection did not clear both public batch counters");
-  }
+  ) throw new Error("mature collection did not produce two exact vault deposits");
+  model.protocolFee0 = 0n;
+  model.protocolFee1 = 0n;
+  recoveryJournal.updateResourceMetadata(RESOURCE_ID, { phase: "collected" });
 
-  if (!(await pool.initialized())) {
-    throw new Error("terminal-fee proof requires an initialized pool after mature collection");
-  }
-  if (await privateBalance(token0, walletAddress, wallet) < swap0) {
+  if (await privateBalance(stack.token0, owner, wallet) < swap0) {
     throw new Error("terminal-fee proof exceeds the available private token0 balance");
   }
-  await setPrivateAllowance(token0, token0Address, poolAddress, swap0, wallet, "terminal token0");
-  const terminalSwapSelector = pool.interface.getFunction("swapExactInput")?.selector;
-  if (!terminalSwapSelector) throw new Error("terminal swap selector unavailable");
+  await setPrivateAllowance(
+    stack.token0,
+    stack.token0Address,
+    stack.poolAddress,
+    swap0,
+    wallet,
+    "terminal fee token0",
+  );
   const terminalQuote = await requestPrivateQuote(
-    pool,
-    poolAddress,
+    stack,
     wallet,
     swap0,
     true,
     "terminal sub-threshold fee quote",
   );
+  applyModeledSwap(model, swap0, true, terminalQuote);
   await submit(
     "terminal sub-threshold fee swap",
-    pool.swapExactInput(
-      await wallet.encryptValue256(swap0, poolAddress, terminalSwapSelector),
+    stack.pool.swapExactInput(
+      await wallet.encryptValue256(swap0, stack.poolAddress, swapSelector),
       await wallet.encryptValue256(
-        minimumFromQuote(terminalQuote),
-        poolAddress,
-        terminalSwapSelector,
+        minimumWithSlippage(terminalQuote),
+        stack.poolAddress,
+        swapSelector,
       ),
       true,
       BigInt(Math.floor(Date.now() / 1000) + 600),
       TX_OVERRIDES,
     ),
   );
-  if (BigInt(await pool.protocolFeeSwapCount0()) !== 1n) {
+  if (BigInt(await stack.pool.protocolFeeSwapCount0()) !== 1n) {
     throw new Error("terminal-fee proof did not create one sub-threshold accrual");
   }
+  recoveryJournal.updateResourceMetadata(RESOURCE_ID, { phase: "terminal-swapped" });
 
-  if (await pool.initialized()) {
-    const encryptedShares = await pool.myShares.staticCall();
-    const shares = await decryptPrivateValue256(wallet, encryptedShares);
-    if (shares <= 0n) throw new Error("terminal-fee proof wallet owns no LP shares");
-    const selector = pool.interface.getFunction("removeLiquidity")?.selector;
-    if (!selector) throw new Error("remove-liquidity selector unavailable");
-    const terminalReceipt = await submit(
-      "full LP exit with terminal protocol fee deposit",
-      pool.removeLiquidity(
-        await wallet.encryptValue256(shares, poolAddress, selector),
-        await wallet.encryptValue256(
-          requiredPositiveRawAmount("COTI_FEE_TEST_REMOVE_MIN0"),
-          poolAddress,
-          selector,
-        ),
-        await wallet.encryptValue256(
-          requiredPositiveRawAmount("COTI_FEE_TEST_REMOVE_MIN1"),
-          poolAddress,
-          selector,
-        ),
-        BigInt(Math.floor(Date.now() / 1000) + 600),
-        TX_OVERRIDES,
-      ),
-    );
-    const terminalDeposits = terminalReceipt.logs
-      .filter((log: { address: string }) => log.address.toLowerCase() === feeVault.toLowerCase())
-      .map((log: { topics: readonly string[]; data: string }) => {
-        try {
-          return vault.interface.parseLog(log);
-        } catch {
-          return null;
-        }
-      })
-      .filter((event: any) => event?.name === "ConfidentialFeesDeposited");
-    if (
-      terminalDeposits.length !== 1 ||
-      String(terminalDeposits[0].args.pool).toLowerCase() !== poolAddress.toLowerCase() ||
-      String(terminalDeposits[0].args.token).toLowerCase() !== token0Address.toLowerCase() ||
-      BigInt(terminalDeposits[0].args.aggregatedSwapCount) !== 1n
-    ) {
-      throw new Error("full exit did not aggregate the one-swap terminal fee into the vault");
+  const terminalReceipt = await removeAllLiquidity(
+    stack,
+    wallet,
+    minimumWithSlippage(model.reserve0),
+    minimumWithSlippage(model.reserve1),
+  );
+  if (!terminalReceipt) throw new Error("terminal full exit produced no transaction");
+  const terminalDeposits = terminalReceipt.logs.flatMap((log) => {
+    if (log.address.toLowerCase() !== stack.feeVaultAddress.toLowerCase()) return [];
+    try {
+      const parsed = stack.feeVault.interface.parseLog(log);
+      return parsed?.name === "ConfidentialFeesDeposited" ? [parsed] : [];
+    } catch {
+      return [];
     }
-    if (await pool.initialized()) throw new Error("full LP exit left the pool initialized");
-  }
-
+  });
   if (
-    BigInt(await pool.protocolFeeSwapCount0()) !== 0n ||
-    BigInt(await pool.protocolFeeSwapCount1()) !== 0n
-  ) {
-    throw new Error("terminal fee deposit did not clear both public batch counters");
+    terminalDeposits.length !== 1 ||
+    String(terminalDeposits[0].args.pool).toLowerCase() !== stack.poolAddress.toLowerCase() ||
+    String(terminalDeposits[0].args.token).toLowerCase() !== stack.token0Address.toLowerCase() ||
+    BigInt(terminalDeposits[0].args.aggregatedSwapCount) !== 1n ||
+    Boolean(await stack.pool.initialized()) ||
+    BigInt(await stack.pool.protocolFeeSwapCount0()) !== 0n ||
+    BigInt(await stack.pool.protocolFeeSwapCount1()) !== 0n
+  ) throw new Error("terminal full exit did not safely aggregate and clear the final fee");
+
+  const [poolBalance0, poolBalance1, allowanceAfter0, allowanceAfter1] = await Promise.all([
+    privateBalance(stack.token0, stack.poolAddress, wallet),
+    privateBalance(stack.token1, stack.poolAddress, wallet),
+    privateAllowance(stack.token0, owner, stack.poolAddress, wallet),
+    privateAllowance(stack.token1, owner, stack.poolAddress, wallet),
+  ]);
+  if (poolBalance0 !== 0n || poolBalance1 !== 0n || allowanceAfter0 !== 0n || allowanceAfter1 !== 0n) {
+    throw new Error("completed disposable fee proof left private-token residue or allowance");
   }
-  console.log(`confidential protocol fees aggregated in fixed vault ${feeVault}`);
+  recoveryJournal.markRecovered(RESOURCE_ID);
+  const lpTokenAddress = ethers.getAddress(await stack.pool.lpToken());
+  recoveryJournal.markRun("passed");
+  const finalEvidence = await writeFundedRunEvidence({
+    journal: recoveryJournal,
+    provider: ethers.provider,
+    participants: [owner],
+    configuration: {
+      chainId: Number(network.chainId),
+      confidentialPoolVersion: 2,
+      privacyMode: 1,
+      totalFeeBps: Number(FEE_BPS),
+      targetSwapCountPerDirection: Number(TARGET_SWAP_COUNT),
+      collectionDelaySeconds: Number(COLLECTION_DELAY_SECONDS),
+      tokenA: tokenAAddress,
+      tokenB: tokenBAddress,
+      feeBeneficiary,
+    },
+    artifacts: [
+      {
+        label: "disposable fee vault",
+        contractName: "CipherDEXFeeVault",
+        address: stack.feeVaultAddress,
+      },
+      {
+        label: "disposable private LP factory",
+        contractName: "PrivateLPTokenFactory",
+        address: stack.lpFactoryAddress,
+      },
+      {
+        label: "disposable confidential factory",
+        contractName: "ConfidentialCPMMFactory",
+        address: stack.factoryAddress,
+      },
+      {
+        label: "disposable confidential fee pool",
+        contractName: "ConfidentialCPMM",
+        address: stack.poolAddress,
+      },
+      {
+        label: "disposable private LP token",
+        contractName: "PrivateLPToken",
+        address: lpTokenAddress,
+      },
+    ],
+    assertions: [
+      "exact fee batches accrued in both input tokens",
+      "maturity gate enforced before collection",
+      "two aggregate protocol fee deposits verified",
+      "terminal sub-threshold fee deposited on full exit",
+      "protocol fees excluded from effective reserves",
+      "full LP exit used positive modeled minima",
+      "pool balances and owner allowances returned to zero",
+      "reviewed deployment contracts were not mutated",
+    ],
+  });
+  console.log(`disposableFeePool=${stack.poolAddress}`);
+  console.log(`disposableFeeVault=${stack.feeVaultAddress}`);
+  console.log(`fundedEvidence=${finalEvidence.path}`);
+  console.log(
+    "COTI confidential fee collection passed with source-bound disposable custody, exact batched deposits, positive full-exit minima, and zero pool residue",
+  );
 }
 
-void main().catch((error: unknown) => {
+void main().catch(async (error: unknown) => {
+  if (error instanceof FeeCollectionPendingError) {
+    recoveryJournal?.markRun("awaiting-maturity");
+    console.error(
+      `COTI fee-collection proof paused during ${stage}; ${safeTestnetErrorSummary(error)}; ` +
+        "the source-bound disposable pool remains journaled for the required rerun.",
+    );
+    process.exitCode = 75;
+    return;
+  }
+  if (error instanceof UnknownBroadcastOutcomeError) {
+    recoveryJournal?.markRun("failed");
+    console.error(
+      `COTI fee-collection proof paused with an uncertain broadcast: ` +
+        `stage=${stage} ${safeTestnetErrorSummary(error)}; cleanup is deferred until receipt reconciliation.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  let reportedError = error;
+  try {
+    await recoverDisposablePool();
+    recoveryJournal?.markRun("failed");
+  } catch (recoveryError) {
+    recoveryJournal?.markRun("recovery-failed");
+    reportedError = new AggregateError(
+      [error, recoveryError],
+      "fee-collection validation and funded recovery both failed",
+    );
+  }
   console.error(
-    `COTI fee-collection test failed during ${stage}; ${safeTestnetErrorSummary(error)}; ` +
+    `COTI fee-collection test failed during ${stage}; ${safeTestnetErrorSummary(reportedError)}; ` +
       "private payloads were suppressed.",
   );
   process.exitCode = 1;

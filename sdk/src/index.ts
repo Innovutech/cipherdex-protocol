@@ -9,6 +9,7 @@
 export const DISCLOSURE_SCHEMA_VERSION = 5 as const;
 export const CIPHERDEX_PROTOCOL_VERSION = 2 as const;
 export const CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION = 1 as const;
+export const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION = 3 as const;
 
 export const CIPHERDEX_V1_FEE_POLICY = {
   approvedTotalFeeBps: [5, 30, 100] as const,
@@ -402,6 +403,14 @@ export const CONFIDENTIAL_BEST_QUOTE_RESULT_TOPIC =
   "0x5c289a46e21a67737901d6a15bb309376e8c623675d023c7d4a2789962201c31" as const;
 export const CONFIDENTIAL_BEST_SWAP_RESULT_TOPIC =
   "0x2bb2c35b28364f890e39aff97bd348ac8f50d11748c8e0b8f0c86c43088ff8a7" as const;
+export const LAUNCHPAD_MIGRATION_TOPIC =
+  "0x16e9d143c3650c9df7029e3697023a50eaca637da6ae174e5c399337da1078d4" as const;
+export const LAUNCHPAD_LOCK_DISPOSITION_TOPIC =
+  "0x75e334dcb38a552c1315b5412176e01190962bbb6774c5b3964f221b4a2eb53c" as const;
+export const LAUNCHPAD_MIGRATE_SELECTOR = "0x97173c02" as const;
+export const LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR = "0xdd80f5fd" as const;
+export const CONFIDENTIAL_LIQUIDITY_LOCKED_TOPIC =
+  "0xda0ee1246c7c735db57cd30fc8444456fd8e002c807a94c88bf4495ea01707bd" as const;
 
 export type ConfidentialBestQuoteCall = Readonly<{
   functionName: typeof CONFIDENTIAL_BEST_QUOTE_FUNCTION;
@@ -929,6 +938,72 @@ export type LaunchpadMigrationMetadata = {
   lockId: string;
   unlockTime: bigint | string;
 };
+
+export type ConfidentialLockOnchainState = Readonly<{
+  owner: string;
+  unlockTime: number | bigint;
+  permanent: boolean;
+  released: boolean;
+}>;
+
+export type LaunchpadMigrationVerificationPolicy = Readonly<{
+  expectedChainId: number;
+  expectedFactory: string;
+  expectedFactoryRuntimeCodehash: string;
+  expectedMigrator: string;
+  expectedMigratorRuntimeCodehash: string;
+  expectedFeeVault: string;
+  expectedFactoryProtocolVersion: number;
+  expectedPoolProtocolVersion: number;
+  expectedMigratorProtocolVersion: number;
+}>;
+
+export type LaunchpadMigrationEvidenceExpectation = Readonly<{
+  transactionHash: string;
+  metadata: LaunchpadMigrationMetadata;
+}>;
+
+export interface LaunchpadMigrationVerificationAdapter {
+  readChainId(): Promise<number | bigint>;
+  getCode(address: string): Promise<string>;
+  hashRuntimeCode(code: string): string;
+  getTransaction(
+    transactionHash: string,
+  ): Promise<ConfidentialBestExecutionTransactionEvidence | null>;
+  getTransactionReceipt(
+    transactionHash: string,
+  ): Promise<ConfidentialBestExecutionReceiptEvidence | null>;
+  readFactoryProtocolVersion(factory: string): Promise<number | bigint>;
+  readFactoryBootstrapAdapter(factory: string): Promise<string>;
+  isFactoryPool(factory: string, pool: string): Promise<boolean>;
+  readMigratorProtocolVersion(migrator: string): Promise<number | bigint>;
+  readMigratorFactory(migrator: string): Promise<string>;
+  readPoolState(pool: string): Promise<ConfidentialPoolOnchainState>;
+  getCanonicalPool(
+    factory: string,
+    token0: string,
+    token1: string,
+    token0Decimals: number,
+    token1Decimals: number,
+    feeBps: number,
+  ): Promise<string>;
+  readLockInfo(pool: string, lockId: string): Promise<ConfidentialLockOnchainState>;
+}
+
+const VERIFIED_LAUNCHPAD_MIGRATION_METADATA: unique symbol = Symbol(
+  "CipherDEX.VerifiedLaunchpadMigrationMetadata",
+);
+const verifiedLaunchpadMigrationMetadata = new WeakSet<object>();
+
+export type VerifiedLaunchpadMigrationMetadata = Readonly<
+  LaunchpadMigrationMetadata & {
+    chainId: number;
+    transactionHash: string;
+    factory: string;
+    migrator: string;
+    readonly [VERIFIED_LAUNCHPAD_MIGRATION_METADATA]: true;
+  }
+>;
 
 function isCipherDEXV1FeePolicy(
   value: unknown,
@@ -1709,7 +1784,7 @@ export async function verifyPublicPoolDiscovery(
   return verified;
 }
 
-export function isConfidentialLockDiscovery(
+export function isConfidentialLockDiscoveryShape(
   value: unknown,
 ): value is ConfidentialLockDiscovery {
   const descriptors = exactOwnDataDescriptors(value, CONFIDENTIAL_LOCK_DISCOVERY_FIELDS);
@@ -1728,10 +1803,30 @@ export function isConfidentialLockDiscovery(
   );
 }
 
-// Backward-compatible alias for callers that used the original metadata name.
+function quantityAsBigInt(value: bigint | string): bigint {
+  return typeof value === "bigint" ? value : BigInt(value);
+}
+
+const ZERO_BYTES32 = `0x${"00".repeat(32)}`;
+const ZERO_ADDRESS = `0x${"00".repeat(20)}`;
+
+export function isConfidentialLockDiscovery(
+  value: unknown,
+): value is ConfidentialLockDiscovery {
+  if (!isConfidentialLockDiscoveryShape(value)) return false;
+  const unlockTime = quantityAsBigInt(value.unlockTime);
+  return (
+    !sameAddress(value.pool, ZERO_ADDRESS) &&
+    !sameAddress(value.owner, ZERO_ADDRESS) &&
+    value.lockId.toLowerCase() !== ZERO_BYTES32 &&
+    (value.permanent ? unlockTime === 0n && !value.released : unlockTime > 0n)
+  );
+}
+
+// Backward-compatible semantic guard for callers that used the original name.
 export const isConfidentialLockMetadata = isConfidentialLockDiscovery;
 
-export function isLaunchpadMigrationMetadata(
+export function isLaunchpadMigrationMetadataShape(
   value: unknown,
 ): value is LaunchpadMigrationMetadata {
   const descriptors = exactOwnDataDescriptors(value, LAUNCHPAD_MIGRATION_METADATA_FIELDS);
@@ -1749,4 +1844,316 @@ export function isLaunchpadMigrationMetadata(
     isBytes32(candidate.lockId) &&
     isNonNegativeQuantity(candidate.unlockTime)
   );
+}
+
+export function isLaunchpadMigrationMetadata(
+  value: unknown,
+): value is LaunchpadMigrationMetadata {
+  if (!isLaunchpadMigrationMetadataShape(value)) return false;
+  if (sameAddress(value.creator, ZERO_ADDRESS) || sameAddress(value.pool, ZERO_ADDRESS)) {
+    return false;
+  }
+  const unlockTime = quantityAsBigInt(value.unlockTime);
+  const zeroLock = value.lockId.toLowerCase() === ZERO_BYTES32;
+  if (value.disposition === LP_DISPOSITION.CREATOR_HELD) {
+    return zeroLock && unlockTime === 0n;
+  }
+  if (value.disposition === LP_DISPOSITION.TIMED_LOCK) {
+    return !zeroLock && unlockTime > 0n;
+  }
+  return !zeroLock && unlockTime === 0n;
+}
+
+function topicAddress(topic: string): string | undefined {
+  if (!isBytes32(topic)) return undefined;
+  return `0x${topic.slice(-40)}`;
+}
+
+function splitEventData(data: string, words: number): readonly string[] | undefined {
+  if (typeof data !== "string" || !new RegExp(`^0x[0-9a-fA-F]{${words * 64}}$`).test(data)) {
+    return undefined;
+  }
+  return Object.freeze(Array.from(
+    { length: words },
+    (_, index) => `0x${data.slice(2 + index * 64, 2 + (index + 1) * 64)}`,
+  ));
+}
+
+function decodedWord(value: string): bigint | undefined {
+  if (!isBytes32(value)) return undefined;
+  try {
+    return BigInt(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function matchingLogs(
+  logs: readonly ConfidentialBestExecutionLogEvidence[],
+  emitter: string,
+  topic: string,
+): readonly ConfidentialBestExecutionLogEvidence[] {
+  return logs.filter((log) =>
+    sameAddress(log.address, emitter) &&
+    log.topics.length > 0 &&
+    typeof log.topics[0] === "string" &&
+    log.topics[0].toLowerCase() === topic,
+  );
+}
+
+/**
+ * Authenticates launchpad migration metadata against one successful RPC receipt,
+ * the configured factory/migrator binding, the canonical pool and current lock
+ * state. The adapter is the explicit chain-data trust boundary.
+ */
+export async function verifyLaunchpadMigrationMetadata(
+  expectation: LaunchpadMigrationEvidenceExpectation,
+  policy: LaunchpadMigrationVerificationPolicy,
+  adapter: LaunchpadMigrationVerificationAdapter,
+): Promise<VerifiedLaunchpadMigrationMetadata> {
+  if (
+    !isBytes32(expectation.transactionHash) ||
+    !isLaunchpadMigrationMetadata(expectation.metadata) ||
+    !Number.isSafeInteger(policy.expectedChainId) ||
+    policy.expectedChainId <= 0 ||
+    !isAddressLike(policy.expectedFactory) ||
+    !isBytes32(policy.expectedFactoryRuntimeCodehash) ||
+    !isAddressLike(policy.expectedMigrator) ||
+    !isBytes32(policy.expectedMigratorRuntimeCodehash) ||
+    !isAddressLike(policy.expectedFeeVault) ||
+    !Number.isSafeInteger(policy.expectedFactoryProtocolVersion) ||
+    policy.expectedFactoryProtocolVersion <= 0 ||
+    !Number.isSafeInteger(policy.expectedPoolProtocolVersion) ||
+    policy.expectedPoolProtocolVersion <= 0 ||
+    !Number.isSafeInteger(policy.expectedMigratorProtocolVersion) ||
+    policy.expectedMigratorProtocolVersion <= 0
+  ) {
+    throw new TypeError("Invalid launchpad migration verification input");
+  }
+
+  const metadata = Object.freeze({ ...expectation.metadata });
+  let chainIdValue: number | bigint;
+  let transaction: ConfidentialBestExecutionTransactionEvidence | null;
+  let receipt: ConfidentialBestExecutionReceiptEvidence | null;
+  let factoryCode: string;
+  let migratorCode: string;
+  let factoryVersionValue: number | bigint;
+  let configuredMigrator: string;
+  let factoryRecognizesPool: boolean;
+  let migratorVersionValue: number | bigint;
+  let migratorFactory: string;
+  let poolState: ConfidentialPoolOnchainState;
+  let factoryRuntimeCodehash: string;
+  let migratorRuntimeCodehash: string;
+  try {
+    [
+      chainIdValue,
+      transaction,
+      receipt,
+      factoryCode,
+      migratorCode,
+      factoryVersionValue,
+      configuredMigrator,
+      factoryRecognizesPool,
+      migratorVersionValue,
+      migratorFactory,
+      poolState,
+    ] = await Promise.all([
+      adapter.readChainId(),
+      adapter.getTransaction(expectation.transactionHash),
+      adapter.getTransactionReceipt(expectation.transactionHash),
+      adapter.getCode(policy.expectedFactory),
+      adapter.getCode(policy.expectedMigrator),
+      adapter.readFactoryProtocolVersion(policy.expectedFactory),
+      adapter.readFactoryBootstrapAdapter(policy.expectedFactory),
+      adapter.isFactoryPool(policy.expectedFactory, metadata.pool),
+      adapter.readMigratorProtocolVersion(policy.expectedMigrator),
+      adapter.readMigratorFactory(policy.expectedMigrator),
+      adapter.readPoolState(metadata.pool),
+    ]);
+    factoryRuntimeCodehash = adapter.hashRuntimeCode(factoryCode);
+    migratorRuntimeCodehash = adapter.hashRuntimeCode(migratorCode);
+  } catch (error) {
+    throw new TypeError("Unable to fetch launchpad migration evidence", { cause: error });
+  }
+  if (!transaction || !receipt) {
+    throw new TypeError("Launchpad migration transaction evidence is unavailable");
+  }
+
+  const chainId = toSafeChainNumber(chainIdValue);
+  const transactionChainId = toSafeChainNumber(transaction.chainId);
+  const factoryVersion = toSafeChainNumber(factoryVersionValue);
+  const migratorVersion = toSafeChainNumber(migratorVersionValue);
+  const poolVersion = toSafeChainNumber(poolState.protocolVersion);
+  const privacyMode = toSafeChainNumber(poolState.privacyMode);
+  const token0Decimals = toSafeChainNumber(poolState.token0Decimals);
+  const token1Decimals = toSafeChainNumber(poolState.token1Decimals);
+  const feeBps = toSafeChainNumber(poolState.feeBps);
+  if (
+    chainId !== policy.expectedChainId ||
+    transactionChainId !== policy.expectedChainId ||
+    !hasDeployedCode(factoryCode) ||
+    !hasDeployedCode(migratorCode) ||
+    factoryRuntimeCodehash.toLowerCase() !== policy.expectedFactoryRuntimeCodehash.toLowerCase() ||
+    migratorRuntimeCodehash.toLowerCase() !== policy.expectedMigratorRuntimeCodehash.toLowerCase() ||
+    factoryVersion !== policy.expectedFactoryProtocolVersion ||
+    migratorVersion !== policy.expectedMigratorProtocolVersion ||
+    poolVersion !== policy.expectedPoolProtocolVersion ||
+    privacyMode !== PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP ||
+    !sameAddress(configuredMigrator, policy.expectedMigrator) ||
+    !sameAddress(migratorFactory, policy.expectedFactory) ||
+    !factoryRecognizesPool ||
+    !sameAddress(poolState.feeVault, policy.expectedFeeVault) ||
+    token0Decimals === undefined ||
+    token1Decimals === undefined ||
+    feeBps === undefined ||
+    !isBytes32(transaction.hash) ||
+    transaction.hash.toLowerCase() !== expectation.transactionHash.toLowerCase() ||
+    !sameAddress(transaction.from, metadata.creator) ||
+    !sameAddress(transaction.to, policy.expectedMigrator) ||
+    !isBytes32(receipt.transactionHash) ||
+    receipt.transactionHash.toLowerCase() !== expectation.transactionHash.toLowerCase() ||
+    toSafeChainNumber(receipt.status) !== 1
+  ) {
+    throw new TypeError("Launchpad migration provenance verification failed");
+  }
+
+  let canonicalPool: string;
+  try {
+    canonicalPool = await adapter.getCanonicalPool(
+      policy.expectedFactory,
+      poolState.token0,
+      poolState.token1,
+      token0Decimals,
+      token1Decimals,
+      feeBps,
+    );
+  } catch (error) {
+    throw new TypeError("Unable to resolve canonical launchpad pool", { cause: error });
+  }
+  if (!sameAddress(canonicalPool, metadata.pool)) {
+    throw new TypeError("Launchpad migration does not reference the canonical pool");
+  }
+
+  const migrationLogs = matchingLogs(
+    receipt.logs,
+    policy.expectedMigrator,
+    LAUNCHPAD_MIGRATION_TOPIC,
+  );
+  if (migrationLogs.length !== 1) {
+    throw new TypeError("Launchpad migration receipt has invalid migration evidence");
+  }
+  const migrationLog = migrationLogs[0];
+  if (
+    migrationLog.topics.length !== 3 ||
+    migrationLog.data !== "0x" ||
+    !sameAddress(topicAddress(migrationLog.topics[1]) ?? ZERO_ADDRESS, metadata.creator) ||
+    !sameAddress(topicAddress(migrationLog.topics[2]) ?? ZERO_ADDRESS, metadata.pool)
+  ) {
+    throw new TypeError("Launchpad migration event does not match metadata");
+  }
+
+  const transactionSelector = transaction.data.slice(0, 10).toLowerCase();
+  const usesDisposition = transactionSelector === LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR;
+  if (
+    transaction.data.length < 10 ||
+    (
+      transactionSelector !== LAUNCHPAD_MIGRATE_SELECTOR &&
+      transactionSelector !== LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR
+    ) ||
+    (
+      !usesDisposition &&
+      (
+        metadata.disposition !== LP_DISPOSITION.CREATOR_HELD ||
+        metadata.lockId.toLowerCase() !== ZERO_BYTES32 ||
+        quantityAsBigInt(metadata.unlockTime) !== 0n
+      )
+    )
+  ) {
+    throw new TypeError("Launchpad migration selector does not match metadata");
+  }
+
+  const dispositionLogs = matchingLogs(
+    receipt.logs,
+    policy.expectedMigrator,
+    LAUNCHPAD_LOCK_DISPOSITION_TOPIC,
+  );
+  if (dispositionLogs.length !== (usesDisposition ? 1 : 0)) {
+    throw new TypeError("Launchpad migration receipt has invalid disposition evidence");
+  }
+  if (usesDisposition) {
+    const dispositionLog = dispositionLogs[0];
+    const dispositionData = splitEventData(dispositionLog.data, 3);
+    if (
+      dispositionLog.topics.length !== 3 ||
+      !dispositionData ||
+      !sameAddress(topicAddress(dispositionLog.topics[1]) ?? ZERO_ADDRESS, metadata.creator) ||
+      !sameAddress(topicAddress(dispositionLog.topics[2]) ?? ZERO_ADDRESS, metadata.pool) ||
+      decodedWord(dispositionData[0]) !== BigInt(metadata.disposition) ||
+      dispositionData[1].toLowerCase() !== metadata.lockId.toLowerCase() ||
+      decodedWord(dispositionData[2]) !== quantityAsBigInt(metadata.unlockTime)
+    ) {
+      throw new TypeError("Launchpad disposition event does not match metadata");
+    }
+  }
+
+  const liquidityLogs = matchingLogs(
+    receipt.logs,
+    metadata.pool,
+    CONFIDENTIAL_LIQUIDITY_LOCKED_TOPIC,
+  );
+  if (metadata.disposition === LP_DISPOSITION.CREATOR_HELD) {
+    if (liquidityLogs.length !== 0) {
+      throw new TypeError("Creator-held launchpad migration unexpectedly created a lock");
+    }
+  } else {
+    if (liquidityLogs.length !== 1) {
+      throw new TypeError("Locked launchpad migration has invalid pool lock evidence");
+    }
+    const liquidityLog = liquidityLogs[0];
+    const liquidityData = splitEventData(liquidityLog.data, 2);
+    if (
+      liquidityLog.topics.length !== 3 ||
+      !liquidityData ||
+      liquidityLog.topics[1].toLowerCase() !== metadata.lockId.toLowerCase() ||
+      !sameAddress(topicAddress(liquidityLog.topics[2]) ?? ZERO_ADDRESS, metadata.creator) ||
+      decodedWord(liquidityData[0]) !== quantityAsBigInt(metadata.unlockTime) ||
+      decodedWord(liquidityData[1]) !==
+        BigInt(metadata.disposition === LP_DISPOSITION.PERMANENT_LOCK ? 1 : 0)
+    ) {
+      throw new TypeError("Pool lock event does not match launchpad metadata");
+    }
+
+    let lockInfo: ConfidentialLockOnchainState;
+    try {
+      lockInfo = await adapter.readLockInfo(metadata.pool, metadata.lockId);
+    } catch (error) {
+      throw new TypeError("Unable to read launchpad lock state", { cause: error });
+    }
+    if (
+      !sameAddress(lockInfo.owner, metadata.creator) ||
+      toSafeChainNumber(lockInfo.unlockTime) !== Number(quantityAsBigInt(metadata.unlockTime)) ||
+      lockInfo.permanent !== (metadata.disposition === LP_DISPOSITION.PERMANENT_LOCK) ||
+      lockInfo.released
+    ) {
+      throw new TypeError("Launchpad lock state does not match migration evidence");
+    }
+  }
+
+  const verified = Object.freeze({
+    ...metadata,
+    chainId,
+    transactionHash: expectation.transactionHash,
+    factory: policy.expectedFactory,
+    migrator: policy.expectedMigrator,
+  }) as VerifiedLaunchpadMigrationMetadata;
+  verifiedLaunchpadMigrationMetadata.add(verified);
+  return verified;
+}
+
+export function isVerifiedLaunchpadMigrationMetadata(
+  value: unknown,
+): value is VerifiedLaunchpadMigrationMetadata {
+  return typeof value === "object" && value !== null &&
+    verifiedLaunchpadMigrationMetadata.has(value);
 }

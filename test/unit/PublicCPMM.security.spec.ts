@@ -370,6 +370,45 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     expect(reserve1).to.equal(10_000n);
   });
 
+  it("initializes after sweeping sender-taxed unmanaged dust at measured vault credit", async function () {
+    const [owner] = await ethers.getSigners();
+    const taxed = await (
+      await ethers.getContractFactory("FeeOnTransferERC20")
+    ).deploy("Taxed Token", "TAX", 5_000);
+    const paired = await (
+      await ethers.getContractFactory("MockERC20")
+    ).deploy("Paired Token", "PAIR", 18);
+    await Promise.all([taxed.waitForDeployment(), paired.waitForDeployment()]);
+    const { vault, factory } = await deployPublicFactory();
+    const pool = await createPublicPool(
+      factory,
+      await taxed.getAddress(),
+      await paired.getAddress(),
+      18,
+      18,
+      30,
+    );
+    const poolAddress = await pool.getAddress();
+    await taxed.setTaxedSender(poolAddress);
+
+    await taxed.mint(owner.address, 10_100n);
+    await paired.mint(owner.address, 10_000n);
+    await taxed.transfer(poolAddress, 100n);
+    await taxed.approve(poolAddress, 10_000n);
+    await paired.approve(poolAddress, 10_000n);
+
+    await expect(
+      pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE),
+    ).to.emit(pool, "UnmanagedBalanceSwept")
+      .withArgs(await taxed.getAddress(), await vault.getAddress(), 100n, 50n);
+
+    expect(await pool.initialized()).to.equal(true);
+    expect(await pool.effectiveReserves()).to.deep.equal([10_000n, 10_000n]);
+    expect(await taxed.balanceOf(poolAddress)).to.equal(10_000n);
+    expect(await taxed.balanceOf(await vault.getAddress())).to.equal(50n);
+    expect(await vault.publicFees(await taxed.getAddress())).to.equal(50n);
+  });
+
   it("reconciles an externally burned protocol claim without locking the paired reserve", async function () {
     const [owner, trader] = await ethers.getSigners();
     const burnable = await (
@@ -424,7 +463,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     expect(await burnable.balanceOf(poolAddress)).to.equal(remainingClaim);
   });
 
-  it("keeps protocol-fee accounting intact when an outbound tax short-credits the vault", async function () {
+  it("accounts the measured vault credit when an outbound tax burns protocol-owned fees", async function () {
     const [owner, trader] = await ethers.getSigners();
     const taxed = await (
       await ethers.getContractFactory("FeeOnTransferERC20")
@@ -468,12 +507,16 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     const vaultBalanceBefore = await taxed.balanceOf(await vault.getAddress());
     expect(claimBefore).to.be.greaterThan(0n);
 
+    const expectedReceived = claimBefore - ((claimBefore * 5_000n) / 10_000n);
     await expect(pool.collectProtocolFees(taxedIsToken0, !taxedIsToken0))
-      .to.be.revertedWithCustomError(vault, "PublicTransferAmountMismatch");
+      .to.emit(pool, "ProtocolFeeCollected")
+      .withArgs(await taxed.getAddress(), await vault.getAddress(), claimBefore, expectedReceived);
     expect(taxedIsToken0 ? await pool.protocolFees0() : await pool.protocolFees1())
-      .to.equal(claimBefore);
-    expect(await taxed.balanceOf(poolAddress)).to.equal(poolBalanceBefore);
-    expect(await taxed.balanceOf(await vault.getAddress())).to.equal(vaultBalanceBefore);
+      .to.equal(0n);
+    expect(await taxed.balanceOf(poolAddress)).to.equal(poolBalanceBefore - claimBefore);
+    expect(await taxed.balanceOf(await vault.getAddress()))
+      .to.equal(vaultBalanceBefore + expectedReceived);
+    expect(await vault.publicFees(await taxed.getAddress())).to.equal(expectedReceived);
   });
 
   it("collects a selected fee side without reading the unselected token", async function () {

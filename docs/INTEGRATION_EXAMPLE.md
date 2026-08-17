@@ -168,6 +168,13 @@ namespace. Index `PoolCreated`, `LaunchpadMigration` and
 `LaunchpadLockDisposition`; the latter two add provenance and LP-disposition
 metadata without defining a second market identity.
 
+Indexer JSON is untrusted discovery data. Parse it with the SDK shape guards,
+apply the semantic guards, and then call `verifyLaunchpadMigrationMetadata`
+through an RPC-backed adapter before presenting a migration or lock as verified.
+That final step binds the record to the successful transaction, configured
+migrator, canonical factory pool, exact migration/lock events and current public
+lock state. Shape validation alone is never transaction evidence.
+
 Liquidity amounts, normalized price bounds, minted shares, reserves and TVL are
 not public discovery fields. A pre-existing initialized canonical pool rejects
 bootstrap before private token pulls. For an empty pool, the launchpad escrows

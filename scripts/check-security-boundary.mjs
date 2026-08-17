@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import ts from "typescript";
 
 import {
-  assertEarlyHardhatRunSequence,
   maskSourceCommentsAndLiterals,
   uniqueFunctionBody,
   uniqueFunctionDeclaration,
@@ -345,37 +344,19 @@ if (/transfer(?:From)?GT|approveGT/.test(bestQuoteBody)) {
 const deploymentRawSource = await readFile("scripts/deploy-testnet.ts", "utf8");
 const deploymentSource = maskSourceCommentsAndLiterals(deploymentRawSource);
 const deploymentAst = parseTypeScript(deploymentRawSource, "scripts/deploy-testnet.ts");
-assertEarlyHardhatRunSequence(
-  deploymentRawSource,
-  "scripts/deploy-testnet.ts",
-  ["clean", "compile"],
-  [
-    "DeploymentRecordWriter.reserve",
-    "ethers.provider.getNetwork",
-    "ethers.getContractFactory",
-  ],
-);
-
-const gasMeasurementFile = "scripts/measure-deployment-gas.ts";
-const gasMeasurementRawSource = await readFile(gasMeasurementFile, "utf8");
-assertEarlyHardhatRunSequence(
-  gasMeasurementRawSource,
-  gasMeasurementFile,
-  ["clean", "compile"],
-  [
-    "ethers.getSigners",
-    "ethers.provider.getNetwork",
-    "ethers.getContractFactory",
-  ],
-);
-
 const packageManifest = JSON.parse(await readFile("package.json", "utf8"));
 const freshRunnerSource = await readFile("scripts/run-fresh-hardhat.mjs", "utf8");
 const freshHardhatScripts = new Map([
+  ["testnet:harness", "scripts/testnet-harness.ts --network cotiTestnet"],
   ["testnet:preflight", "scripts/testnet-preflight.ts --network cotiTestnet"],
+  ["testnet:scenario", "scripts/testnet-scenario.ts --network cotiTestnet"],
+  ["testnet:quote-call-probe", "scripts/testnet-quote-call-probe.ts --network cotiTestnet"],
   ["testnet:best-execution-feasibility", "scripts/testnet-best-execution-feasibility.ts --network cotiTestnet"],
   ["testnet:best-execution", "scripts/testnet-best-execution.ts --network cotiTestnet"],
   ["testnet:fee-collection", "scripts/testnet-fee-collection.ts --network cotiTestnet"],
+  ["evidence:finalize", "scripts/finalize-funded-evidence.ts --network cotiTestnet"],
+  ["evidence:verify", "scripts/verify-funded-suite-evidence.ts --network cotiTestnet"],
+  ["testnet:launchpad", "scripts/testnet-launchpad.ts --network cotiTestnet"],
   ["gas:measure", "scripts/measure-deployment-gas.ts"],
   ["deploy:testnet", "scripts/deploy-testnet.ts --network cotiTestnet"],
 ]);
@@ -390,17 +371,57 @@ for (const [script, target] of freshHardhatScripts) {
 if (/from\s+["']\.\.?\//.test(freshRunnerSource)) {
   throw new Error("Fresh Hardhat runner imports a local module before compilation");
 }
-const freshCleanPosition = freshRunnerSource.lastIndexOf('runHardhat(["clean"])');
-const freshCompilePosition = freshRunnerSource.lastIndexOf('runHardhat(["compile"])');
+if (/env:\s*process\.env/.test(freshRunnerSource)) {
+  throw new Error("Fresh Hardhat runner forwards the ambient environment into a subprocess");
+}
+const hardhatConfigSource = await readFile("hardhat.config.ts", "utf8");
+if (/dotenv(?:\/config)?/.test(hardhatConfigSource)) {
+  throw new Error("Hardhat configuration eagerly loads a secret-bearing env file");
+}
+const sourceCheckPosition = freshRunnerSource.indexOf(
+  'runGit(["status", "--porcelain=v1", "--untracked-files=all"])',
+);
+const hardhatResolvePosition = freshRunnerSource.indexOf(
+  'require.resolve("hardhat/internal/cli/cli.js")',
+);
+const freshCleanPosition = freshRunnerSource.lastIndexOf(
+  'runHardhat(["clean"], systemEnvironment)',
+);
+const freshCompilePosition = freshRunnerSource.lastIndexOf(
+  'runHardhat(["compile"], systemEnvironment)',
+);
+const envLoadPosition = freshRunnerSource.indexOf("process.loadEnvFile(");
 const freshRunPosition = freshRunnerSource.lastIndexOf(
-  'runHardhat(["run", "--no-compile", target, ...targetArguments])',
+  'runHardhat(["run", "--no-compile", target, ...targetArguments], runtimeEnvironment)',
 );
 if (
-  freshCleanPosition < 0 ||
+  sourceCheckPosition < 0 ||
+  sourceCheckPosition >= hardhatResolvePosition ||
+  hardhatResolvePosition >= freshCleanPosition ||
   freshCleanPosition >= freshCompilePosition ||
-  freshCompilePosition >= freshRunPosition
+  freshCompilePosition >= envLoadPosition ||
+  envLoadPosition >= freshRunPosition
 ) {
-  throw new Error("Fresh Hardhat runner does not isolate clean, compile and target execution");
+  throw new Error("Fresh Hardhat runner does not authenticate source and isolate secretless build execution");
+}
+for (const required of [
+  "Fresh Hardhat runner requires a clean committed worktree",
+  "SYSTEM_ENVIRONMENT",
+  "NETWORK_ENVIRONMENT",
+  "FUNDED_NETWORK_ENVIRONMENT",
+  "targetPolicy.funded",
+  "targetPolicy.environment",
+  "runtimeEnvironment.CIPHERDEX_SOURCE_COMMIT = sourceCommit",
+]) {
+  if (!freshRunnerSource.includes(required)) {
+    throw new Error(`Fresh Hardhat runner omits credential-boundary control: ${required}`);
+  }
+}
+if (
+  freshRunnerSource.includes('"CIPHERDEX_SOURCE_COMMIT",') ||
+  freshRunnerSource.includes("'CIPHERDEX_SOURCE_COMMIT',")
+) {
+  throw new Error("Fresh Hardhat runner permits ambient source-commit injection");
 }
 if (!hasStringCall(deploymentAst, "getContractFactory", "ConfidentialBestExecutionRouter")) {
   throw new Error("Testnet deployment does not deploy the confidential best-execution router");
@@ -448,16 +469,6 @@ if (sdkSource.includes("export type ConfidentialBestExecutionResultEvidence")) {
 const harnessRawSource = await readFile("scripts/testnet-harness.ts", "utf8");
 const harnessSource = maskSourceCommentsAndLiterals(harnessRawSource);
 const harnessAst = parseTypeScript(harnessRawSource, "scripts/testnet-harness.ts");
-assertEarlyHardhatRunSequence(
-  harnessRawSource,
-  "scripts/testnet-harness.ts",
-  ["clean", "compile"],
-  [
-    "verifyConfiguredTestnetDeployment",
-    "verifyDeployedRuntimeArtifact",
-    "provider.getNetwork",
-  ],
-);
 if (
   harnessSource.includes("quoteExactInput.staticCall") ||
   !harnessSource.includes("requestQuoteExactInput(") ||
@@ -485,17 +496,6 @@ if (!hasStringCall(harnessAst, "requiredAddress", "COTI_FACTORY")) {
 const scenarioRawSource = await readFile("scripts/testnet-scenario.ts", "utf8");
 const scenarioSource = maskSourceCommentsAndLiterals(scenarioRawSource);
 const scenarioAst = parseTypeScript(scenarioRawSource, "scripts/testnet-scenario.ts");
-assertEarlyHardhatRunSequence(
-  scenarioRawSource,
-  "scripts/testnet-scenario.ts",
-  ["clean", "compile"],
-  [
-    "verifyConfiguredTestnetDeployment",
-    "verifyDeployedRuntimeArtifact",
-    "ethers.provider.getNetwork",
-    "ethers.getContractFactory",
-  ],
-);
 const scenarioMainBody = functionBody(scenarioSource, "main");
 const scenarioLiquidityBody = functionBody(scenarioSource, "addPrivateLiquidity");
 if (
@@ -546,27 +546,33 @@ const feeCollectionAst = parseTypeScript(
   feeCollectionRawSource,
   "scripts/testnet-fee-collection.ts",
 );
-assertEarlyHardhatRunSequence(
-  feeCollectionRawSource,
-  "scripts/testnet-fee-collection.ts",
-  ["clean", "compile"],
-  [
-    "verifyConfiguredTestnetDeployment",
-    "verifyDeployedRuntimeArtifact",
-    "ethers.provider.getNetwork",
-  ],
-);
 for (const fragment of [
   "requestPrivateQuote(",
-  "minimumFromQuote(quote)",
+  "minimumWithSlippage(quote)",
+  "minimumWithSlippage(model.reserve0)",
+  "minimumWithSlippage(model.reserve1)",
+  "createDisposableStack(",
+  "validateStackResource(",
 ]) {
   if (!feeCollectionSource.includes(fragment)) {
     throw new Error("Fee-collection funded runner omits quote-derived swap or LP-exit protection");
   }
 }
-for (const name of ["COTI_FEE_TEST_REMOVE_MIN0", "COTI_FEE_TEST_REMOVE_MIN1"]) {
-  if (!hasStringCall(feeCollectionAst, "requiredPositiveRawAmount", name)) {
-    throw new Error(`Fee-collection funded runner does not require positive ${name}`);
+for (const fragment of [
+  'kind: "fee-collection-pool"',
+  'phase: "awaiting-maturity"',
+]) {
+  if (!feeCollectionRawSource.includes(fragment)) {
+    throw new Error("Fee-collection runner lacks source-bound disposable state");
+  }
+}
+for (const forbidden of [
+  "COTI_FEE_COLLECTION_POOL",
+  "COTI_FEE_TEST_REMOVE_MIN0",
+  "COTI_FEE_TEST_REMOVE_MIN1",
+]) {
+  if (feeCollectionRawSource.includes(forbidden)) {
+    throw new Error(`Fee-collection runner still accepts unsafe ${forbidden}`);
   }
 }
 if (
@@ -657,19 +663,7 @@ for (const file of [
   "scripts/testnet-best-execution-feasibility.ts",
   "scripts/testnet-best-execution.ts",
 ]) {
-  const source = maskSourceCommentsAndLiterals(await readFile(file, "utf8"));
-  const rawSource = await readFile(file, "utf8");
-  assertEarlyHardhatRunSequence(
-    rawSource,
-    file,
-    ["clean", "compile"],
-    [
-      "ethers.provider.getNetwork",
-      "ethers.getContractFactory",
-      "verifyDeployedRuntimeArtifact",
-      "verifyConfiguredTestnetDeployment",
-    ],
-  );
+  const source = await readFile(file, "utf8");
   for (const fragment of [
     "verifyConfiguredTestnetDeployment(",
     "assertReviewedPrivateTokens(deploymentRecord",
@@ -688,6 +682,62 @@ for (const file of [
     throw new Error(`${file}: token interaction precedes exact reviewed-token authorization`);
   }
 }
+const fundedEvidenceRawSource = await readFile("scripts/funded-run-evidence.ts", "utf8");
+const fundedEvidenceSource = maskSourceCommentsAndLiterals(fundedEvidenceRawSource);
+for (const required of [
+  "verifyDeployedRuntimeArtifactWithProvenance(",
+  "provider.getTransactionReceipt(",
+  "provider.getTransaction(",
+  "provider.getBlock(",
+  "transaction.blockHash.toLowerCase()",
+  "configurationHash(configuration)",
+  "journal.activeResources.length !== 0",
+  "requireRunnerPolicy(",
+  "requireTransactionBindings(",
+  "creationTransactionHash",
+]) {
+  if (!fundedEvidenceSource.includes(required)) {
+    throw new Error(`Funded evidence omits required provenance control: ${required}`);
+  }
+}
+for (const required of [
+  "cipherdex.funded-run-evidence/v2",
+  "funded run cannot produce evidence with unresolved transactions",
+]) {
+  if (!fundedEvidenceRawSource.includes(required)) {
+    throw new Error(`Funded evidence omits required literal control: ${required}`);
+  }
+}
+for (const forbidden of [
+  "process.env",
+  "decrypt",
+  "aesKey",
+  "privateKey",
+]) {
+  if (fundedEvidenceSource.toLowerCase().includes(forbidden.toLowerCase())) {
+    throw new Error(`Funded evidence crosses the private-data boundary: ${forbidden}`);
+  }
+}
+for (const file of [
+  "scripts/testnet-best-execution-feasibility.ts",
+  "scripts/testnet-best-execution.ts",
+  "scripts/testnet-fee-collection.ts",
+  "scripts/testnet-launchpad.ts",
+]) {
+  const source = await readFile(file, "utf8");
+  const evidencePosition = source.lastIndexOf("writeFundedRunEvidence({");
+  const passPosition = source.lastIndexOf('markRun("passed")');
+  const recoveryPosition = source.lastIndexOf("markRecovered(");
+  if (
+    evidencePosition < 0 ||
+    passPosition < 0 ||
+    recoveryPosition < 0 ||
+    recoveryPosition >= passPosition ||
+    passPosition >= evidencePosition
+  ) {
+    throw new Error(`${file}: passing funded evidence is not gated by completed recovery`);
+  }
+}
 
 const launchpadRawSource = await readFile("scripts/testnet-launchpad.ts", "utf8");
 const launchpadSource = maskSourceCommentsAndLiterals(launchpadRawSource);
@@ -696,15 +746,30 @@ for (const fragment of [
   "verifyConfiguredTestnetDeployment(",
   "assertReviewedPrivateTokens(deploymentRecord",
   "verifyDeployedRuntimeArtifact(",
+  "FundedRecoveryJournal.open({",
+  "recoverLaunchpadResources()",
+  "writeFundedRunEvidence({",
 ]) {
   if (!launchpadMainBody.includes(fragment)) {
     throw new Error("Launchpad funded runner bypasses reviewed source or token provenance");
   }
 }
-if (
-  launchpadMainBody.indexOf("assertReviewedPrivateTokens(deploymentRecord") >
-  launchpadMainBody.indexOf("getContractFactory(")
-) {
+if (!launchpadSource.includes("verifyRecoveryResourceCreation(")) {
+  throw new Error("Launchpad funded recovery does not authenticate resource creation");
+}
+for (const literal of [
+  "full disposable launchpad-pool exit",
+  "successful launchpad migration has no canonical pool to recover",
+  "launchpad pool recovery canonical provenance changed",
+  "creationTransactionHash: successfulMigrations[0].hash",
+  'markRun("passed")',
+]) {
+  if (!launchpadRawSource.includes(literal)) {
+    throw new Error("Launchpad funded runner omits required recovery evidence");
+  }
+}
+if (launchpadMainBody.indexOf("assertReviewedPrivateTokens(deploymentRecord") >
+    launchpadMainBody.indexOf("getContractFactory(")) {
   throw new Error("Launchpad funded runner validates provenance after deployment begins");
 }
 for (const fragment of [
@@ -721,16 +786,12 @@ if (
   launchpadMainBody.indexOf("onchainDecimalsA !== decimalsA") >
   launchpadMainBody.indexOf("getContractFactory(")
 ) {
-  throw new Error("Launchpad funded runner validates decimals after deployment or prefunding begins");
+  throw new Error("Launchpad funded runner validates decimals after deployment begins");
 }
-const verificationReport = await readFile("docs/VERIFICATION_REPORT.md", "utf8");
-if (
-  verificationReport.includes("one raw unit per token") ||
-  verificationReport.includes("removed the test donation") ||
-  !verificationReport.includes("one raw unit of canonical\ntoken0") ||
-  !verificationReport.includes("does not recover or claim to recover that\nunit")
-) {
-  throw new Error("Verification report overstates launchpad prefunding or cleanup evidence");
+for (const forbidden of ["prefundAmount", "deterministic pool pre-fund proof"]) {
+  if (launchpadRawSource.includes(forbidden)) {
+    throw new Error("Launchpad funded runner intentionally strands a private-token pre-fund");
+  }
 }
 
 const migratorSource = maskSourceCommentsAndLiterals(

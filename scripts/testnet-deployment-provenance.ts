@@ -85,6 +85,60 @@ function normalizePath(value: string): string {
   return value.replaceAll("\\", "/");
 }
 
+type GitExecutor = (
+  executable: string,
+  args: readonly string[],
+  options: Readonly<{ cwd: string }>,
+) => Promise<Readonly<{ stdout: string }>>;
+
+export async function listTouchedPathsAcrossCommitRange(
+  cwd: string,
+  sourceCommit: string,
+  headCommit = "HEAD",
+  execute: GitExecutor = execFileAsync as unknown as GitExecutor,
+): Promise<readonly string[]> {
+  if (!SOURCE_COMMIT_PATTERN.test(sourceCommit)) {
+    throw new Error("source commit for history audit is invalid");
+  }
+  const commitsResult = await execute(
+    "git",
+    ["rev-list", "--reverse", "--topo-order", "--ancestry-path", `${sourceCommit}..${headCommit}`],
+    { cwd },
+  );
+  const commits = commitsResult.stdout
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (commits.some((commit) => !SOURCE_COMMIT_PATTERN.test(commit))) {
+    throw new Error("commit history audit returned an invalid commit");
+  }
+
+  const touched = new Set<string>();
+  for (const commit of commits) {
+    const result = await execute(
+      "git",
+      [
+        "diff-tree",
+        "--root",
+        "-m",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        "--diff-filter=ACDMRTUXB",
+        commit,
+        "--",
+        ".",
+      ],
+      { cwd },
+    );
+    for (const entry of result.stdout.split(/\r?\n/u)) {
+      const normalized = normalizePath(entry.trim());
+      if (normalized.length > 0) touched.add(normalized);
+    }
+  }
+  return Object.freeze([...touched].sort());
+}
+
 function sameAddress(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
 }
@@ -168,22 +222,10 @@ async function defaultReadSourceState(
 
   let changedPathsSinceSource: string[] = [];
   if (sourceCommitIsAncestor) {
-    const changed = await execFileAsync(
-      "git",
-      [
-        "diff",
-        "--name-only",
-        "--diff-filter=ACDMRTUXB",
-        `${sourceCommit}..HEAD`,
-        "--",
-        ".",
-      ],
-      { cwd },
-    );
-    changedPathsSinceSource = changed.stdout
-      .split(/\r?\n/u)
-      .map((entry) => normalizePath(entry.trim()))
-      .filter((entry) => entry.length > 0);
+    changedPathsSinceSource = [...await listTouchedPathsAcrossCommitRange(
+      cwd,
+      sourceCommit,
+    )];
   }
 
   return Object.freeze({
@@ -325,7 +367,10 @@ export async function verifyConfiguredTestnetDeployment(
   if (!changedPaths.includes(resolved.relativePath)) {
     throw new Error("deployment record was not added by a post-source evidence commit");
   }
-  const unexpectedPath = changedPaths.find((path) => !permittedEvidencePaths.has(path));
+  const expectedFundedEvidencePath = `evidence/coti-testnet-${sourceCommit}.json`;
+  const unexpectedPath = changedPaths.find((path) =>
+    !permittedEvidencePaths.has(path) && path !== expectedFundedEvidencePath
+  );
   if (unexpectedPath) {
     throw new Error(
       `deployment evidence contains a post-source executable or unauthorized change: ${unexpectedPath}`,

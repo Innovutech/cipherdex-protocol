@@ -17,7 +17,13 @@ this version passes final verification and is freshly deployed, one router
 transaction across all initialized v1 fee tiers becomes preferred and per-pool
 transactions remain as a direct compatibility path.
 
-The SDK also validates privacy-minimal lock and launchpad migration records.
+The SDK exposes shape parsers and semantic guards for privacy-minimal lock and
+launchpad migration records. Shape or semantic validity is not chain
+authentication. Integrations must use `verifyLaunchpadMigrationMetadata` with a
+reviewed deployment policy and an RPC-backed adapter before treating indexed
+migration metadata as protocol evidence. The verifier authenticates the
+successful transaction and exact emitter logs, configured factory/migrator
+binding, canonical pool, immutable pool metadata and current public `lockInfo`.
 Those records contain only public pool/participant identity, disposition, lock
 timing and lock identifiers; they do not contain private share amounts,
 reserves, balances or encrypted payloads. Confidential pool discovery contains
@@ -50,6 +56,14 @@ zero-accrual dust swaps to protect aggregate collection batching. Public pools
 do not need that privacy-specific restriction. Use
 `minimumCipherDEXV1ConfidentialInput` to determine the raw-unit floor for an
 approved confidential fee tier. See `docs/FEE_ECONOMICS.md`.
+
+`isConfidentialLockDiscoveryShape` and
+`isLaunchpadMigrationMetadataShape` only parse exact untrusted JSON shapes.
+`isConfidentialLockDiscovery` and `isLaunchpadMigrationMetadata` additionally
+reject impossible disposition, lock-ID and unlock-time combinations, but still
+do not prove that an event happened on-chain. Only
+`verifyLaunchpadMigrationMetadata` returns process-local verified migration
+evidence.
 
 `isConfidentialPoolDiscovery` validates only the untrusted JSON shape. Before
 trusting a discovery record, callers must run

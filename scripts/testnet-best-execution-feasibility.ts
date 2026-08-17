@@ -6,7 +6,7 @@ import {
   ethers as ethersLibrary,
 } from "ethers";
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import hre, { ethers } from "hardhat";
+import { ethers } from "hardhat";
 
 import {
   CT_UINT256,
@@ -14,6 +14,12 @@ import {
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
+import {
+  FundedRecoveryJournal,
+  verifyRecoveryResourceCreation,
+} from "./funded-recovery-journal";
+import { writeFundedRunEvidence } from "./funded-run-evidence";
+import { createFundedDeploymentBinding } from "./funded-deployment-binding";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
   assertReviewedPrivateTokens,
@@ -21,8 +27,11 @@ import {
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
 import {
+  MinedTransactionStatusError,
   requireMinedSuccess,
   safeTestnetErrorSummary,
+  transactionHashFromError,
+  UnknownBroadcastOutcomeError,
 } from "./testnet-transaction-evidence";
 
 const EXPECTED_CHAIN_ID = 7_082_400n;
@@ -30,6 +39,9 @@ const CALL_GAS_LIMIT = 30_000_000n;
 const DEFAULT_INPUT = 10_001n;
 const MAX_PROBE_INPUT = 1_000_000n;
 let stage = "configuration";
+let recoveryJournal: FundedRecoveryJournal | undefined;
+let recoveryWallet: CotiWallet | undefined;
+let recoveryRecipient: string | undefined;
 
 const ROUTER_ABI = [
   `function requestBestQuoteExactInput(${IT_UINT256} amountIn,bytes32 requestId) returns (${CT_UINT256} result)`,
@@ -64,6 +76,19 @@ function requiredAddress(name: string): string {
   return ethersLibrary.getAddress(value);
 }
 
+function requiredSourceCommit(): string {
+  const value = process.env.CIPHERDEX_SOURCE_COMMIT?.trim();
+  if (!value || !/^[0-9a-f]{40}$/i.test(value)) {
+    throw new Error("CIPHERDEX_SOURCE_COMMIT must be supplied by the authenticated runner");
+  }
+  return value.toLowerCase();
+}
+
+function journal(): FundedRecoveryJournal {
+  if (!recoveryJournal) throw new Error("funded recovery journal is not initialized");
+  return recoveryJournal;
+}
+
 function positiveAmount(): bigint {
   const raw = process.env.COTI_BEST_EXECUTION_TEST_AMOUNT_IN?.trim();
   if (raw && !/^\d+$/.test(raw)) {
@@ -86,20 +111,42 @@ async function submit(
   }>,
 ): Promise<Readonly<{ transactionHash: string; receipt: TransactionReceipt }>> {
   stage = label;
-  return requireMinedSuccess(
-    label,
-    operation,
-    (hash) => ethers.provider.getTransactionReceipt(hash),
-  );
+  try {
+    const evidence = await requireMinedSuccess(
+      label,
+      operation,
+      (hash) => ethers.provider.getTransactionReceipt(hash),
+      (hash) => journal().recordBroadcast(label, hash),
+    );
+    journal().recordTransaction(
+      evidence.transactionHash,
+      "mined-success",
+      evidence.receipt.blockNumber,
+    );
+    return evidence;
+  } catch (error) {
+    const hash = transactionHashFromError(error);
+    if (hash) {
+      journal().recordBroadcast(label, hash);
+      journal().recordTransaction(
+        hash,
+        error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
+      );
+    }
+    throw error;
+  }
 }
 
 async function deployProbe(
   label: string,
   factory: ContractFactory,
   args: readonly unknown[],
+  contractName: "MpcBestExecutionPoolProbe" | "MpcBestExecutionRouterProbe",
+  resourceId: string,
+  metadata: Readonly<Record<string, string | number | boolean>>,
 ): Promise<any> {
   let contract: any;
-  await submit(label, async () => {
+  const deployment = await submit(label, async () => {
     contract = await factory.deploy(...args, { gasLimit: CALL_GAS_LIMIT });
     const transaction = contract.deploymentTransaction();
     if (!transaction) throw new Error(`${label} transaction is unavailable`);
@@ -108,7 +155,55 @@ async function deployProbe(
   if (!contract) {
     throw new Error(`${label} was mined but its contract handle is unavailable; do not retry automatically`);
   }
+  journal().recordResource({
+    id: resourceId,
+    kind: "best-execution-probe",
+    address: ethersLibrary.getAddress(await contract.getAddress()),
+    creationTransactionHash: deployment.transactionHash,
+    metadata: { contractName, ...metadata },
+  });
   return contract;
+}
+
+async function recoverJournalProbes(): Promise<void> {
+  if (!recoveryJournal || !recoveryWallet || !recoveryRecipient) return;
+  const closableAbi = [
+    "function configurator() view returns (address)",
+    "function closed() view returns (bool)",
+    "function closeAndRecover(address recipient)",
+  ] as const;
+  for (const resource of recoveryJournal.activeResources) {
+    await verifyRecoveryResourceCreation(recoveryJournal, resource, ethers.provider);
+    if (resource.kind !== "best-execution-probe") {
+      throw new Error(`unsupported active recovery resource ${resource.kind}`);
+    }
+    const contractName = String(resource.metadata.contractName ?? "");
+    const tokenInAddress = String(resource.metadata.tokenInAddress ?? "");
+    const tokenOutAddress = String(resource.metadata.tokenOutAddress ?? "");
+    if (
+      !["MpcBestExecutionPoolProbe", "MpcBestExecutionRouterProbe"].includes(contractName) ||
+      !ethersLibrary.isAddress(tokenInAddress) ||
+      (tokenOutAddress !== "" && !ethersLibrary.isAddress(tokenOutAddress))
+    ) throw new Error("funded probe recovery metadata is invalid");
+    await verifyDeployedRuntimeArtifact(contractName, resource.address);
+    const probe = new Contract(resource.address, closableAbi, recoveryWallet);
+    if (
+      String(await probe.configurator()).toLowerCase() !== recoveryRecipient.toLowerCase()
+    ) throw new Error("funded probe recovery configurator changed");
+    if (!Boolean(await probe.closed())) {
+      await submit(
+        `${resource.id} closure and recovery`,
+        () => probe.closeAndRecover(recoveryRecipient, { gasLimit: CALL_GAS_LIMIT }),
+      );
+    }
+    for (const tokenAddress of [tokenInAddress, tokenOutAddress].filter(Boolean)) {
+      const token = new Contract(tokenAddress, PRIVATE_ERC20_TESTNET_ABI, recoveryWallet);
+      if (await encryptedBalance(token, recoveryWallet, resource.address) !== 0n) {
+        throw new Error(`closed probe retained private-token residue at ${resource.address}`);
+      }
+    }
+    recoveryJournal.markRecovered(resource.id);
+  }
 }
 
 async function encryptedBalance(
@@ -191,8 +286,6 @@ function eventFromReceipt(
 }
 
 async function main(): Promise<void> {
-  await hre.run("clean");
-  await hre.run("compile");
   stage = "current artifacts compiled";
 
   const privateKey = requiredPrivateKey("COTI_TESTNET_PRIVATE_KEY");
@@ -237,6 +330,26 @@ async function main(): Promise<void> {
   const wallet = new CotiWallet(privateKey, ethers.provider, { aesKey });
   wallet.setAesKey(aesKey);
   const caller = await wallet.getAddress();
+  const sourceCommit = requiredSourceCommit();
+  if (sourceCommit !== deploymentRecord.sourceCommit) {
+    throw new Error("funded source commit does not match the reviewed deployment");
+  }
+  recoveryJournal = FundedRecoveryJournal.open({
+    runner: "best-execution-feasibility",
+    sourceCommit,
+    chainId: Number(network.chainId),
+    owner: caller,
+    deployment: await createFundedDeploymentBinding(deploymentRecord),
+  });
+  recoveryWallet = wallet;
+  recoveryRecipient = caller;
+  const unresolved = await recoveryJournal.reconcileTransactions(ethers.provider);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `funded recovery has ${unresolved.length} transaction(s) with unknown outcome; do not retry`,
+    );
+  }
+  await recoverJournalProbes();
   const deployer = new EthersWallet(privateKey, ethers.provider);
   const tokenIn = new Contract(tokenInAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const tokenOut = new Contract(tokenOutAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
@@ -255,11 +368,17 @@ async function main(): Promise<void> {
     "pool probe 0 deployment",
     poolFactory,
     [tokenInAddress, tokenOutAddress, 2n, 1n],
+    "MpcBestExecutionPoolProbe",
+    "pool-probe-0",
+    { tokenInAddress, tokenOutAddress },
   );
   const pool1 = await deployProbe(
     "pool probe 1 deployment",
     poolFactory,
     [tokenInAddress, tokenOutAddress, 3n, 1n],
+    "MpcBestExecutionPoolProbe",
+    "pool-probe-1",
+    { tokenInAddress, tokenOutAddress },
   );
   const pool0Address = await pool0.getAddress();
   const pool1Address = await pool1.getAddress();
@@ -274,6 +393,9 @@ async function main(): Promise<void> {
     "router probe deployment",
     routerFactory,
     [tokenInAddress, pool0Address, pool1Address, caller],
+    "MpcBestExecutionRouterProbe",
+    "router-probe",
+    { tokenInAddress, tokenOutAddress: "" },
   );
   const routerAddress = await routerDeployment.getAddress();
   await verifyDeployedRuntimeArtifact("MpcBestExecutionRouterProbe", routerAddress);
@@ -391,10 +513,10 @@ async function main(): Promise<void> {
 
   stage = "probe closure and private-asset recovery";
   const recoveryEvidence = [];
-  for (const [label, probe] of [
-    ["pool probe 0", pool0],
-    ["pool probe 1", pool1],
-    ["router probe", routerDeployment],
+  for (const [label, resourceId, probe] of [
+    ["pool probe 0", "pool-probe-0", pool0],
+    ["pool probe 1", "pool-probe-1", pool1],
+    ["router probe", "router-probe", routerDeployment],
   ] as const) {
     recoveryEvidence.push(await submit(
       `${label} closure and recovery`,
@@ -403,6 +525,7 @@ async function main(): Promise<void> {
     if (!Boolean(await probe.closed())) {
       throw new Error(`${label} did not remain permanently closed`);
     }
+    recoveryJournal.markRecovered(resourceId);
   }
 
   const probeAddresses = [pool0Address, pool1Address, routerAddress];
@@ -440,12 +563,75 @@ async function main(): Promise<void> {
   console.log(
     "COTI testnet GT feasibility passed: current runtime artifacts reused caller-bound GT across two contracts, selected privately, escrowed exactly, consumed allowances, restored the router's starting input balance, permanently closed every disposable probe, and recovered all private assets",
   );
+  recoveryJournal.markRun("passed");
+  const finalEvidence = await writeFundedRunEvidence({
+    journal: recoveryJournal,
+    provider: ethers.provider,
+    participants: [caller],
+    configuration: {
+      chainId: Number(network.chainId),
+      protocolVersion: 1,
+      quoteTransport: "paid-transaction",
+      candidateCount: 2,
+      tokenIn: tokenInAddress,
+      tokenOut: tokenOutAddress,
+      reviewedFactory: factoryAddress,
+      reviewedFeeVault: feeVaultAddress,
+      reviewedRouter: bestExecutionRouterAddress,
+    },
+    artifacts: [
+      {
+        label: "GT pool probe 0",
+        contractName: "MpcBestExecutionPoolProbe",
+        address: pool0Address,
+      },
+      {
+        label: "GT pool probe 1",
+        contractName: "MpcBestExecutionPoolProbe",
+        address: pool1Address,
+      },
+      {
+        label: "GT router probe",
+        contractName: "MpcBestExecutionRouterProbe",
+        address: routerAddress,
+      },
+    ],
+    assertions: [
+      "caller-bound GT reused across two pool contracts",
+      "winning encrypted output privately selected",
+      "quote-only path preserved private balances",
+      "atomic escrow settled through selected pool",
+      "temporary allowances cleared",
+      "disposable probes closed with zero residue",
+    ],
+  });
+  console.log(`fundedEvidence=${finalEvidence.path}`);
 }
 
-void main().catch((error: unknown) => {
+void main().catch(async (error: unknown) => {
+  if (error instanceof UnknownBroadcastOutcomeError) {
+    recoveryJournal?.markRun("failed");
+    console.error(
+      `COTI best-execution feasibility paused with an uncertain broadcast: ` +
+        `stage=${stage} ${safeTestnetErrorSummary(error)}; cleanup is deferred until receipt reconciliation.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  let reportedError = error;
+  try {
+    await recoverJournalProbes();
+    recoveryJournal?.markRun("failed");
+  } catch (recoveryError) {
+    recoveryJournal?.markRun("recovery-failed");
+    reportedError = new AggregateError(
+      [error, recoveryError],
+      "best-execution feasibility and funded recovery both failed",
+    );
+  }
   console.error(
     `COTI best-execution feasibility failed: stage=${stage} ` +
-      safeTestnetErrorSummary(error),
+      safeTestnetErrorSummary(reportedError),
   );
   process.exitCode = 1;
 });

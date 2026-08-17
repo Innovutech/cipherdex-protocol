@@ -1,6 +1,6 @@
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { Contract, TransactionReceipt } from "ethers";
-import hre, { ethers } from "hardhat";
+import { ethers } from "hardhat";
 import {
   CONFIDENTIAL_QUOTE_TRANSPORT,
   CIPHERDEX_PROTOCOL_VERSION,
@@ -386,8 +386,6 @@ async function requestPrivateQuote(
 }
 
 async function main(): Promise<void> {
-  await hre.run("clean");
-  await hre.run("compile");
   stage = "configuration";
   const network = await ethers.provider.getNetwork();
   if (network.chainId !== 7_082_400n) {

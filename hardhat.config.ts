@@ -1,4 +1,3 @@
-import "dotenv/config";
 import "@nomicfoundation/hardhat-toolbox";
 import { subtask } from "hardhat/config";
 import {
