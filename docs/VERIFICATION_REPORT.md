@@ -215,6 +215,14 @@ The review sequence and current results are:
    source coverage was retained. Token-usage measurement was unavailable from
    the scan workbench. No executable source change is permitted after this scan
    without repeating the appropriate scan.
+10. Focused working-tree diff scan
+    `3b7afb72-60e4-4156-a844-de92411348db` reviewed the three-file launcher
+    compatibility patch that binds Git `safe.directory` to the exact canonical
+    repository path for the launcher process. It completed with full coverage
+    and zero findings. Its source snapshot digest is
+    `codex-security-snapshot/v1:sha256:e19616d3ecdab145bf316e659411074a03a122829ecd8836c30daf92304ecdac`.
+    Global/system Git configuration, hooks, fsmonitor, replacement objects,
+    prompts and wildcard directory trust remain disabled.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before

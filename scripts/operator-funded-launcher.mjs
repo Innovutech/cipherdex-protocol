@@ -111,16 +111,18 @@ function run(executable, arguments_, options = {}) {
   return typeof result.stdout === "string" ? result.stdout.trim() : "";
 }
 
-function gitEnvironment(systemEnvironment) {
+function gitEnvironment(systemEnvironment, safeDirectory) {
   return {
     ...systemEnvironment,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: GIT_CONFIG_NULL,
-    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_COUNT: "3",
     GIT_CONFIG_KEY_0: "core.fsmonitor",
     GIT_CONFIG_VALUE_0: "false",
     GIT_CONFIG_KEY_1: "core.hooksPath",
     GIT_CONFIG_VALUE_1: GIT_CONFIG_NULL,
+    GIT_CONFIG_KEY_2: "safe.directory",
+    GIT_CONFIG_VALUE_2: safeDirectory,
     GIT_OPTIONAL_LOCKS: "0",
     GIT_NO_REPLACE_OBJECTS: "1",
     GIT_TERMINAL_PROMPT: "0",
@@ -237,7 +239,7 @@ async function main() {
   const environmentPath = assertExternalEnvironment(repositoryRoot, resolve(input.environment));
   const git = trustedGit();
   const systemEnvironment = selectedEnvironment(SYSTEM_ENVIRONMENT);
-  const hardenedGitEnvironment = gitEnvironment(systemEnvironment);
+  const hardenedGitEnvironment = gitEnvironment(systemEnvironment, repositoryRoot);
 
   const objectType = runGit(git, repositoryRoot, hardenedGitEnvironment, [
     "cat-file", "-t", input.commit,
