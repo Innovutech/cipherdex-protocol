@@ -103,6 +103,8 @@ for (const required of [
   'resolve(runtime, "scripts", "resolve-hardhat-cli.mjs")',
   "materializeInternalFileLinks(runtime)",
   "privateFilesystem.assertPrivateTree(runtime)",
+  "recordReviewedBuild(runtime, input.commit, {",
+  "receiptRoot,",
   'CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE: "1"',
 ]) {
   assert.ok(operatorLauncherSource.includes(required));
@@ -122,7 +124,7 @@ const envLoadPosition = freshRunnerSource.indexOf(
   'await import("./fresh-runtime-environment.mjs")',
 );
 const reviewedBuildPosition = freshRunnerSource.indexOf(
-  "verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles })",
+  "verifyReviewedBuild(executionRoot, sourceCommit, {",
 );
 const environmentReadPosition = freshRunnerSource.indexOf(
   "readReviewedEnvironment(environmentPath)",
@@ -148,6 +150,8 @@ for (const required of [
   "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git",
   "buildReviewedRuntimeEnvironment",
   "readReviewedEnvironment",
+  'requiredCanonicalDirectory("CIPHERDEX_BUILD_RECEIPT_ROOT")',
+  "receiptRoot: buildReceiptRoot",
   "fresh-runtime-environment.mjs",
   "GIT_CONFIG_NOSYSTEM",
   "GIT_NO_REPLACE_OBJECTS",

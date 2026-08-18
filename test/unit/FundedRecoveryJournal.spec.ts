@@ -203,6 +203,30 @@ describe("funded recovery journal", function () {
     }
   });
 
+  it("uses the explicit reviewed-build receipt root for launcher handoff", function () {
+    const root = join(directory, "reviewed-build-explicit");
+    const receiptRoot = join(directory, "explicit-build-receipts");
+    mkdirSync(root);
+    restrictPrivateDirectory(root);
+    for (const path of ["node_modules", "artifacts", "typechain-types"]) {
+      mkdirSync(join(root, path), { recursive: true });
+      writeFileSync(join(root, path, "entry"), path, "utf8");
+    }
+    writeFileSync(join(root, "package-lock.json"), "{}", "utf8");
+    const previous = process.env.CIPHERDEX_BUILD_RECEIPT_ROOT;
+    process.env.CIPHERDEX_BUILD_RECEIPT_ROOT = join(directory, "wrong-build-receipts");
+    try {
+      recordReviewedBuild(root, COMMIT, { receiptRoot });
+      expect(verifyReviewedBuild(root, COMMIT, { receiptRoot }).sourceCommit).to.equal(COMMIT);
+      expect(() => verifyReviewedBuild(root, COMMIT)).to.throw(
+        "funded runtime has no operator-reviewed build receipt",
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CIPHERDEX_BUILD_RECEIPT_ROOT;
+      else process.env.CIPHERDEX_BUILD_RECEIPT_ROOT = previous;
+    }
+  });
+
   it("rejects reviewed build links that escape the measured dependency tree", function () {
     const root = join(directory, "reviewed-build-linked");
     const external = join(directory, "external-package");

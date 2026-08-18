@@ -282,8 +282,12 @@ async function main() {
 
   const executionRoot = realpathSync(resolve(process.cwd()));
   const publicRepositoryRoot = requiredCanonicalDirectory("CIPHERDEX_PUBLIC_REPOSITORY_ROOT");
+  const buildReceiptRoot = requiredCanonicalDirectory("CIPHERDEX_BUILD_RECEIPT_ROOT");
   if (isInside(executionRoot, publicRepositoryRoot) || isInside(publicRepositoryRoot, executionRoot)) {
     throw new Error("private funded runtime and public repository must be separate trees");
+  }
+  if (buildReceiptRoot === executionRoot || !isInside(executionRoot, buildReceiptRoot)) {
+    throw new Error("reviewed build receipt root must be a private runtime subdirectory");
   }
   const sourceCommit = process.env.CIPHERDEX_AUTHENTICATED_SOURCE_COMMIT?.trim().toLowerCase();
   if (!sourceCommit || !/^[0-9a-f]{40}$/u.test(sourceCommit)) {
@@ -318,7 +322,7 @@ async function main() {
     .split("\0")
     .filter(Boolean);
   const { verifyReviewedBuild } = await import("./reviewed-build-receipt.mjs");
-  verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles });
+  verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles, receiptRoot: buildReceiptRoot });
 
   const {
     ACTIVE_SIGNER_LEASES_ENVIRONMENT,
@@ -394,7 +398,7 @@ async function main() {
 
   // Detect mutation of authenticated source, dependencies or compiler outputs
   // before any generated JSON crosses back into the public checkout.
-  verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles });
+  verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles, receiptRoot: buildReceiptRoot });
   const { publishReviewedJson } = await import("./secure-publication.mjs");
   for (const directoryName of ["deployments", "evidence"]) {
     const sourceRoot = resolve(executionRoot, directoryName);

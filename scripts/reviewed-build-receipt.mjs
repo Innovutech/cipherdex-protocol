@@ -57,10 +57,12 @@ function digestTrackedSource(repositoryRoot, trackedFiles) {
   return hash.digest("hex");
 }
 
-function receiptPath(repositoryRoot) {
+function receiptPath(repositoryRoot, configuredRoot) {
   const key = createHash("sha256").update(resolve(repositoryRoot).toLowerCase()).digest("hex");
   const directory = resolve(
-    process.env.CIPHERDEX_BUILD_RECEIPT_ROOT ?? resolve(homedir(), ".cipherdex", "reviewed-builds"),
+    configuredRoot ??
+      process.env.CIPHERDEX_BUILD_RECEIPT_ROOT ??
+      resolve(homedir(), ".cipherdex", "reviewed-builds"),
   );
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   return resolve(restrictPrivateDirectory(directory), `${key}.journal`);
@@ -80,7 +82,7 @@ function currentMeasurement(repositoryRoot, sourceCommit, trackedFiles = []) {
 }
 
 export function recordReviewedBuild(repositoryRoot, sourceCommit, options = {}) {
-  const path = receiptPath(repositoryRoot);
+  const path = receiptPath(repositoryRoot, options.receiptRoot);
   const previous = readLatestUtf8Record(path);
   const receipt = {
     ...currentMeasurement(repositoryRoot, sourceCommit, options.trackedFiles),
@@ -91,7 +93,7 @@ export function recordReviewedBuild(repositoryRoot, sourceCommit, options = {}) 
 }
 
 export function verifyReviewedBuild(repositoryRoot, sourceCommit, options = {}) {
-  const raw = readLatestUtf8Record(receiptPath(repositoryRoot));
+  const raw = readLatestUtf8Record(receiptPath(repositoryRoot, options.receiptRoot));
   if (raw === undefined) throw new Error("funded runtime has no operator-reviewed build receipt");
   const receipt = JSON.parse(raw);
   const measured = currentMeasurement(repositoryRoot, sourceCommit, options.trackedFiles);

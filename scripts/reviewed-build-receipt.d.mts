@@ -14,6 +14,7 @@ export function recordReviewedBuild(
   sourceCommit: string,
   options?: Readonly<{
     trackedFiles?: readonly string[];
+    receiptRoot?: string;
   }>,
 ): ReviewedBuildReceipt;
 
@@ -22,5 +23,6 @@ export function verifyReviewedBuild(
   sourceCommit: string,
   options?: Readonly<{
     trackedFiles?: readonly string[];
+    receiptRoot?: string;
   }>,
 ): ReviewedBuildReceipt;

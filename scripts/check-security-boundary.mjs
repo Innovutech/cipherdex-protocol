@@ -613,6 +613,8 @@ for (const required of [
   'resolve(runtime, "scripts", "resolve-hardhat-cli.mjs")',
   "materializeInternalFileLinks(runtime)",
   "privateFilesystem.assertPrivateTree(runtime)",
+  "recordReviewedBuild(runtime, input.commit, {",
+  "receiptRoot,",
   'CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE: "1"',
   "rmSync(runtime, { recursive: true, force: true })",
 ]) {
@@ -653,7 +655,7 @@ const environmentModulePosition = freshRunnerSource.indexOf(
   'await import("./fresh-runtime-environment.mjs")',
 );
 const reviewedBuildPosition = freshRunnerSource.indexOf(
-  "verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles })",
+  "verifyReviewedBuild(executionRoot, sourceCommit, {",
 );
 const environmentReadPosition = freshRunnerSource.indexOf(
   "readReviewedEnvironment(environmentPath)",
@@ -710,10 +712,18 @@ for (const required of [
   "typechainSha256",
   "cipherdex.reviewed-build-receipt/v2",
   "assertPrivateTree(repositoryRoot)",
+  "options.receiptRoot",
 ]) {
   if (!reviewedBuildReceiptSource.includes(required)) {
     throw new Error(`Reviewed build receipt omits required measurement: ${required}`);
   }
+}
+if (
+  !freshRunnerSource.includes('requiredCanonicalDirectory("CIPHERDEX_BUILD_RECEIPT_ROOT")') ||
+  !freshRunnerSource.includes("receiptRoot: buildReceiptRoot") ||
+  !freshRunnerSource.includes("reviewed build receipt root must be a private runtime subdirectory")
+) {
+  throw new Error("Private runner does not bind reviewed-build verification to the launcher receipt root");
 }
 if (/executionSnapshot|requireExecutionSnapshot/u.test(reviewedBuildReceiptSource)) {
   throw new Error("Reviewed build receipt retains the superseded mutable snapshot model");

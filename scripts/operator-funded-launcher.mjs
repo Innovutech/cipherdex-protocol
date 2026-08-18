@@ -318,7 +318,10 @@ async function main() {
     const reviewedBuild = await import(
       `${pathToFileURL(resolve(runtime, "scripts", "reviewed-build-receipt.mjs")).href}?commit=${input.commit}`
     );
-    const runtimeReceipt = reviewedBuild.recordReviewedBuild(runtime, input.commit, { trackedFiles });
+    const runtimeReceipt = reviewedBuild.recordReviewedBuild(runtime, input.commit, {
+      trackedFiles,
+      receiptRoot,
+    });
     if (runtimeReceipt.sourceCommit !== input.commit) {
       throw new Error("reviewed funded build receipt has the wrong source commit");
     }

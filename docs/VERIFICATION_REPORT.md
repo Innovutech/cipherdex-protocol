@@ -239,6 +239,15 @@ The review sequence and current results are:
     The resolver reads the pinned package's exported manifest, rejects linked or
     non-regular manifest/CLI files, and requires the real CLI path to remain
     inside the authenticated Hardhat package.
+13. Focused diff scan `9bf7562b-54d0-499f-9d66-2789c9e980a0` reviewed the
+    explicit reviewed-build receipt-root handoff between the launcher and
+    private runner. It completed with full changed-source coverage and zero
+    findings. Its source snapshot digest is
+    `codex-security-snapshot/v1:sha256:f34a4066fdf3fa9c636051e4bccb4bffd0ad1e15d67debd7ca9f1c9facbedafe`.
+    The runner requires the canonical receipt directory to be a strict private
+    runtime subdirectory and uses that explicit root for both pre- and
+    post-execution build verification. The targeted 32-case funded recovery
+    suite passed.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
