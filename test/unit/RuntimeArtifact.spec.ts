@@ -4,6 +4,10 @@ import {
   verifyDeployedRuntimeArtifact,
   verifyDeployedRuntimeArtifactWithProvenance,
 } from "../../scripts/runtime-artifact";
+import {
+  configureConfidentialLaunch,
+  deployConfidentialFactory,
+} from "../helpers/deployConfidentialFactory";
 
 describe("funded runtime artifact verification", function () {
   it("accepts the current artifact including normalized immutable slots", async function () {
@@ -44,5 +48,20 @@ describe("funded runtime artifact verification", function () {
       rejected = error instanceof Error && error.message.includes("runtime");
     }
     expect(rejected).to.equal(true);
+  });
+
+  it("matches the launch strategy's constructor-created migrator runtime", async function () {
+    const deployment = await deployConfidentialFactory();
+    const launch = await configureConfidentialLaunch(deployment);
+    const address = await launch.migrator.getAddress();
+
+    expect(
+      await verifyDeployedRuntimeArtifact("ConfidentialLaunchpadMigrator", address),
+    ).to.equal(ethers.keccak256(await ethers.provider.getCode(address)));
+    const provenance = await verifyDeployedRuntimeArtifactWithProvenance(
+      "ConfidentialLaunchpadMigrator",
+      address,
+    );
+    expect(provenance.settings.optimizer.runs).to.equal(1);
   });
 });

@@ -47,7 +47,10 @@ export default defineConfig({
     overrides: {
       "contracts/ConfidentialCPMM.sol": compilerSettings(201),
       "contracts/ConfidentialCPMMFactory.sol": compilerSettings(1),
-      "contracts/ConfidentialLaunchpadMigrator.sol": compilerSettings(203),
+      // The migrator can only be created by the launch strategy constructor.
+      // Match that compilation job so its canonical artifact is byte-identical
+      // to the constructor-created runtime verified during deployment.
+      "contracts/ConfidentialLaunchpadMigrator.sol": compilerSettings(1),
       "contracts/ConfidentialCPMMDeployer.sol": compilerSettings(1),
       "contracts/ConfidentialLaunchInitializationStrategy.sol": compilerSettings(1),
       "contracts/ConfidentialInitializationStrategyRegistry.sol": compilerSettings(1),

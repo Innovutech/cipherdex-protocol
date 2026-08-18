@@ -257,6 +257,18 @@ The review sequence and current results are:
     runner's strict containment boundary, does not overlap Git configuration,
     hooks, refs, objects, replacement objects or index state, and leaves the
     reviewed source worktree clean after receipt writes.
+15. Focused diff scan `7c0f5a69-aea6-48d6-9b6d-b94fad6d33b0` reviewed the
+    compiler-setting alignment for the strategy-created launchpad migrator and
+    completed with zero findings. Its source snapshot digest is
+    `codex-security-snapshot/v1:sha256:a607147f077aca14ec79bc126aac88de4451588df4e763e0e7a7de9be01f3d30`.
+    A funded deployment exposed that Hardhat had compiled the migrator with
+    optimizer runs 203 as a standalone artifact but runs 1 when embedded in the
+    launch strategy's constructor. Both jobs now use runs 1 and produce the same
+    12,330-byte runtime with 26 immutable references. A regression test deploys
+    the real constructor child and verifies its exact normalized runtime and
+    compiler provenance. The complete verifier passed with zero production or
+    operational advisories and 201 passing tests; one funded integration test
+    remains intentionally gated.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
