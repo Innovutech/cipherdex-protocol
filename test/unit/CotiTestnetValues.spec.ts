@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers } from "../../hardhat/runtime.js";
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { decryptPrivateValue256 } from "../../scripts/coti-testnet-values";
 import { resolvePrivateTokenCodehashes } from "../../scripts/private-token-codehashes";

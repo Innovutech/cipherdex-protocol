@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +13,7 @@ import {
   verifyConfiguredTestnetDeployment,
   type VerifiedTestnetDeploymentRecord,
 } from "../../scripts/testnet-deployment-provenance";
+import { createFundedDeploymentBinding } from "../../scripts/funded-deployment-binding";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,6 +34,7 @@ describe("configured testnet deployment provenance", function () {
     compilerInputHash: `0x${"56".repeat(32)}`,
     solcVersion: "0.8.28",
     solcLongVersion: "0.8.28+commit.7893614a",
+    immutableReferenceCount: 0,
     settings: Object.freeze({
       evmVersion: "cancun",
       viaIR: true,
@@ -75,7 +78,12 @@ describe("configured testnet deployment provenance", function () {
   async function verify(
     cwd: string,
     relativePath: string,
-    options: Readonly<{ dirty?: boolean; commit?: string; actual?: RuntimeArtifactProvenance }> = {},
+    options: Readonly<{
+      dirty?: boolean;
+      commit?: string;
+      recordCommit?: string;
+      actual?: RuntimeArtifactProvenance;
+    }> = {},
   ): Promise<unknown> {
     return verifyConfiguredTestnetDeployment(
       relativePath,
@@ -89,12 +97,14 @@ describe("configured testnet deployment provenance", function () {
       {
         readSourceState: async (_cwd, recordPath) => ({
           headCommit: options.commit ?? evidenceCommit,
+          recordCommit: options.recordCommit ?? options.commit ?? evidenceCommit,
           dirty: options.dirty ?? false,
           recordTracked: true,
           recordMatchesHead: true,
           sourceCommitIsAncestor: true,
           changedPathsSinceSource: [recordPath],
         }),
+        readImmutableRecord: async () => readFile(join(cwd, relativePath), "utf8"),
         verifyRuntime: async () => options.actual ?? artifact,
         verifyTransactions: async () => undefined,
         canonicalDeployments,
@@ -111,6 +121,59 @@ describe("configured testnet deployment provenance", function () {
       };
       expect(record.sourceCommit).to.equal(sourceCommit);
       expect(record.evidenceCommit).to.equal(evidenceCommit);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("parses and binds one immutable Git-object snapshot despite working-file substitution", async function () {
+    const { cwd, relativePath } = await fixture();
+    try {
+      const immutableRecord = await readFile(join(cwd, relativePath), "utf8");
+      const expectedSha256 = createHash("sha256").update(immutableRecord, "utf8").digest("hex");
+      const substituted = deploymentRecord();
+      substituted.contracts.confidentialFactory.address = `0x${"99".repeat(20)}`;
+
+      const verified = await verifyConfiguredTestnetDeployment(
+        relativePath,
+        { getCode: async () => "0x00" },
+        [{
+          recordKey: "confidentialFactory",
+          contractName: "ConfidentialCPMMFactory",
+          address,
+        }],
+        cwd,
+        {
+          readSourceState: async (_cwd, recordPath) => {
+            await writeFile(join(cwd, relativePath), JSON.stringify(substituted), "utf8");
+            return {
+              headCommit: evidenceCommit,
+              recordCommit: evidenceCommit,
+              dirty: false,
+              recordTracked: true,
+              recordMatchesHead: true,
+              sourceCommitIsAncestor: true,
+              changedPathsSinceSource: [recordPath],
+            };
+          },
+          readImmutableRecord: async () => immutableRecord,
+          verifyRuntime: async () => artifact,
+          verifyTransactions: async () => undefined,
+          canonicalDeployments,
+        },
+      );
+      expect(verified.contracts.confidentialFactory?.address).to.equal(address);
+      expect(verified.recordSha256).to.equal(expectedSha256);
+      expect(verified.recordPath).to.equal(relativePath);
+      expect(verified.manifestCommit).to.equal(evidenceCommit);
+
+      await writeFile(join(cwd, relativePath), "{}\n", "utf8");
+      expect(await createFundedDeploymentBinding(verified)).to.deep.equal({
+        recordPath: relativePath,
+        recordSha256: expectedSha256,
+        manifestCommit: evidenceCommit,
+        sourceCommit,
+      });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -166,6 +229,7 @@ describe("configured testnet deployment provenance", function () {
       {
         sourceState: {
           headCommit: evidenceCommit,
+          recordCommit: evidenceCommit,
           dirty: false,
           recordTracked: false,
           recordMatchesHead: false,
@@ -177,6 +241,7 @@ describe("configured testnet deployment provenance", function () {
       {
         sourceState: {
           headCommit: evidenceCommit,
+          recordCommit: evidenceCommit,
           dirty: false,
           recordTracked: true,
           recordMatchesHead: false,
@@ -188,6 +253,7 @@ describe("configured testnet deployment provenance", function () {
       {
         sourceState: {
           headCommit: evidenceCommit,
+          recordCommit: evidenceCommit,
           dirty: false,
           recordTracked: true,
           recordMatchesHead: true,
@@ -199,6 +265,7 @@ describe("configured testnet deployment provenance", function () {
       {
         sourceState: {
           headCommit: evidenceCommit,
+          recordCommit: evidenceCommit,
           dirty: false,
           recordTracked: true,
           recordMatchesHead: true,
@@ -225,6 +292,7 @@ describe("configured testnet deployment provenance", function () {
             cwd,
             {
               readSourceState: async () => testCase.sourceState,
+              readImmutableRecord: async () => readFile(join(cwd, relativePath), "utf8"),
               verifyRuntime: async () => artifact,
               verifyTransactions: async () => undefined,
               canonicalDeployments,
@@ -255,6 +323,7 @@ describe("configured testnet deployment provenance", function () {
         {
           readSourceState: async () => ({
             headCommit: evidenceCommit,
+            recordCommit: evidenceCommit,
             dirty: false,
             recordTracked: true,
             recordMatchesHead: true,
@@ -265,6 +334,7 @@ describe("configured testnet deployment provenance", function () {
               "docs/VERIFICATION_REPORT.md",
             ],
           }),
+          readImmutableRecord: async () => readFile(join(cwd, relativePath), "utf8"),
           verifyRuntime: async () => artifact,
           verifyTransactions: async () => undefined,
           canonicalDeployments,
@@ -285,12 +355,14 @@ describe("configured testnet deployment provenance", function () {
           {
             readSourceState: async () => ({
               headCommit: evidenceCommit,
+              recordCommit: evidenceCommit,
               dirty: false,
               recordTracked: true,
               recordMatchesHead: true,
               sourceCommitIsAncestor: true,
               changedPathsSinceSource: [relativePath, "scripts/testnet-harness.ts"],
             }),
+            readImmutableRecord: async () => readFile(join(cwd, relativePath), "utf8"),
             verifyRuntime: async () => artifact,
             verifyTransactions: async () => undefined,
             canonicalDeployments,
@@ -419,6 +491,37 @@ describe("configured testnet deployment provenance", function () {
       );
       expect(verified.sourceCommit).to.equal(source);
       expect(verified.evidenceCommit).to.equal(evidence);
+      expect(verified.manifestCommit).to.equal(evidence);
+
+      await mkdir(join(cwd, "evidence"));
+      const fundedEvidencePath = `evidence/coti-testnet-${source}.json`;
+      await writeFile(join(cwd, fundedEvidencePath), "{}\n", "utf8");
+      await execFileAsync("git", ["add", fundedEvidencePath], { cwd });
+      await execFileAsync("git", ["commit", "-m", "funded evidence"], { cwd });
+      const fundedEvidenceCommit = (await execFileAsync(
+        "git",
+        ["rev-parse", "--verify", "HEAD"],
+        { cwd },
+      )).stdout.trim().toLowerCase();
+
+      const verifiedAfterFundedEvidence = await verifyConfiguredTestnetDeployment(
+        relativePath,
+        { getCode: async () => "0x00" },
+        [{
+          recordKey: "confidentialFactory",
+          contractName: "ConfidentialCPMMFactory",
+          address,
+        }],
+        cwd,
+        {
+          verifyRuntime: async () => artifact,
+          verifyTransactions: async () => undefined,
+          canonicalDeployments,
+        },
+      );
+      expect(verifiedAfterFundedEvidence.evidenceCommit).to.equal(fundedEvidenceCommit);
+      expect(verifiedAfterFundedEvidence.manifestCommit).to.equal(evidence);
+      expect(verifiedAfterFundedEvidence.recordSha256).to.equal(verified.recordSha256);
 
       await writeFile(join(cwd, relativePath), `${recordBody}\n`, "utf8");
       message = "";

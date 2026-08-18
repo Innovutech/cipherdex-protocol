@@ -1,7 +1,10 @@
 import { expect } from "chai";
 import { Interface } from "ethers";
-import { ethers } from "hardhat";
-import { deployConfidentialFactory } from "../helpers/deployConfidentialFactory";
+import { ethers } from "../../hardhat/runtime.js";
+import {
+  configureConfidentialLaunch,
+  deployConfidentialFactory,
+} from "../helpers/deployConfidentialFactory";
 
 describe("ConfidentialBestExecutionRouter canonical boundary", function () {
   const emptyInput = {
@@ -11,15 +14,21 @@ describe("ConfidentialBestExecutionRouter canonical boundary", function () {
 
   async function deploy() {
     const [deployer, outsider] = await ethers.getSigners();
-    const { factory, representativeTokens } = await deployConfidentialFactory();
+    const deployment = await deployConfidentialFactory();
+    const { factory, representativeTokens } = deployment;
+    const launch = await configureConfidentialLaunch(deployment);
     const router = await (
       await ethers.getContractFactory("ConfidentialBestExecutionRouter")
     ).deploy(await factory.getAddress());
     await router.waitForDeployment();
+    expect(await (factory as any).BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH()).to.equal(
+      ethers.keccak256(await ethers.provider.getCode(await router.getAddress())),
+    );
     await factory.setBestExecutionRouter(await router.getAddress());
     return {
       deployer,
       factory,
+      launch,
       outsider,
       router,
       token0: representativeTokens[0],
@@ -37,13 +46,35 @@ describe("ConfidentialBestExecutionRouter canonical boundary", function () {
 
     const { factory, router } = await deploy();
     expect(await router.factory()).to.equal(await factory.getAddress());
-    expect(await router.PROTOCOL_VERSION()).to.equal(1n);
+    expect(await router.PROTOCOL_VERSION()).to.equal(2n);
+    expect(await router.MAX_CANDIDATES()).to.equal(3n);
+    expect(await router.DEFAULT_STANDARD_CANDIDATE_BITMAP()).to.equal(73n);
 
     const abi = new Interface(router.interface.fragments);
     expect(abi.getFunction("requestBestQuoteExactInput")).to.not.equal(null);
+    expect(abi.getFunction("requestBestQuoteExactInputWithCandidates"))
+      .to.not.equal(null);
     expect(abi.getFunction("swapBestExactInput")).to.not.equal(null);
+    expect(abi.getFunction("swapBestExactInputWithCandidates"))
+      .to.not.equal(null);
     expect(abi.getFunction("execute")).to.equal(null);
     expect(abi.getFunction("multicall")).to.equal(null);
+  });
+
+  it("rejects an interface-compatible router with unreviewed runtime code", async function () {
+    const deployment = await deployConfidentialFactory();
+    await configureConfidentialLaunch(deployment);
+    const facade = await (
+      await ethers.getContractFactory("MockBestExecutionRouterFacade")
+    ).deploy(await deployment.factory.getAddress());
+    await facade.waitForDeployment();
+
+    await expect(
+      deployment.factory.setBestExecutionRouter(await facade.getAddress()),
+    ).to.be.revertedWithCustomError(
+      deployment.factory,
+      "InvalidBestExecutionRouter",
+    );
   });
 
   it("rejects expired, invalid and unsupported requests before MPC work", async function () {
@@ -52,6 +83,26 @@ describe("ConfidentialBestExecutionRouter canonical boundary", function () {
     const token1Address = await token1.getAddress();
     const requestId = ethers.keccak256(ethers.toUtf8Bytes("request"));
 
+    await expect(
+      router.requestBestQuoteExactInputWithCandidates(
+        token0Address,
+        token1Address,
+        emptyInput,
+        0,
+        requestId,
+        2n ** 63n,
+      ),
+    ).to.be.revertedWithCustomError(router, "InvalidCandidateBitmap");
+    await expect(
+      router.requestBestQuoteExactInputWithCandidates(
+        token0Address,
+        token1Address,
+        emptyInput,
+        0b1111,
+        requestId,
+        2n ** 63n,
+      ),
+    ).to.be.revertedWithCustomError(router, "InvalidCandidateBitmap");
     await expect(
       router.requestBestQuoteExactInput(
         token0Address,

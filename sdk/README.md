@@ -11,11 +11,11 @@ clients must reject it rather than infer support. Public pool users can use the
 factory-gated quoter and exact-input router ABI fragments. Confidential pool
 discovery reports `encrypted-transaction-event-v1`: current COTI testnet requires
 paid MPC transactions because fresh MPC execution is rejected under `eth_call`.
-The currently recorded v2 deployment has only the paid per-pool transaction, so
-it remains the primary working quote path there. Once the canonical router in
-this version passes final verification and is freshly deployed, one router
-transaction across all initialized v1 fee tiers becomes preferred and per-pool
-transactions remain as a direct compatibility path.
+Paid per-pool transactions are the only proven primary exact-quote transport.
+The confidential router can evaluate a bounded factory-derived set in one paid
+transaction, but it is not gasless and becomes a preferred integration path only
+after a fresh funded deployment proves the final router. Per-pool transactions
+remain direct protocol operations rather than being mislabeled as a fallback.
 
 The SDK exposes shape parsers and semantic guards for privacy-minimal lock and
 launchpad migration records. Shape or semantic validity is not chain
@@ -24,6 +24,9 @@ reviewed deployment policy and an RPC-backed adapter before treating indexed
 migration metadata as protocol evidence. The verifier authenticates the
 successful transaction and exact emitter logs, configured factory/migrator
 binding, canonical pool, immutable pool metadata and current public `lockInfo`.
+Migrator provenance is read from the expected initialization strategy itself;
+there is no factory-global launch adapter to conflate independent strategy
+classes.
 Those records contain only public pool/participant identity, disposition, lock
 timing and lock identifiers; they do not contain private share amounts,
 reserves, balances or encrypted payloads. Confidential pool discovery contains
@@ -46,7 +49,7 @@ confidential pools expose a pool-bound `PrivateLPToken`; its ABI fragment is
 available for encrypted LP transfers and approvals, while aggregate
 `totalSupply()` must not be used as a private-supply oracle.
 
-Discovery schema version 5 also binds every pool to the immutable CipherDEX v1
+Discovery schema version 6 also binds every pool to the immutable CipherDEX v1
 fee policy and fee vault. Integrations can present the complete total fee and
 its LP/protocol split without exposing accrued confidential amounts. The SDK's
 `calculateCipherDEXV1FeeBreakdown` mirrors pool integer rounding; it does not add
@@ -63,7 +66,11 @@ approved confidential fee tier. See `docs/FEE_ECONOMICS.md`.
 reject impossible disposition, lock-ID and unlock-time combinations, but still
 do not prove that an event happened on-chain. Only
 `verifyLaunchpadMigrationMetadata` returns process-local verified migration
-evidence.
+evidence. It authenticates the successful receipt, exact expected-migrator
+events, canonical factory/pool state and current lock state. It intentionally
+does not require the migration call to be the top-level transaction, so an
+ERC-1271 account may execute through its wallet or entry-point contract without
+being rejected as false provenance.
 
 `isConfidentialPoolDiscovery` validates only the untrusted JSON shape. Before
 trusting a discovery record, callers must run
@@ -73,8 +80,11 @@ runtime codehash, through an RPC-backed adapter. The verifier proves deployed
 code, factory membership, canonical lookup, immutable pool metadata, the
 factory's helper address/codehash constant, helper runtime codehash, LP-token
 code, and exact `(pool, token, canonicalFactory)` issuance attestation before it
-returns a process-local verified value. Protocol version 2 uses
-`private-erc20-cpmm-v2`. Only verified records may enter confidential quote
+returns a process-local verified value. Confidential protocol version 3 uses
+`private-erc20-cpmm-v3` and includes the initialization strategy, strategy class,
+standard/launch-protected class and initialized state. Canonical lookup is for
+the complete key `(ordered pair, fee tier, privacy mode, protocol version,
+initialization strategy)`. Only verified, initialized records may enter quote
 selection.
 
 The confidential factory also exposes its immutable approved private-token
@@ -107,8 +117,16 @@ self-consistent chain view and is outside what ordinary JSON-RPC reads can prove
 
 A walletless backend can operate a dedicated non-custodial COTI quote identity
 and submit one fresh router-bound best-quote request. That identity must not hold
-user funds or sign swaps. Paid per-pool quote transactions remain available as
-a direct compatibility path, but the SDK does not turn caller-authored decrypted
+user funds or sign swaps. Paid per-pool quote transactions remain the proven
+primary direct operation; the SDK does not turn caller-authored decrypted
 outputs into execution-grade route evidence. Integrators must disclose quote
 latency/cost, use fresh router/swap-selector-bound inputs for execution, and
 never substitute zero minimum output or a public reserve approximation.
+
+Launch integrations should build the EIP-712 value with
+`buildConfidentialLaunchCommitment`, sign `LAUNCH_COMMITMENT_EIP712_TYPES` with
+both creator and launch-authority identities, then build immutable calldata with
+`buildConfidentialLaunchCommitCall`. These builders canonicalize token order and
+pin confidential protocol version 3 and privacy mode 1; they do not sign or hold
+keys. Discovery must distinguish a standard pool (`initializationStrategy` zero,
+class 0), an empty committed launch pool, and an initialized active launch pool.

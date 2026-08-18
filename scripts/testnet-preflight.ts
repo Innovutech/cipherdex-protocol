@@ -1,6 +1,6 @@
 import { CotiNetwork, Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { Contract, JsonRpcProvider } from "ethers";
-import { ethers } from "hardhat";
+import { ethers } from "../hardhat/runtime.js";
 import { PRIVATE_ERC20_TESTNET_ABI } from "./coti-testnet-abi";
 
 const COTI_TESTNET_CHAIN_ID = 7_082_400n;

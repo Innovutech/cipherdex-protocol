@@ -1,7 +1,14 @@
 import { Contract, TransactionReceipt, ethers as ethersLibrary } from "ethers";
-import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import { ethers } from "hardhat";
+import { artifacts, ethers } from "../hardhat/runtime.js";
 
+import {
+  buildConfidentialLaunchCommitment,
+  buildConfidentialLaunchCommitCall,
+  LAUNCH_COMMITMENT_EIP712_TYPES,
+  LAUNCH_INITIALIZATION_EIP712_DOMAIN,
+  LAUNCHPAD_MIGRATION_EIP712_TYPES,
+  LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
+} from "../sdk/src/index";
 import {
   CONFIDENTIAL_BEST_EXECUTION_ROUTER_TESTNET_ABI,
   CONFIDENTIAL_FACTORY_TESTNET_ABI,
@@ -10,11 +17,24 @@ import {
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import {
-  FundedRecoveryJournal,
+  type FundedRecoveryJournal,
   verifyRecoveryResourceCreation,
 } from "./funded-recovery-journal";
-import { writeFundedRunEvidence } from "./funded-run-evidence";
+import {
+  BEST_EXECUTION_FUNDED_ASSERTIONS,
+  preflightFundedRunConfiguration,
+  writePreparedFundedRunEvidence,
+} from "./funded-run-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
+import {
+  FundedCotiWallet as CotiWallet,
+  openFundedRecoveryJournal,
+  withFundedTransactionEvidence,
+} from "./funded-transaction-wallet";
+import {
+  recoverPrivateAllowanceObligations,
+  setRecoverablePrivateAllowance,
+} from "./funded-private-allowance";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import { confidentialLiquidityBounds, minimumWithSlippage } from "./testnet-slippage";
@@ -46,8 +66,14 @@ const CALL_GAS_LIMIT = (() => {
 })();
 const CREATE_POOL_GAS_LIMIT = 6_500_000n;
 const FEE_VAULT_DEPLOY_GAS_LIMIT = 2_500_000n;
+const POOL_DEPLOYER_DEPLOY_GAS_LIMIT = 5_000_000n;
+const STRATEGY_REGISTRY_DEPLOY_GAS_LIMIT = 3_000_000n;
+const INITIALIZATION_STRATEGY_DEPLOY_GAS_LIMIT = 5_000_000n;
+const STACK_BIND_GAS_LIMIT = 500_000n;
 const UINT64_MAX = (1n << 64n) - 1n;
 const FEE_TIERS = [5, 30, 100] as const;
+const MIXED_TWO_CANDIDATE_BITMAP = 0b001_010_000;
+const MIXED_THREE_CANDIDATE_BITMAP = 0b001_010_001;
 let stage = "configuration";
 let requestNonce = 0;
 let recoveryJournal: FundedRecoveryJournal | undefined;
@@ -62,6 +88,7 @@ type Submitted = Readonly<{
 type PoolContext = Readonly<{
   address: string;
   feeBps: number;
+  initializationStrategy: string;
   pool: Contract;
   token0Address: string;
   token1Address: string;
@@ -101,6 +128,7 @@ type PublicPoolSnapshot = Readonly<{
   scale0: string;
   scale1: string;
   feeBps: string;
+  initializationStrategy: string;
   feeVault: string;
   bootstrapper: string;
   lpToken: string;
@@ -143,12 +171,14 @@ function journal(): FundedRecoveryJournal {
   return recoveryJournal;
 }
 
-function optionalPositiveAmount(name: string, fallback: bigint): bigint {
+function optionalBoundedAmount(name: string, fallback: bigint, maximum: bigint): bigint {
   const raw = process.env[name]?.trim();
+  if (fallback <= 0n || fallback > maximum) throw new Error(`${name} fallback exceeds its reviewed cap`);
   if (!raw) return fallback;
   if (!/^\d+$/.test(raw)) throw new Error(`${name} must be a positive integer`);
   const value = BigInt(raw);
   if (value === 0n) throw new Error(`${name} must be a positive integer`);
+  if (value > maximum) throw new Error(`${name} exceeds its reviewed cap`);
   return value;
 }
 
@@ -239,19 +269,21 @@ async function submit(
   const started = Date.now();
   let evidence: Awaited<ReturnType<typeof requireMinedSuccess<TransactionReceipt>>>;
   try {
-    evidence = await requireMinedSuccess(
+    evidence = await withFundedTransactionEvidence(
       label,
-      operation,
-      (hash) => ethers.provider.getTransactionReceipt(hash),
-      (hash) => journal().recordBroadcast(label, hash),
-      () => journal().recordSubmission(label),
+      journal(),
+      () => requireMinedSuccess(
+        label,
+        operation,
+        (hash) => ethers.provider.getTransactionReceipt(hash),
+      ),
     );
   } catch (error) {
     const hash = transactionHashFromError(error);
     if (hash) {
       if (!journal().transactions.some((transaction) =>
         transaction.hash.toLowerCase() === hash.toLowerCase()
-      )) journal().recordBroadcast(label, hash);
+      )) throw new Error("funded transaction was not locally signed and journaled", { cause: error });
       journal().recordTransaction(
         hash,
         error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
@@ -299,12 +331,14 @@ async function expectFailure(
   operation: () => Promise<{ hash: string; wait(): Promise<TransactionReceipt | null> }>,
 ): Promise<void> {
   stage = label;
-  const evidence = await requireMinedFailure(
+  const evidence = await withFundedTransactionEvidence(
     label,
-    operation,
-    (hash) => ethers.provider.getTransactionReceipt(hash),
-    (hash) => journal().recordBroadcast(label, hash),
-    () => journal().recordSubmission(label),
+    journal(),
+    () => requireMinedFailure(
+      label,
+      operation,
+      (hash) => ethers.provider.getTransactionReceipt(hash),
+    ),
   );
   journal().recordTransaction(evidence.transactionHash, "mined-failure", evidence.receipt.blockNumber);
   console.log(`${label}: rejected onchain tx=${evidence.transactionHash}`);
@@ -344,29 +378,17 @@ async function setExactAllowance(
   amount: bigint,
   label: string,
 ): Promise<void> {
-  const owner = await wallet.getAddress();
-  const current = await privateAllowance(token, wallet, owner, spender);
-  if (current === amount) return;
-  const selector = token.interface.getFunction("approve")?.selector;
-  if (!selector) throw new Error("private token approve selector unavailable");
-  if (current !== 0n) {
-    const zero = await wallet.encryptValue256(0n, tokenAddress, selector);
-    await submit(
-      `${label} reset`,
-      () => token.approve(spender, zero, { gasLimit: CALL_GAS_LIMIT }),
-    );
-  }
-  if (amount !== 0n) {
-    const encryptedAmount = await wallet.encryptValue256(
-      amount,
-      tokenAddress,
-      selector,
-    );
-    await submit(
-      label,
-      () => token.approve(spender, encryptedAmount, { gasLimit: CALL_GAS_LIMIT }),
-    );
-  }
+  await setRecoverablePrivateAllowance({
+    journal: journal(),
+    wallet,
+    token,
+    tokenAddress,
+    spender,
+    amount,
+    label,
+    overrides: { gasLimit: CALL_GAS_LIMIT },
+    submit,
+  });
 }
 
 function ciphertextKey(value: unknown): string {
@@ -376,6 +398,33 @@ function ciphertextKey(value: unknown): string {
   };
   return `${String(ciphertext.ciphertextHigh ?? "missing")}:` +
     String(ciphertext.ciphertextLow ?? "missing");
+}
+
+function inputCommitment(input: {
+  ciphertext: { ciphertextHigh: bigint; ciphertextLow: bigint };
+  signature: string | Uint8Array;
+}): string {
+  return ethersLibrary.keccak256(
+    ethersLibrary.AbiCoder.defaultAbiCoder().encode(
+      ["uint256", "uint256", "bytes32"],
+      [
+        input.ciphertext.ciphertextHigh,
+        input.ciphertext.ciphertextLow,
+        ethersLibrary.keccak256(input.signature),
+      ],
+    ),
+  );
+}
+
+function encryptedInputsHash(
+  ...inputs: Parameters<typeof inputCommitment>[0][]
+): string {
+  return ethersLibrary.keccak256(
+    ethersLibrary.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32"],
+      inputs.map(inputCommitment),
+    ),
+  );
 }
 
 async function poolSnapshot(context: PoolContext): Promise<PublicPoolSnapshot> {
@@ -389,6 +438,7 @@ async function poolSnapshot(context: PoolContext): Promise<PublicPoolSnapshot> {
     scale0,
     scale1,
     feeBps,
+    initializationStrategy,
     feeVault,
     bootstrapper,
     lpToken,
@@ -410,6 +460,7 @@ async function poolSnapshot(context: PoolContext): Promise<PublicPoolSnapshot> {
     context.pool.scale0(),
     context.pool.scale1(),
     context.pool.feeBps(),
+    context.pool.initializationStrategy(),
     context.pool.feeVault(),
     context.pool.bootstrapper(),
     context.pool.lpToken(),
@@ -432,6 +483,7 @@ async function poolSnapshot(context: PoolContext): Promise<PublicPoolSnapshot> {
     scale0: String(scale0),
     scale1: String(scale1),
     feeBps: String(feeBps),
+    initializationStrategy: String(initializationStrategy).toLowerCase(),
     feeVault: String(feeVault).toLowerCase(),
     bootstrapper: String(bootstrapper).toLowerCase(),
     lpToken: String(lpToken).toLowerCase(),
@@ -471,16 +523,25 @@ function requireSnapshotsEqual(
 
 async function loadPool(address: string, wallet: CotiWallet): Promise<PoolContext> {
   const pool = new Contract(address, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
-  const [token0Address, token1Address, token0Decimals, token1Decimals, feeBps] = await Promise.all([
+  const [
+    token0Address,
+    token1Address,
+    token0Decimals,
+    token1Decimals,
+    feeBps,
+    initializationStrategy,
+  ] = await Promise.all([
     pool.token0(),
     pool.token1(),
     pool.token0Decimals(),
     pool.token1Decimals(),
     pool.feeBps(),
+    pool.initializationStrategy(),
   ]);
   return {
     address: ethersLibrary.getAddress(address),
     feeBps: Number(feeBps),
+    initializationStrategy: ethersLibrary.getAddress(String(initializationStrategy)),
     pool,
     token0Address: ethersLibrary.getAddress(String(token0Address)),
     token1Address: ethersLibrary.getAddress(String(token1Address)),
@@ -523,6 +584,7 @@ async function createPool(
     decimalsA,
     decimalsB,
     feeBps,
+    ethersLibrary.ZeroAddress,
   );
   const address = ethersLibrary.getAddress(await factory.getPool(key));
   if (address === ethersLibrary.ZeroAddress || !(await factory.isPool(address))) {
@@ -621,15 +683,259 @@ async function initializePool(
   ) {
     throw new Error("pool initialization did not consume exact liquidity");
   }
+  await setExactAllowance(
+    context.token0, wallet, context.token0Address, context.address, 0n,
+    `${context.feeBps} bps token0 post-liquidity cleanup`,
+  );
+  await setExactAllowance(
+    context.token1, wallet, context.token1Address, context.address, 0n,
+    `${context.feeBps} bps token1 post-liquidity cleanup`,
+  );
   context.model.reserve0 = amount0;
   context.model.reserve1 = amount1;
+}
+
+async function initializeProtectedPool(
+  factory: any,
+  initializationStrategy: any,
+  migrator: any,
+  creator: CotiWallet,
+  launchAuthority: CotiWallet,
+  tokenA: string,
+  tokenB: string,
+  decimalsA: number,
+  decimalsB: number,
+  feeBps: number,
+  amountA: bigint,
+  amountB: bigint,
+): Promise<PoolContext> {
+  const creatorAddress = ethersLibrary.getAddress(await creator.getAddress());
+  const authorityAddress = ethersLibrary.getAddress(await launchAuthority.getAddress());
+  if (creatorAddress === authorityAddress) {
+    throw new Error("protected launch creator and authority must be distinct");
+  }
+  const factoryAddress = ethersLibrary.getAddress(String(factory.target));
+  const strategyAddress = ethersLibrary.getAddress(String(initializationStrategy.target));
+  const migratorAddress = ethersLibrary.getAddress(String(migrator.target));
+  const tokenAFirst = tokenA.toLowerCase() < tokenB.toLowerCase();
+  const canonicalToken0 = ethersLibrary.getAddress(tokenAFirst ? tokenA : tokenB);
+  const canonicalToken1 = ethersLibrary.getAddress(tokenAFirst ? tokenB : tokenA);
+  const canonicalDecimals0 = tokenAFirst ? decimalsA : decimalsB;
+  const canonicalDecimals1 = tokenAFirst ? decimalsB : decimalsA;
+  const amount0 = tokenAFirst ? amountA : amountB;
+  const amount1 = tokenAFirst ? amountB : amountA;
+  const launchId = nextRequestId(`protected-${feeBps}-bps-launch`);
+  const authorizationDeadline = deadline(1_200);
+  const migrationDeadline = authorizationDeadline;
+  const network = await ethers.provider.getNetwork();
+  const commitment = buildConfidentialLaunchCommitment({
+    launchId,
+    creator: creatorAddress,
+    tokenA,
+    tokenB,
+    decimalsA,
+    decimalsB,
+    feeBps,
+    factory: factoryAddress,
+    migrator: migratorAddress,
+    initializationStrategy: strategyAddress,
+    launchAuthority: authorityAddress,
+    chainId: network.chainId,
+    authorizationDeadline,
+    migrationDeadline,
+  });
+  const launchDomain = {
+    ...LAUNCH_INITIALIZATION_EIP712_DOMAIN,
+    chainId: network.chainId,
+    verifyingContract: strategyAddress,
+  };
+  const [creatorAuthorization, authorityAuthorization] = await Promise.all([
+    creator.signTypedData(
+      launchDomain,
+      { LaunchCommitment: [...LAUNCH_COMMITMENT_EIP712_TYPES] },
+      commitment,
+    ),
+    launchAuthority.signTypedData(
+      launchDomain,
+      { LaunchCommitment: [...LAUNCH_COMMITMENT_EIP712_TYPES] },
+      commitment,
+    ),
+  ]);
+  const call = buildConfidentialLaunchCommitCall(
+    commitment,
+    creatorAuthorization,
+    authorityAuthorization,
+  );
+  const [predictedPoolValue, commitmentHash] = await initializationStrategy
+    .commitLaunch.staticCall(...call.args);
+  const predictedPool = ethersLibrary.getAddress(String(predictedPoolValue));
+  const key = await factory.poolKey(
+    canonicalToken0,
+    canonicalToken1,
+    canonicalDecimals0,
+    canonicalDecimals1,
+    feeBps,
+    strategyAddress,
+  );
+  if (
+    ethersLibrary.getAddress(await factory.getPool(key)) !== ethersLibrary.ZeroAddress ||
+    await ethers.provider.getCode(predictedPool) !== "0x"
+  ) {
+    throw new Error("protected launch requires an unused complete pool key");
+  }
+  const commitmentTransaction = await submit(
+    `commit protected ${feeBps} bps launch`,
+    () => initializationStrategy.commitLaunch(...call.args, { gasLimit: CALL_GAS_LIMIT }),
+  );
+  const context = await loadPool(predictedPool, creator);
+  if (
+    ethersLibrary.getAddress(await factory.getPool(key)) !== predictedPool ||
+    !(await factory.isPool(predictedPool)) ||
+    context.initializationStrategy !== strategyAddress ||
+    await context.pool.initialized()
+  ) {
+    throw new Error("protected launch commitment did not create its canonical pool");
+  }
+  journal().recordResource({
+    id: `pool-${feeBps}`,
+    kind: "launchpad-pool",
+    address: predictedPool,
+    creationTransactionHash: commitmentTransaction.hash,
+    metadata: {
+      factoryAddress,
+      migratorAddress,
+      initializationStrategyAddress: strategyAddress,
+      token0Address: canonicalToken0,
+      token1Address: canonicalToken1,
+      decimals0: canonicalDecimals0,
+      decimals1: canonicalDecimals1,
+      feeBps,
+    },
+  });
+
+  const token0 = context.token0;
+  const token1 = context.token1;
+  const [before0, before1] = await Promise.all([
+    privateBalance(token0, creator, creatorAddress),
+    privateBalance(token1, creator, creatorAddress),
+  ]);
+  await setExactAllowance(
+    token0,
+    creator,
+    canonicalToken0,
+    migratorAddress,
+    amount0,
+    `${feeBps} bps protected token0 approval`,
+  );
+  await setExactAllowance(
+    token1,
+    creator,
+    canonicalToken1,
+    migratorAddress,
+    amount1,
+    `${feeBps} bps protected token1 approval`,
+  );
+  const selector = migrator.interface.getFunction("migrate")?.selector;
+  if (!selector) throw new Error("protected migration selector unavailable");
+  const bounds = confidentialLiquidityBounds(
+    amount0,
+    canonicalDecimals0,
+    amount1,
+    canonicalDecimals1,
+    false,
+  );
+  const [input0, input1, minShares, minPrice, maxPrice] = await Promise.all([
+    creator.encryptValue256(amount0, migratorAddress, selector),
+    creator.encryptValue256(amount1, migratorAddress, selector),
+    creator.encryptValue256(bounds.minShares, migratorAddress, selector),
+    creator.encryptValue256(bounds.minPriceX18, migratorAddress, selector),
+    creator.encryptValue256(bounds.maxPriceX18, migratorAddress, selector),
+  ]);
+  const migrationAuthorization = await creator.signTypedData(
+    {
+      ...LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
+      chainId: network.chainId,
+      verifyingContract: migratorAddress,
+    },
+    { Migration: [...LAUNCHPAD_MIGRATION_EIP712_TYPES] },
+    {
+      launchId,
+      launchCommitmentHash: commitmentHash,
+      initializationStrategy: strategyAddress,
+      creator: creatorAddress,
+      tokenA,
+      tokenB,
+      decimalsA,
+      decimalsB,
+      feeBps,
+      encryptedInputsHash: encryptedInputsHash(
+        input0,
+        input1,
+        minShares,
+        minPrice,
+        maxPrice,
+      ),
+      deadline: migrationDeadline,
+      withDisposition: false,
+      disposition: 0,
+      unlockTime: 0,
+    },
+  );
+  const migrationRequest = [
+    launchId,
+    commitmentHash,
+    tokenA,
+    tokenB,
+    decimalsA,
+    decimalsB,
+    feeBps,
+    input0,
+    input1,
+    minShares,
+    minPrice,
+    maxPrice,
+    migrationDeadline,
+    migrationAuthorization,
+  ] as const;
+  await submit(
+    `initialize protected ${feeBps} bps pool`,
+    () => migrator.migrate(migrationRequest, { gasLimit: CALL_GAS_LIMIT }),
+  );
+  const [after0, after1, allowance0, allowance1, launchRecord] = await Promise.all([
+    privateBalance(token0, creator, creatorAddress),
+    privateBalance(token1, creator, creatorAddress),
+    privateAllowance(token0, creator, creatorAddress, migratorAddress),
+    privateAllowance(token1, creator, creatorAddress, migratorAddress),
+    initializationStrategy.getLaunch(launchId),
+  ]);
+  if (
+    before0 - after0 !== amount0 ||
+    before1 - after1 !== amount1 ||
+    allowance0 !== 0n ||
+    allowance1 !== 0n ||
+    !(await context.pool.initialized()) ||
+    Number(launchRecord.status) !== 4
+  ) {
+    throw new Error("protected migration violated exact initialization accounting");
+  }
+  await setExactAllowance(
+    token0, creator, canonicalToken0, migratorAddress, 0n,
+    `${feeBps} bps protected token0 post-migration cleanup`,
+  );
+  await setExactAllowance(
+    token1, creator, canonicalToken1, migratorAddress, 0n,
+    `${feeBps} bps protected token1 post-migration cleanup`,
+  );
+  context.model.reserve0 = amount0;
+  context.model.reserve1 = amount1;
+  return context;
 }
 
 async function removeAllLiquidity(
   context: PoolContext,
   wallet: CotiWallet,
   recoveryFloor = false,
-): Promise<void> {
+): Promise<string> {
   const owner = await wallet.getAddress();
   const shares = await privateShares(context, wallet);
   if (shares <= 0n) throw new Error(`${context.feeBps} bps pool has no removable LP shares`);
@@ -648,7 +954,7 @@ async function removeAllLiquidity(
     wallet.encryptValue256(minimum0, context.address, selector),
     wallet.encryptValue256(minimum1, context.address, selector),
   ]);
-  await submit(
+  const cleanup = await submit(
     `full cleanup exit for ${context.feeBps} bps pool`,
     () => context.pool.removeLiquidity(
       encryptedShares,
@@ -682,23 +988,32 @@ async function removeAllLiquidity(
   context.model.reserve1 = 0n;
   context.model.protocolFee0 = 0n;
   context.model.protocolFee1 = 0n;
+  return cleanup.hash;
 }
 
 async function recoverJournalPools(): Promise<void> {
   if (!recoveryJournal || !recoveryWallet) return;
   for (const resource of recoveryJournal.activeResources) {
     await verifyRecoveryResourceCreation(recoveryJournal, resource, ethers.provider);
-    if (resource.kind !== "confidential-pool") {
+    if (resource.kind !== "confidential-pool" && resource.kind !== "launchpad-pool") {
       throw new Error(`unsupported active recovery resource ${resource.kind}`);
     }
     const factoryAddress = String(resource.metadata.factoryAddress ?? "");
     const token0Address = String(resource.metadata.token0Address ?? "");
     const token1Address = String(resource.metadata.token1Address ?? "");
+    const initializationStrategyAddress = resource.kind === "launchpad-pool"
+      ? String(resource.metadata.initializationStrategyAddress ?? "")
+      : ethersLibrary.ZeroAddress;
+    const migratorAddress = resource.kind === "launchpad-pool"
+      ? String(resource.metadata.migratorAddress ?? "")
+      : undefined;
     const feeBps = Number(resource.metadata.feeBps);
     if (
       !ethersLibrary.isAddress(factoryAddress) ||
       !ethersLibrary.isAddress(token0Address) ||
       !ethersLibrary.isAddress(token1Address) ||
+      !ethersLibrary.isAddress(initializationStrategyAddress) ||
+      (migratorAddress !== undefined && !ethersLibrary.isAddress(migratorAddress)) ||
       !FEE_TIERS.includes(feeBps as (typeof FEE_TIERS)[number])
     ) throw new Error("funded recovery pool metadata is invalid");
 
@@ -712,16 +1027,47 @@ async function recoverJournalPools(): Promise<void> {
       throw new Error("funded recovery resource is not canonical to its recorded factory");
     }
     const context = await loadPool(resource.address, recoveryWallet);
+    const key = await factory.poolKey(
+      token0Address,
+      token1Address,
+      context.token0Decimals,
+      context.token1Decimals,
+      feeBps,
+      initializationStrategyAddress,
+    );
     if (
       context.feeBps !== feeBps ||
       context.token0Address.toLowerCase() !== token0Address.toLowerCase() ||
       context.token1Address.toLowerCase() !== token1Address.toLowerCase() ||
+      context.initializationStrategy.toLowerCase() !==
+        initializationStrategyAddress.toLowerCase() ||
+      ethersLibrary.getAddress(await factory.getPool(key)) !==
+        ethersLibrary.getAddress(resource.address) ||
       String(await context.pool.bootstrapper()).toLowerCase() !== factoryAddress.toLowerCase()
     ) throw new Error("funded recovery pool provenance changed");
 
+    if (migratorAddress !== undefined) {
+      await setExactAllowance(
+        context.token0,
+        recoveryWallet,
+        context.token0Address,
+        migratorAddress,
+        0n,
+        `${feeBps} bps protected recovery token0 approval`,
+      );
+      await setExactAllowance(
+        context.token1,
+        recoveryWallet,
+        context.token1Address,
+        migratorAddress,
+        0n,
+        `${feeBps} bps protected recovery token1 approval`,
+      );
+    }
     const shares = await privateShares(context, recoveryWallet);
+    let recoveryTransactionHash = resource.creationTransactionHash;
     if (shares > 0n) {
-      await removeAllLiquidity(context, recoveryWallet, true);
+      recoveryTransactionHash = await removeAllLiquidity(context, recoveryWallet, true);
     } else {
       const [balance0, balance1] = await Promise.all([
         privateBalance(context.token0, recoveryWallet, context.address),
@@ -731,7 +1077,7 @@ async function recoverJournalPools(): Promise<void> {
         throw new Error("funded recovery pool holds assets without recoverable LP shares");
       }
     }
-    recoveryJournal.markRecovered(resource.id);
+    recoveryJournal.markRecovered(resource.id, [recoveryTransactionHash]);
   }
 }
 
@@ -778,13 +1124,17 @@ async function requestBestQuote(
   amountIn: bigint,
   label: string,
   contexts: readonly PoolContext[],
+  candidateBitmap?: number,
 ): Promise<QuoteExecution> {
   const router = new Contract(
     routerAddress,
     CONFIDENTIAL_BEST_EXECUTION_ROUTER_TESTNET_ABI,
     wallet,
   );
-  const selector = router.interface.getFunction("requestBestQuoteExactInput")?.selector;
+  const functionName = candidateBitmap === undefined
+    ? "requestBestQuoteExactInput"
+    : "requestBestQuoteExactInputWithCandidates";
+  const selector = router.interface.getFunction(functionName)?.selector;
   if (!selector) throw new Error("best-quote selector unavailable");
   const requestId = nextRequestId(label);
   const input = await wallet.encryptValue256(amountIn, routerAddress, selector);
@@ -798,14 +1148,24 @@ async function requestBestQuote(
   ]);
   const transaction = await submit(
     label,
-    () => router.requestBestQuoteExactInput(
-      tokenIn,
-      tokenOut,
-      input,
-      requestId,
-      deadline(),
-      { gasLimit: CALL_GAS_LIMIT },
-    ),
+    () => candidateBitmap === undefined
+      ? router.requestBestQuoteExactInput(
+          tokenIn,
+          tokenOut,
+          input,
+          requestId,
+          deadline(),
+          { gasLimit: CALL_GAS_LIMIT },
+        )
+      : router.requestBestQuoteExactInputWithCandidates(
+          tokenIn,
+          tokenOut,
+          input,
+          candidateBitmap,
+          requestId,
+          deadline(),
+          { gasLimit: CALL_GAS_LIMIT },
+        ),
   );
   const result = bestResultFromReceipt(
     router,
@@ -849,36 +1209,59 @@ async function assertRequestAndCiphertextGuards(
   tokenOut: string,
   amountIn: bigint,
   successfulQuote: QuoteExecution,
+  candidateBitmap?: number,
 ): Promise<void> {
   const quoteRouter = new Contract(
     routerAddress,
     CONFIDENTIAL_BEST_EXECUTION_ROUTER_TESTNET_ABI,
     quoteWallet,
   );
-  const selector = quoteRouter.interface.getFunction("requestBestQuoteExactInput")!.selector;
+  const functionName = candidateBitmap === undefined
+    ? "requestBestQuoteExactInput"
+    : "requestBestQuoteExactInputWithCandidates";
+  const selector = quoteRouter.interface.getFunction(functionName)!.selector;
+  const requestQuote = (
+    router: Contract,
+    encryptedInput: unknown,
+    requestId: string,
+    requestDeadline: bigint,
+  ) => candidateBitmap === undefined
+    ? router.requestBestQuoteExactInput(
+        tokenIn,
+        tokenOut,
+        encryptedInput,
+        requestId,
+        requestDeadline,
+        { gasLimit: CALL_GAS_LIMIT },
+      )
+    : router.requestBestQuoteExactInputWithCandidates(
+        tokenIn,
+        tokenOut,
+        encryptedInput,
+        candidateBitmap,
+        requestId,
+        requestDeadline,
+        { gasLimit: CALL_GAS_LIMIT },
+      );
   const freshInput = await quoteWallet.encryptValue256(
     amountIn,
     routerAddress,
     selector,
   );
   await expectFailure("best quote request-id replay", () =>
-    quoteRouter.requestBestQuoteExactInput(
-      tokenIn,
-      tokenOut,
+    requestQuote(
+      quoteRouter,
       freshInput,
       successfulQuote.requestId,
       deadline(),
-      { gasLimit: CALL_GAS_LIMIT },
     ),
   );
   await expectFailure("best quote ciphertext replay", () =>
-    quoteRouter.requestBestQuoteExactInput(
-      tokenIn,
-      tokenOut,
+    requestQuote(
+      quoteRouter,
       successfulQuote.input,
       nextRequestId("ciphertext-replay"),
       deadline(),
-      { gasLimit: CALL_GAS_LIMIT },
     ),
   );
 
@@ -889,13 +1272,11 @@ async function assertRequestAndCiphertextGuards(
     selector,
   );
   await expectFailure("best quote expired deadline", () =>
-    quoteRouter.requestBestQuoteExactInput(
-      tokenIn,
-      tokenOut,
+    requestQuote(
+      quoteRouter,
       expiredInput,
       expiredRequestId,
       deadline(-1),
-      { gasLimit: CALL_GAS_LIMIT },
     ),
   );
   if (await quoteRouter.usedRequestIds(
@@ -912,16 +1293,34 @@ async function assertRequestAndCiphertextGuards(
     selector,
   );
   const secondRouter = quoteRouter.connect(secondWallet) as Contract;
+  const callerBindingRequestId = nextRequestId("caller-binding");
+  const callerBindingDeadline = deadline();
   await expectFailure("caller-bound ciphertext isolation", () =>
-    secondRouter.requestBestQuoteExactInput(
-      tokenIn,
-      tokenOut,
+    requestQuote(
+      secondRouter,
       primaryBoundInput,
-      nextRequestId("caller-binding"),
-      deadline(),
-      { gasLimit: CALL_GAS_LIMIT },
+      callerBindingRequestId,
+      callerBindingDeadline,
     ),
   );
+  const control = await submit("caller-bound ciphertext primary control", () =>
+    requestQuote(
+      quoteRouter,
+      primaryBoundInput,
+      callerBindingRequestId,
+      callerBindingDeadline,
+    ),
+  );
+  const result = bestResultFromReceipt(
+    quoteRouter,
+    control.receipt,
+    "ConfidentialBestQuoteResult",
+    await quoteWallet.getAddress(),
+    callerBindingRequestId,
+  );
+  if (await quoteWallet.decryptValue256(result.encryptedResult as never) <= 0n) {
+    throw new Error("caller-bound ciphertext primary control returned no quote");
+  }
 }
 
 async function swapWithRollbackProof(
@@ -934,6 +1333,7 @@ async function swapWithRollbackProof(
   expectedTier: number,
   contexts: readonly PoolContext[],
   label: string,
+  candidateBitmap?: number,
 ): Promise<Submitted> {
   const caller = await wallet.getAddress();
   const inputToken = new Contract(tokenIn, PRIVATE_ERC20_TESTNET_ABI, wallet);
@@ -943,8 +1343,35 @@ async function swapWithRollbackProof(
     CONFIDENTIAL_BEST_EXECUTION_ROUTER_TESTNET_ABI,
     wallet,
   );
-  const selector = router.interface.getFunction("swapBestExactInput")?.selector;
+  const functionName = candidateBitmap === undefined
+    ? "swapBestExactInput"
+    : "swapBestExactInputWithCandidates";
+  const selector = router.interface.getFunction(functionName)?.selector;
   if (!selector) throw new Error("best-swap selector unavailable");
+  const swap = (
+    encryptedInput: unknown,
+    encryptedMinimum: unknown,
+    requestId: string,
+  ) => candidateBitmap === undefined
+    ? router.swapBestExactInput(
+        tokenIn,
+        tokenOut,
+        encryptedInput,
+        encryptedMinimum,
+        requestId,
+        deadline(),
+        { gasLimit: CALL_GAS_LIMIT },
+      )
+    : router.swapBestExactInputWithCandidates(
+        tokenIn,
+        tokenOut,
+        encryptedInput,
+        encryptedMinimum,
+        candidateBitmap,
+        requestId,
+        deadline(),
+        { gasLimit: CALL_GAS_LIMIT },
+      );
   await setExactAllowance(
     inputToken,
     wallet,
@@ -964,14 +1391,10 @@ async function swapWithRollbackProof(
     wallet.encryptValue256(quote.amountOut + 1n, routerAddress, selector),
   ]);
   await expectFailure(`${label} encrypted slippage rollback`, () =>
-    router.swapBestExactInput(
-      tokenIn,
-      tokenOut,
+    swap(
       input,
       excessiveMinimum,
       requestId,
-      deadline(),
-      { gasLimit: CALL_GAS_LIMIT },
     ),
   );
   const [balanceInAfterFailure, balanceOutAfterFailure, poolStateAfterFailure] =
@@ -997,14 +1420,10 @@ async function swapWithRollbackProof(
   );
   const transaction = await submit(
     label,
-    () => router.swapBestExactInput(
-      tokenIn,
-      tokenOut,
+    () => swap(
       input,
       minimum,
       requestId,
-      deadline(),
-      { gasLimit: CALL_GAS_LIMIT },
     ),
   );
   const result = bestResultFromReceipt(
@@ -1030,6 +1449,9 @@ async function swapWithRollbackProof(
   ) {
     throw new Error("best swap violated quote parity or exact escrow accounting");
   }
+  await setExactAllowance(
+    inputToken, wallet, tokenIn, routerAddress, 0n, `${label} router post-swap cleanup`,
+  );
 
   const selectedContext = contexts.find(
     (context) => context.address.toLowerCase() === result.selectedPool.toLowerCase(),
@@ -1081,7 +1503,6 @@ async function main(): Promise<void> {
   const quoteAes = requiredAesKey("COTI_QUOTE_AES_KEY");
   const tokenAAddress = requiredAddress("COTI_TOKEN0");
   const tokenBAddress = requiredAddress("COTI_TOKEN1");
-  const feeBeneficiary = requiredAddress("CIPHERDEX_FEE_BENEFICIARY");
   const factoryAddress = requiredAddress("COTI_FACTORY");
   const feeVaultAddress = requiredAddress("COTI_FEE_VAULT");
   const routerAddress = requiredAddress("COTI_BEST_EXECUTION_ROUTER");
@@ -1125,8 +1546,32 @@ async function main(): Promise<void> {
     ],
   );
   assertReviewedPrivateTokens(deploymentRecord, [tokenAAddress, tokenBAddress]);
+  const reviewedFeeVault = await ethers.getContractAt(
+    "CipherDEXFeeVault",
+    feeVaultAddress,
+    primary,
+  );
+  const feeBeneficiary = ethersLibrary.getAddress(
+    String(await reviewedFeeVault.beneficiary()),
+  );
+  const evidenceConfiguration = preflightFundedRunConfiguration(
+    "best-execution",
+    {
+      chainId: Number(EXPECTED_CHAIN_ID),
+      confidentialPoolVersion: 3,
+      routerVersion: 2,
+      privacyMode: 1,
+      quoteTransport: "paid-transaction",
+      candidateTiers: "5,30,100",
+      candidateStrategyClasses: "standard,launch-protected",
+      candidateBitmap: MIXED_THREE_CANDIDATE_BITMAP,
+      tokenA: tokenAAddress,
+      tokenB: tokenBAddress,
+      feeBeneficiary,
+    },
+  );
   const sourceCommit = deploymentRecord.sourceCommit;
-  recoveryJournal = FundedRecoveryJournal.open({
+  recoveryJournal = openFundedRecoveryJournal(primaryKey, {
     runner: "best-execution",
     sourceCommit,
     chainId: Number(network.chainId),
@@ -1140,7 +1585,25 @@ async function main(): Promise<void> {
       `funded recovery has ${unresolved.length} transaction(s) with unknown outcome; do not retry`,
     );
   }
+  await recoverPrivateAllowanceObligations({
+    journal: recoveryJournal,
+    wallets: [primary, second, quoteWallet],
+    overrides: { gasLimit: CALL_GAS_LIMIT },
+    submit,
+  });
   await recoverJournalPools();
+  if (
+    recoveryJournal.runStatus === "evidence-pending" ||
+    recoveryJournal.runStatus === "evidence-failed"
+  ) {
+    const finalEvidence = await writePreparedFundedRunEvidence({
+      journal: recoveryJournal,
+      provider: ethers.provider,
+      attestationSigner: primary,
+    });
+    console.log(`fundedEvidence=${finalEvidence.path}`);
+    return;
+  }
 
 
   const tokenA = new Contract(tokenAAddress, PRIVATE_ERC20_TESTNET_ABI, primary);
@@ -1161,14 +1624,34 @@ async function main(): Promise<void> {
   ) throw new Error("unsupported private token decimals");
   const unitA = 10n ** BigInt(decimalsA);
   const unitB = 10n ** BigInt(decimalsB);
-  const swapA = optionalPositiveAmount(
-    "COTI_BEST_EXECUTION_SWAP_AMOUNT",
+  const maximumSwapA = unitA / 100n > 20_000n ? unitA / 100n : 20_000n;
+  const maximumSwapB = unitB / 100n > 20_000n ? unitB / 100n : 20_000n;
+  const swapA = optionalBoundedAmount(
+    "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN0",
     unitA / 1_000n > 20_000n ? unitA / 1_000n : 20_000n,
+    maximumSwapA,
   );
-  const swapB = optionalPositiveAmount(
-    "COTI_BEST_EXECUTION_SWAP_AMOUNT",
+  const swapB = optionalBoundedAmount(
+    "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN1",
     unitB / 1_000n > 20_000n ? unitB / 1_000n : 20_000n,
+    maximumSwapB,
   );
+  const maximumProtocolFeeA = modeledProtocolFee(maximumSwapA, 100);
+  const maximumProtocolFeeB = 3n * modeledProtocolFee(maximumSwapB, 100);
+  const protocolFeeBudgetA = optionalBoundedAmount(
+    "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN0",
+    maximumProtocolFeeA,
+    maximumProtocolFeeA,
+  );
+  const protocolFeeBudgetB = optionalBoundedAmount(
+    "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN1",
+    maximumProtocolFeeB,
+    maximumProtocolFeeB,
+  );
+  if (
+    modeledProtocolFee(swapA, 100) > protocolFeeBudgetA ||
+    3n * modeledProtocolFee(swapB, 100) > protocolFeeBudgetB
+  ) throw new Error("funded best-execution protocol fee budget is insufficient");
 
   const pool5LiquidityA = 2n * unitA;
   const pool5LiquidityB = unitB;
@@ -1238,10 +1721,42 @@ async function main(): Promise<void> {
     [],
     8_000_000n,
   );
+  const strategyArtifact = await artifacts.readArtifact(
+    "ConfidentialLaunchInitializationStrategy",
+  );
+  const reviewedStrategyRuntimeCodehash = ethersLibrary.keccak256(
+    strategyArtifact.deployedBytecode,
+  );
+  const strategyRegistryDeployment = await deployContract(
+    "ConfidentialInitializationStrategyRegistry",
+    primary,
+    [[reviewedStrategyRuntimeCodehash]],
+    STRATEGY_REGISTRY_DEPLOY_GAS_LIMIT,
+  );
+  const strategyRegistryRuntimeCodehash = ethersLibrary.keccak256(
+    await ethers.provider.getCode(strategyRegistryDeployment.address),
+  );
+  const poolDeployerDeployment = await deployContract(
+    "ConfidentialCPMMDeployer",
+    primary,
+    [],
+    POOL_DEPLOYER_DEPLOY_GAS_LIMIT,
+  );
+  const poolDeployerRuntimeCodehash = ethersLibrary.keccak256(
+    await ethers.provider.getCode(poolDeployerDeployment.address),
+  );
   const factoryDeployment = await deployContract(
     "ConfidentialCPMMFactory",
     primary,
-    [feeVaultDeployment.address, lpFactoryDeployment.address, codehashes],
+    [
+      feeVaultDeployment.address,
+      lpFactoryDeployment.address,
+      poolDeployerDeployment.address,
+      poolDeployerRuntimeCodehash,
+      codehashes,
+      strategyRegistryDeployment.address,
+      strategyRegistryRuntimeCodehash,
+    ],
     8_000_000n,
   );
   const factory = factoryDeployment.contract;
@@ -1249,6 +1764,58 @@ async function main(): Promise<void> {
     "bind disposable confidential fee vault",
     () => feeVaultDeployment.contract.setConfidentialFactory(factoryDeployment.address, {
       gasLimit: 500_000n,
+    }),
+  );
+  await submit(
+    "bind disposable confidential pool deployer",
+    () => poolDeployerDeployment.contract.bindFactory(
+      factoryDeployment.address,
+      { gasLimit: STACK_BIND_GAS_LIMIT },
+    ),
+  );
+  await submit(
+    "bind disposable initialization strategy registry",
+    () => strategyRegistryDeployment.contract.bindFactory(
+      factoryDeployment.address,
+      { gasLimit: STACK_BIND_GAS_LIMIT },
+    ),
+  );
+  const strategyDeployment = await deployContract(
+    "ConfidentialLaunchInitializationStrategy",
+    primary,
+    [
+      factoryDeployment.address,
+      strategyRegistryDeployment.address,
+      quoteAddress,
+    ],
+    INITIALIZATION_STRATEGY_DEPLOY_GAS_LIMIT,
+  );
+  const migratorAddress = ethersLibrary.getAddress(
+    String(await strategyDeployment.contract.migrator()),
+  );
+  await verifyDeployedRuntimeArtifact(
+    "ConfidentialLaunchpadMigrator",
+    migratorAddress,
+  );
+  const migratorDeployment = {
+    address: migratorAddress,
+    contract: await ethers.getContractAt(
+      "ConfidentialLaunchpadMigrator",
+      migratorAddress,
+      primary,
+    ),
+  };
+  await submit(
+    "register disposable initialization strategy",
+    () => strategyRegistryDeployment.contract.registerInitializationStrategy(
+      strategyDeployment.address,
+      { gasLimit: STACK_BIND_GAS_LIMIT },
+    ),
+  );
+  await submit(
+    "finalize disposable initialization strategy registry",
+    () => strategyRegistryDeployment.contract.finalize({
+      gasLimit: STACK_BIND_GAS_LIMIT,
     }),
   );
   const routerDeployment = await deployContract(
@@ -1271,6 +1838,11 @@ async function main(): Promise<void> {
     configuredVaultFactory,
     configuredRouterFactory,
     configuredRouterVersion,
+    configuredPoolDeployer,
+    configuredStrategyRegistry,
+    registryFinalized,
+    configuredStrategy,
+    configuredMigrator,
     tokenAApproved,
     tokenBApproved,
   ] = await Promise.all([
@@ -1280,6 +1852,11 @@ async function main(): Promise<void> {
     feeVaultDeployment.contract.confidentialFactory(),
     router.factory(),
     router.PROTOCOL_VERSION(),
+    factory.poolDeployer(),
+    factory.initializationStrategyRegistry(),
+    factory.initializationStrategyRegistryFinalized(),
+    factory.initializationStrategyAt(1),
+    strategyDeployment.contract.migrator(),
     factory.isApprovedPrivateToken(tokenAAddress),
     factory.isApprovedPrivateToken(tokenBAddress),
   ]);
@@ -1289,19 +1866,33 @@ async function main(): Promise<void> {
     ethersLibrary.getAddress(String(configuredBeneficiary)) !== feeBeneficiary ||
     ethersLibrary.getAddress(String(configuredVaultFactory)) !== factoryDeployment.address ||
     ethersLibrary.getAddress(String(configuredRouterFactory)) !== factoryDeployment.address ||
-    BigInt(configuredRouterVersion) !== 1n ||
+    BigInt(configuredRouterVersion) !== 2n ||
+    ethersLibrary.getAddress(String(configuredPoolDeployer)) !==
+      poolDeployerDeployment.address ||
+    ethersLibrary.getAddress(String(configuredStrategyRegistry)) !==
+      strategyRegistryDeployment.address ||
+    !Boolean(registryFinalized) ||
+    ethersLibrary.getAddress(String(configuredStrategy)) !==
+      strategyDeployment.address ||
+    ethersLibrary.getAddress(String(configuredMigrator)) !==
+      migratorDeployment.address ||
     !tokenAApproved ||
     !tokenBApproved
   ) throw new Error("canonical deployment binding verification failed");
 
-  const pool30 = await createPool(
+  const pool30 = await initializeProtectedPool(
     factory,
+    strategyDeployment.contract,
+    migratorDeployment.contract,
     primary,
+    quoteWallet,
     tokenAAddress,
     tokenBAddress,
     decimalsA,
     decimalsB,
     30,
+    pool30LiquidityA,
+    pool30LiquidityB,
   );
   const pool100 = await createPool(
     factory,
@@ -1311,13 +1902,6 @@ async function main(): Promise<void> {
     decimalsA,
     decimalsB,
     100,
-  );
-  await initializePool(
-    pool30,
-    primary,
-    tokenAAddress,
-    pool30LiquidityA,
-    pool30LiquidityB,
   );
   await initializePool(
     pool100,
@@ -1336,6 +1920,7 @@ async function main(): Promise<void> {
     swapB,
     "two-candidate quote with absent tier",
     twoPools,
+    MIXED_TWO_CANDIDATE_BITMAP,
   );
   if (absentTierQuote.selectedFeeBps !== 100) {
     throw new Error("two-candidate quote selected the wrong fee tier");
@@ -1359,6 +1944,7 @@ async function main(): Promise<void> {
     swapB,
     "two-candidate quote with uninitialized tier",
     allPools,
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
   if (uninitializedTierQuote.selectedFeeBps !== 100) {
     throw new Error("uninitialized candidate was not isolated");
@@ -1371,6 +1957,7 @@ async function main(): Promise<void> {
     tokenAAddress,
     swapB,
     uninitializedTierQuote,
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
   const twoCandidateSwap = await swapWithRollbackProof(
     routerDeployment.address,
@@ -1382,6 +1969,7 @@ async function main(): Promise<void> {
     100,
     allPools,
     "two-candidate quote-plus-swap",
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
 
   await initializePool(
@@ -1399,6 +1987,7 @@ async function main(): Promise<void> {
     swapB,
     "three-candidate quote",
     allPools,
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
   if (threeCandidateQuote.selectedFeeBps !== 5) {
     throw new Error(
@@ -1415,6 +2004,7 @@ async function main(): Promise<void> {
     5,
     allPools,
     "three-candidate quote-plus-swap",
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
 
   const postTieQuote = await requestBestQuote(
@@ -1425,9 +2015,14 @@ async function main(): Promise<void> {
     swapB,
     "post-tie 30 bps selection quote",
     allPools,
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
-  if (postTieQuote.selectedFeeBps !== 30) {
-    throw new Error("post-tie quote did not select the untouched 30 bps tier");
+  if (
+    postTieQuote.selectedFeeBps !== 30 ||
+    postTieQuote.selectedPool !== pool30.address ||
+    pool30.initializationStrategy !== strategyDeployment.address
+  ) {
+    throw new Error("post-tie quote did not select the protected 30 bps candidate");
   }
   await swapWithRollbackProof(
     routerDeployment.address,
@@ -1439,6 +2034,7 @@ async function main(): Promise<void> {
     30,
     allPools,
     "post-tie 30 bps quote-plus-swap",
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
 
   const tinyQuote = await requestBestQuote(
@@ -1449,6 +2045,7 @@ async function main(): Promise<void> {
     501n,
     "encrypted-invalid candidate isolation quote",
     allPools,
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
   if (tinyQuote.selectedFeeBps !== 100) {
     throw new Error("encrypted-invalid candidates blocked the viable tier");
@@ -1462,6 +2059,7 @@ async function main(): Promise<void> {
     swapA,
     "reverse three-candidate quote",
     allPools,
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
   if (!FEE_TIERS.includes(reverseQuote.selectedFeeBps as 5 | 30 | 100)) {
     throw new Error("reverse quote selected an unsupported tier");
@@ -1476,12 +2074,13 @@ async function main(): Promise<void> {
     reverseQuote.selectedFeeBps,
     allPools,
     "reverse three-candidate quote-plus-swap",
+    MIXED_THREE_CANDIDATE_BITMAP,
   );
 
   stage = "disposable candidate cleanup";
   for (const context of allPools) {
-    await removeAllLiquidity(context, primary);
-    recoveryJournal.markRecovered(`pool-${context.feeBps}`);
+    const recoveryTransactionHash = await removeAllLiquidity(context, primary);
+    recoveryJournal.markRecovered(`pool-${context.feeBps}`, [recoveryTransactionHash]);
   }
   const expectedProtocolFeeA = modeledProtocolFee(swapA, reverseQuote.selectedFeeBps);
   const expectedProtocolFeeB =
@@ -1502,7 +2101,10 @@ async function main(): Promise<void> {
   console.log(`confidentialFactory=${factoryDeployment.address}`);
   console.log(`confidentialBestExecutionRouter=${routerDeployment.address}`);
   for (const context of allPools) {
-    console.log(`canonicalPool feeBps=${context.feeBps} address=${context.address}`);
+    console.log(
+      `canonicalPool feeBps=${context.feeBps} ` +
+        `strategy=${context.initializationStrategy} address=${context.address}`,
+    );
   }
   console.log(
     `benchmark candidates=2 quoteGas=${uninitializedTierQuote.transaction.gasUsed} ` +
@@ -1514,7 +2116,7 @@ async function main(): Promise<void> {
   );
   console.log(
     "COTI testnet production best execution passed: canonical discovery, paid quote-only, " +
-      "private selection, exact lower-tier tie-breaking, both directions, every v1 tier, encrypted candidate isolation, " +
+    "private mixed-class selection, exact lower-tier tie-breaking, both directions, every v1 tier, encrypted candidate isolation, " +
       "caller/replay/deadline protection, atomic rollback, exact escrow, quote parity, full LP exits, and zero-residue cleanup",
   );
   const lpArtifacts = await Promise.all(allPools.map(async (context) => ({
@@ -1522,69 +2124,104 @@ async function main(): Promise<void> {
     contractName: "PrivateLPToken",
     address: ethersLibrary.getAddress(await context.pool.lpToken()),
   })));
-  recoveryJournal.markRun("passed");
-  const finalEvidence = await writeFundedRunEvidence({
-    journal: recoveryJournal,
-    provider: ethers.provider,
+  recoveryJournal.prepareEvidence({
     participants: [primaryAddress, secondAddress, quoteAddress],
-    configuration: {
-      chainId: Number(network.chainId),
-      confidentialPoolVersion: 2,
-      routerVersion: 1,
-      privacyMode: 1,
-      quoteTransport: "paid-transaction",
-      candidateTiers: "5,30,100",
-      tokenA: tokenAAddress,
-      tokenB: tokenBAddress,
-      feeBeneficiary,
-    },
+    configuration: evidenceConfiguration,
     artifacts: [
       {
         label: "disposable fee vault",
         contractName: "CipherDEXFeeVault",
         address: feeVaultDeployment.address,
+        creationTransactionHash: feeVaultDeployment.transaction.hash,
+        constructorArguments: [feeBeneficiary],
       },
       {
         label: "disposable private LP factory",
         contractName: "PrivateLPTokenFactory",
         address: lpFactoryDeployment.address,
+        creationTransactionHash: lpFactoryDeployment.transaction.hash,
+        constructorArguments: [],
       },
       {
         label: "disposable confidential factory",
         contractName: "ConfidentialCPMMFactory",
         address: factoryDeployment.address,
+        creationTransactionHash: factoryDeployment.transaction.hash,
+        constructorArguments: [
+          feeVaultDeployment.address,
+          lpFactoryDeployment.address,
+          poolDeployerDeployment.address,
+          poolDeployerRuntimeCodehash,
+          codehashes,
+          strategyRegistryDeployment.address,
+          strategyRegistryRuntimeCodehash,
+        ],
+      },
+      {
+        label: "disposable confidential pool deployer",
+        contractName: "ConfidentialCPMMDeployer",
+        address: poolDeployerDeployment.address,
+        creationTransactionHash: poolDeployerDeployment.transaction.hash,
+        constructorArguments: [],
+      },
+      {
+        label: "disposable initialization strategy registry",
+        contractName: "ConfidentialInitializationStrategyRegistry",
+        address: strategyRegistryDeployment.address,
+        creationTransactionHash: strategyRegistryDeployment.transaction.hash,
+        constructorArguments: [[reviewedStrategyRuntimeCodehash]],
+      },
+      {
+        label: "disposable launch initialization strategy",
+        contractName: "ConfidentialLaunchInitializationStrategy",
+        address: strategyDeployment.address,
+        creationTransactionHash: strategyDeployment.transaction.hash,
+        constructorArguments: [
+          factoryDeployment.address,
+          strategyRegistryDeployment.address,
+          quoteAddress,
+        ],
+      },
+      {
+        label: "disposable launchpad migrator",
+        contractName: "ConfidentialLaunchpadMigrator",
+        address: migratorDeployment.address,
       },
       {
         label: "disposable best execution router",
         contractName: "ConfidentialBestExecutionRouter",
         address: routerDeployment.address,
+        creationTransactionHash: routerDeployment.transaction.hash,
+        constructorArguments: [factoryDeployment.address],
       },
       ...allPools.map((context) => ({
-        label: `${context.feeBps} bps canonical pool`,
+        label: context.initializationStrategy === ethersLibrary.ZeroAddress
+          ? `${context.feeBps} bps standard canonical pool`
+          : `${context.feeBps} bps launch-protected canonical pool`,
         contractName: "ConfidentialCPMM",
         address: context.address,
       })),
       ...lpArtifacts,
     ],
-    assertions: [
-      "canonical candidates resolved from factory",
-      "paid quote selected best encrypted output",
-      "deterministic lower-tier tie break enforced",
-      "quote-only pool state remained unchanged",
-      "quote and settlement output parity enforced",
-      "both swap directions exercised",
-      "all approved fee tiers exercised",
-      "request replay caller and deadline guards enforced",
-      "slippage failure rolled back atomically",
-      "router escrow and allowances returned to zero",
-      "full LP exits used positive modeled minima",
-      "disposable pools recovered with zero residue",
-    ],
+    assertions: BEST_EXECUTION_FUNDED_ASSERTIONS,
+  });
+  const finalEvidence = await writePreparedFundedRunEvidence({
+    journal: recoveryJournal,
+    provider: ethers.provider,
+    attestationSigner: primary,
   });
   console.log(`fundedEvidence=${finalEvidence.path}`);
 }
 
 void main().catch(async (error: unknown) => {
+  if (recoveryJournal?.runStatus === "evidence-failed") {
+    console.error(
+      `COTI production best-execution evidence generation failed: ` +
+        `${safeTestnetErrorSummary(error)}; paid execution will not be repeated.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (error instanceof UnknownBroadcastOutcomeError) {
     recoveryJournal?.markRun("failed");
     console.error(

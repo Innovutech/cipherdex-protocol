@@ -11,30 +11,37 @@ import "./interfaces/IConfidentialCPMMFactory.sol";
 
 /**
  * @title ConfidentialBestExecutionRouter
- * @notice Canonical single-hop best execution across CipherDEX confidential
- *         fee tiers. Candidate identity is derived exclusively from the bound
- *         factory; callers cannot inject pools or arbitrary execution targets.
+ * @notice Bounded canonical best execution across confidential fee/strategy variants.
  *
- * The current COTI runtime requires MPC quotes to execute in transactions.
- * Outputs remain encrypted for the caller. Only final viability and the winning
- * candidate index are decrypted; input, minimum output, candidate outputs and
- * losing-candidate ordering are never published.
+ * The nine-bit candidate namespace is factory-derived: three approved fee tiers
+ * multiplied by the standard class plus at most two reviewed strategy classes.
+ * A request may select at most three bits, preventing arbitrary pool injection
+ * and bounding COTI MPC work to the already measured three-candidate ceiling.
  */
 contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
-    uint256 public constant PROTOCOL_VERSION = 1;
-    uint256 private constant CANDIDATE_COUNT = 3;
+    uint256 public constant PROTOCOL_VERSION = 2;
+    uint8 public constant MAX_CANDIDATES = 3;
+    uint8 public constant MAX_POOL_CLASSES = 3;
+    uint8 public constant CANDIDATE_BITMAP_BITS = 9;
+    uint16 public constant DEFAULT_STANDARD_CANDIDATE_BITMAP =
+        uint16((1 << 0) | (1 << 3) | (1 << 6));
 
-    address public immutable factory;
+    // Constructor-only storage keeps the reviewed runtime bytecode identical
+    // across deployments, allowing the factory to authenticate its exact
+    // implementation by codehash. There is deliberately no mutator.
+    address public factory;
     mapping(address => mapping(bytes4 => mapping(bytes32 => bool))) public usedRequestIds;
     mapping(bytes32 => bool) private consumedInputs;
     uint256 private reentrancyState = 1;
 
     struct CandidateSet {
-        address[CANDIDATE_COUNT] pools;
-        uint256[CANDIDATE_COUNT] feeTiers;
+        address[MAX_CANDIDATES] pools;
+        address[MAX_CANDIDATES] initializationStrategies;
+        uint256[MAX_CANDIDATES] feeTiers;
         uint8 count;
         bool zeroForOne;
         address inputToken;
+        uint16 candidateBitmap;
     }
 
     error InvalidFactory();
@@ -42,6 +49,7 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
     error InvalidTokenDecimals();
     error UnsupportedPrivateToken();
     error InvalidCanonicalPool();
+    error InvalidCandidateBitmap();
     error NoViablePool();
     error InvalidRecipient();
     error InvalidRequestId();
@@ -58,6 +66,8 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         bytes32 indexed requestId,
         address indexed selectedPool,
         uint256 selectedFeeBps,
+        address selectedInitializationStrategy,
+        uint16 candidateBitmap,
         bool zeroForOne,
         ctUint256 result
     );
@@ -67,6 +77,8 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         bytes32 indexed requestId,
         address indexed selectedPool,
         uint256 selectedFeeBps,
+        address selectedInitializationStrategy,
+        uint16 candidateBitmap,
         bool zeroForOne,
         ctUint256 result
     );
@@ -82,18 +94,14 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         if (factory_.code.length == 0) revert InvalidFactory();
         IConfidentialCPMMFactory candidate = IConfidentialCPMMFactory(factory_);
         if (
-            candidate.PROTOCOL_VERSION() != 2 ||
-            candidate.PRIVACY_MODE() != 1
+            candidate.PROTOCOL_VERSION() != 3 ||
+            candidate.PRIVACY_MODE() != 1 ||
+            !candidate.initializationStrategyRegistryFinalized() ||
+            candidate.initializationStrategiesLength() > 2
         ) revert InvalidFactory();
         factory = factory_;
     }
 
-    /**
-     * @notice Requests an exact encrypted best quote across every initialized
-     *         canonical v1 fee-tier pool for the ordered token pair.
-     * @dev This is a paid transaction on the current COTI runtime. It changes
-     *      only router replay state and emits one caller-encrypted result.
-     */
     function requestBestQuoteExactInput(
         address tokenIn,
         address tokenOut,
@@ -101,12 +109,56 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         bytes32 requestId,
         uint64 deadline
     ) external nonReentrant returns (ctUint256 memory result) {
+        return _requestBestQuoteExactInput(
+            tokenIn,
+            tokenOut,
+            amountIn,
+            DEFAULT_STANDARD_CANDIDATE_BITMAP,
+            requestId,
+            deadline
+        );
+    }
+
+    function requestBestQuoteExactInputWithCandidates(
+        address tokenIn,
+        address tokenOut,
+        itUint256 calldata amountIn,
+        uint16 candidateBitmap,
+        bytes32 requestId,
+        uint64 deadline
+    ) external nonReentrant returns (ctUint256 memory result) {
+        return _requestBestQuoteExactInput(
+            tokenIn,
+            tokenOut,
+            amountIn,
+            candidateBitmap,
+            requestId,
+            deadline
+        );
+    }
+
+    function _requestBestQuoteExactInput(
+        address tokenIn,
+        address tokenOut,
+        itUint256 calldata amountIn,
+        uint16 candidateBitmap,
+        bytes32 requestId,
+        uint64 deadline
+    ) internal returns (ctUint256 memory result) {
         _requireBeforeDeadline(deadline);
-        CandidateSet memory candidates = _resolveCandidates(tokenIn, tokenOut);
+        CandidateSet memory candidates = _resolveCandidates(
+            tokenIn,
+            tokenOut,
+            candidateBitmap
+        );
         _consumeRequestId(requestId);
         gtUint256 input = _validateAndConsume(amountIn);
-        (address selectedPool, uint256 selectedFeeBps, gtUint256 bestOutput) =
-            _selectBest(candidates, input);
+        (
+            address selectedPool,
+            uint256 selectedFeeBps,
+            address selectedStrategy,
+            gtUint256 bestOutput
+        ) = _selectBest(candidates, input);
 
         result = MpcCore.offBoardToUser(bestOutput, msg.sender);
         emit ConfidentialBestQuoteResult(
@@ -114,17 +166,13 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
             requestId,
             selectedPool,
             selectedFeeBps,
+            selectedStrategy,
+            candidateBitmap,
             candidates.zeroForOne,
             result
         );
     }
 
-    /**
-     * @notice Atomically selects and settles the best initialized canonical pool.
-     * @dev The router escrows only the exact encrypted input, grants only the
-     *      selected pool an exact temporary allowance and returns to its starting
-     *      input-token balance with every candidate allowance at zero.
-     */
     function swapBestExactInput(
         address tokenIn,
         address tokenOut,
@@ -133,13 +181,61 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         bytes32 requestId,
         uint64 deadline
     ) external nonReentrant returns (ctUint256 memory result) {
+        return _swapBestExactInput(
+            tokenIn,
+            tokenOut,
+            amountIn,
+            minimumOut,
+            DEFAULT_STANDARD_CANDIDATE_BITMAP,
+            requestId,
+            deadline
+        );
+    }
+
+    function swapBestExactInputWithCandidates(
+        address tokenIn,
+        address tokenOut,
+        itUint256 calldata amountIn,
+        itUint256 calldata minimumOut,
+        uint16 candidateBitmap,
+        bytes32 requestId,
+        uint64 deadline
+    ) external nonReentrant returns (ctUint256 memory result) {
+        return _swapBestExactInput(
+            tokenIn,
+            tokenOut,
+            amountIn,
+            minimumOut,
+            candidateBitmap,
+            requestId,
+            deadline
+        );
+    }
+
+    function _swapBestExactInput(
+        address tokenIn,
+        address tokenOut,
+        itUint256 calldata amountIn,
+        itUint256 calldata minimumOut,
+        uint16 candidateBitmap,
+        bytes32 requestId,
+        uint64 deadline
+    ) internal returns (ctUint256 memory result) {
         _requireBeforeDeadline(deadline);
-        CandidateSet memory candidates = _resolveCandidates(tokenIn, tokenOut);
+        CandidateSet memory candidates = _resolveCandidates(
+            tokenIn,
+            tokenOut,
+            candidateBitmap
+        );
         _consumeRequestId(requestId);
         gtUint256 input = _validateAndConsume(amountIn);
         gtUint256 minimum = _validateAndConsume(minimumOut);
-        (address selectedPool, uint256 selectedFeeBps, gtUint256 bestOutput) =
-            _selectBest(candidates, input);
+        (
+            address selectedPool,
+            uint256 selectedFeeBps,
+            address selectedStrategy,
+            gtUint256 bestOutput
+        ) = _selectBest(candidates, input);
 
         IPrivateERC20 privateInputToken = IPrivateERC20(candidates.inputToken);
         gtUint256 startingBalance = privateInputToken.balanceOf();
@@ -148,10 +244,7 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         gtUint256 fundedBalance = privateInputToken.balanceOf();
         if (
             !MpcCore.decrypt(
-                MpcCore.eq(
-                    fundedBalance,
-                    MpcCore.add(startingBalance, input)
-                )
+                MpcCore.eq(fundedBalance, MpcCore.add(startingBalance, input))
             )
         ) revert PrivateTransferAmountMismatch();
 
@@ -179,6 +272,8 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
             requestId,
             selectedPool,
             selectedFeeBps,
+            selectedStrategy,
+            candidateBitmap,
             candidates.zeroForOne,
             result
         );
@@ -186,15 +281,22 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
 
     function _resolveCandidates(
         address tokenIn,
-        address tokenOut
+        address tokenOut,
+        uint16 candidateBitmap
     ) internal view returns (CandidateSet memory candidates) {
         if (
             tokenIn == address(0) ||
             tokenOut == address(0) ||
             tokenIn == tokenOut
         ) revert InvalidTokenPair();
+        if (
+            candidateBitmap == 0 ||
+            candidateBitmap >= (uint16(1) << CANDIDATE_BITMAP_BITS) ||
+            _populationCount(candidateBitmap) > MAX_CANDIDATES
+        ) revert InvalidCandidateBitmap();
 
-        IConfidentialCPMMFactory canonicalFactory = IConfidentialCPMMFactory(factory);
+        IConfidentialCPMMFactory canonicalFactory =
+            IConfidentialCPMMFactory(factory);
         if (
             !canonicalFactory.isApprovedPrivateToken(tokenIn) ||
             !canonicalFactory.isApprovedPrivateToken(tokenOut)
@@ -220,43 +322,60 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
             candidates.zeroForOne = false;
         }
         candidates.inputToken = tokenIn;
+        candidates.candidateBitmap = candidateBitmap;
 
-        uint256[CANDIDATE_COUNT] memory tiers = [
+        uint256[3] memory tiers = [
             LOW_FEE_TIER_BPS,
             STANDARD_FEE_TIER_BPS,
             HIGH_FEE_TIER_BPS
         ];
-        for (uint256 index = 0; index < CANDIDATE_COUNT; index++) {
-            bytes32 key = canonicalFactory.poolKey(
-                token0,
-                token1,
-                decimals0,
-                decimals1,
-                tiers[index]
-            );
-            address pool = canonicalFactory.getPool(key);
-            if (pool == address(0)) continue;
-            if (
-                pool.code.length == 0 ||
-                !canonicalFactory.isPool(pool)
-            ) revert InvalidCanonicalPool();
+        uint256 classCount =
+            canonicalFactory.initializationStrategiesLength() + 1;
+        for (uint256 feeIndex = 0; feeIndex < 3; feeIndex++) {
+            for (uint8 classIndex = 0; classIndex < MAX_POOL_CLASSES; classIndex++) {
+                uint8 bitIndex = uint8(feeIndex * MAX_POOL_CLASSES + classIndex);
+                if ((candidateBitmap & (uint16(1) << bitIndex)) == 0) continue;
+                if (classIndex >= classCount) revert InvalidCandidateBitmap();
 
-            IConfidentialCPMM candidate = IConfidentialCPMM(pool);
-            if (
-                candidate.PROTOCOL_VERSION() != canonicalFactory.PROTOCOL_VERSION() ||
-                candidate.PRIVACY_MODE() != canonicalFactory.PRIVACY_MODE() ||
-                candidate.token0() != token0 ||
-                candidate.token1() != token1 ||
-                candidate.token0Decimals() != decimals0 ||
-                candidate.token1Decimals() != decimals1 ||
-                candidate.feeBps() != tiers[index]
-            ) revert InvalidCanonicalPool();
-            if (!candidate.initialized()) continue;
+                address strategy = canonicalFactory.initializationStrategyAt(
+                    classIndex
+                );
+                bytes32 key = canonicalFactory.poolKey(
+                    token0,
+                    token1,
+                    decimals0,
+                    decimals1,
+                    tiers[feeIndex],
+                    strategy
+                );
+                address pool = canonicalFactory.getPool(key);
+                if (pool == address(0)) continue;
+                if (
+                    pool.code.length == 0 ||
+                    !canonicalFactory.isPool(pool)
+                ) revert InvalidCanonicalPool();
 
-            uint256 candidateIndex = candidates.count;
-            candidates.pools[candidateIndex] = pool;
-            candidates.feeTiers[candidateIndex] = tiers[index];
-            candidates.count += 1;
+                IConfidentialCPMM candidate = IConfidentialCPMM(pool);
+                if (
+                    candidate.PROTOCOL_VERSION() !=
+                        canonicalFactory.PROTOCOL_VERSION() ||
+                    candidate.PRIVACY_MODE() !=
+                        canonicalFactory.PRIVACY_MODE() ||
+                    candidate.token0() != token0 ||
+                    candidate.token1() != token1 ||
+                    candidate.token0Decimals() != decimals0 ||
+                    candidate.token1Decimals() != decimals1 ||
+                    candidate.feeBps() != tiers[feeIndex] ||
+                    candidate.initializationStrategy() != strategy
+                ) revert InvalidCanonicalPool();
+                if (!candidate.initialized()) continue;
+
+                uint256 candidateIndex = candidates.count;
+                candidates.pools[candidateIndex] = pool;
+                candidates.initializationStrategies[candidateIndex] = strategy;
+                candidates.feeTiers[candidateIndex] = tiers[feeIndex];
+                candidates.count += 1;
+            }
         }
         if (candidates.count == 0) revert NoViablePool();
     }
@@ -267,11 +386,15 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
     ) internal returns (
         address selectedPool,
         uint256 selectedFeeBps,
+        address selectedStrategy,
         gtUint256 bestOutput
     ) {
         gtBool bestValid;
         gtUint256 bestIndex = MpcCore.setPublic256(uint256(0));
 
+        // Candidate traversal is fee first, then standard before reviewed
+        // strategies. Strict replacement therefore gives deterministic equal-
+        // output priority to lower fee, then standard, then lower class index.
         for (uint256 index = 0; index < candidates.count; index++) {
             (gtUint256 candidateOutput, gtBool candidateValid) =
                 IConfidentialBestExecutionPool(candidates.pools[index])
@@ -304,6 +427,7 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         if (selectedIndex >= candidates.count) revert InvalidCanonicalPool();
         selectedPool = candidates.pools[selectedIndex];
         selectedFeeBps = candidates.feeTiers[selectedIndex];
+        selectedStrategy = candidates.initializationStrategies[selectedIndex];
     }
 
     function _requireZeroCandidateAllowances(
@@ -315,14 +439,16 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
                 candidates.pools[index],
                 false
             );
-            if (
-                !MpcCore.decrypt(
-                    MpcCore.eq(
-                        remainingAllowance,
-                        uint256(0)
-                    )
-                )
-            ) revert ResidualAllowance();
+            if (!MpcCore.decrypt(MpcCore.eq(remainingAllowance, uint256(0)))) {
+                revert ResidualAllowance();
+            }
+        }
+    }
+
+    function _populationCount(uint16 bitmap) internal pure returns (uint8 count) {
+        while (bitmap != 0) {
+            count += uint8(bitmap & 1);
+            bitmap >>= 1;
         }
     }
 
@@ -362,10 +488,6 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         return uint8(value);
     }
 
-    /**
-     * @dev COTI's MpcCore.mux selects its third argument when condition is true.
-     * This wrapper presents conventional `(condition, whenTrue, whenFalse)` order.
-     */
     function _selectIf(
         gtBool condition,
         gtUint256 whenTrue,

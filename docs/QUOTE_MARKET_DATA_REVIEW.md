@@ -9,17 +9,16 @@ public reserve-derived state. On the current COTI testnet runtime, exact private
 quotes require paid transactions because fresh MPC operations cannot execute
 under `eth_call`.
 
-The currently recorded v2 deployment exposes only the paid per-pool quote, so
-that is its primary working quote mechanism. The target transport for this
-version is one factory-bound
+The paid per-pool quote is the only currently proven primary quote mechanism.
+This version also implements one factory-bound
 `ConfidentialBestExecutionRouter.requestBestQuoteExactInput` transaction. The
 caller creates one router/selector-bound encrypted input. The router reuses the
-validated GT value across all initialized canonical v1 fee-tier pools, privately
-selects the largest valid output and offboards only the winner. It pays gas,
-waits for inclusion and creates public caller/winning-pool/tier/direction/timing
-history, but does not reveal losing outputs or move funds. Only after the router
-passes final verification and is freshly deployed does the paid per-pool quote
-become a direct compatibility path.
+validated GT value across a bounded factory-derived fee/strategy candidate set,
+privately selects the largest valid output and offboards only the winner. It pays
+gas, waits for inclusion and creates public caller/winning-pool/tier/strategy/
+direction/timing history, but does not reveal losing outputs or move funds. It
+may become the preferred integration path after fresh funded verification, but
+it is not a gasless main path and does not turn the direct quote into a fallback.
 
 No public reserve, TVL, spot-price, TWAP, depth ladder or quote state is added.
 This is a testnet feasibility boundary, not a mainnet-readiness claim.
@@ -161,8 +160,9 @@ integrations need:
 
 ### 8. Keep, extend or redesign?
 
-Keep the settlement privacy boundary and use the evidence-backed paid canonical
-best-quote/best-execution router. It is not an unchecked forwarding router: user
+Keep the settlement privacy boundary. Paid pool-level quotes remain the proven
+primary transport until the final paid canonical best-quote/best-execution
+router passes fresh funded mixed-class evidence. The router is not an unchecked forwarding router: user
 ciphertexts bind to the router, pools accept raw GT values only from the one
 router bound by their factory, and each pool remains authoritative for
 settlement. Do not add public reserve-derived state. Re-test gasless encrypted
@@ -174,15 +174,15 @@ succeeds, replace only the quote transport after parity and security review.
 | Model | Benefit | Cost or privacy consequence | Decision |
 | --- | --- | --- | --- |
 | MPC `eth_call` | Exact, gasless, no quote transaction history | Unsupported by tested runtime | Preferred future transport |
-| Paid canonical best quote | Exact, one transaction, losing outputs stay private | Gas, latency, winning route metadata | Target primary after final deployment |
-| Paid per-pool quote | Exact and currently proven | One transaction per candidate and caller learns every output | Current primary; compatibility fallback after router deployment |
+| Paid canonical best quote | Exact, one transaction, losing outputs stay private | Gas, latency, winning route metadata; final router still requires funded proof | Implemented candidate for preferred integration |
+| Paid per-pool quote | Exact and currently proven | One transaction per candidate and caller learns every output | Current proven primary direct transport |
 | Public exact reserves | Simple universal routing | Reveals aggregate state and per-change deltas | Rejected |
 | Public exact quote | Simple universal routing | Public active oracle over curve | Rejected |
 | Public spot/TWAP | Analytics and rough routing | Persistent ratio/history disclosure; insufficient for slippage | Not embedded |
 | Reencrypt reserves to one API | Cheap exact backend quotes | API learns reserves/deltas; centralized confidentiality trust | Rejected |
 | Coarse or delayed snapshots | Lower-cost route filtering | Staleness, manipulation and explicit leakage budget | Future separate review |
 | Unchecked forwarding router | One execution surface | Breaks authenticated sender/target/selector binding | Rejected |
-| Factory-bound GT router | One quote/execution surface with authenticated router inputs | Paid MPC work and selected-route metadata | Implemented for single-hop v1 tiers |
+| Factory-bound GT router | One quote/execution surface with authenticated router inputs | Paid MPC work and selected-route metadata | Implemented for bounded single-hop fee/strategy classes |
 
 ## Operational boundary
 
@@ -194,7 +194,8 @@ succeeds, replace only the quote transport after parity and security review.
 - Show cost and pending status honestly to any testnet client.
 - Verify router code, protocol version, immutable factory and the factory's
   `bestExecutionRouter()` binding before encrypting or submitting.
-- Re-run `npm run testnet:quote-call-probe` against every target RPC/runtime.
+- Re-run the externally launched `scripts/testnet-quote-call-probe.ts` target
+  against every target RPC/runtime as documented in `docs/DEPLOYMENT.md`.
 - Treat any changed failure or newly successful primitive as a review trigger.
 
 ## Official references

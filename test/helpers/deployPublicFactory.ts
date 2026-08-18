@@ -1,4 +1,4 @@
-import { ethers } from "hardhat";
+import { ethers } from "../../hardhat/runtime.js";
 import { deployFeeVault } from "./deployFeeVault";
 
 export async function deployPublicFactory(beneficiary?: string) {

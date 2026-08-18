@@ -33,7 +33,18 @@ const untrustedDiscovery = {
   feeVault: await pool.feeVault(),
   feePolicy: getCipherDEXV1FeePolicy(Number(await pool.feeBps())),
   privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-  poolKind: "private-erc20-cpmm-v2",
+  initializationStrategy: await pool.initializationStrategy(),
+  strategyClass: Number(
+    await factory.initializationStrategyClass(
+      await pool.initializationStrategy(),
+    ),
+  ),
+  poolClass:
+    (await pool.initializationStrategy()) === ZeroAddress
+      ? "standard"
+      : "launch-protected",
+  initialized: await pool.initialized(),
+  poolKind: "private-erc20-cpmm-v3",
   quoteTransport:
     CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
 };
@@ -58,8 +69,11 @@ const discovery = await verifyConfidentialPoolDiscovery(
 ```
 
 The shape validator does not prove provenance. The RPC adapter must verify
-deployed code, factory protocol version, `isPool`, the one canonical `poolKey`
-mapping and all immutable pool fields. It must also compare each token's current
+deployed code, factory protocol version, `isPool`, the complete canonical
+`poolKey` mapping and all immutable pool fields, including strategy class,
+strategy runtime codehash and initialized state. The key is ordered pair, fee,
+privacy mode, protocol version and initialization strategy. It must also compare
+each token's current
 runtime implementation with `isApprovedPrivateToken` on that exact immutable
 factory. For LP-token provenance it verifies the factory's immutable helper,
 the helper's reviewed runtime codehash and factory constant, deployed LP-token
@@ -110,18 +124,21 @@ const transaction = buildVerifiedConfidentialBestQuoteTransaction(
 );
 ```
 
-`requestBestQuoteExactInput` derives all candidates from the canonical factory,
-quotes initialized 5/30/100 bps pools with the same GT input, selects privately
-and emits one caller-encrypted winner. After submission, call
+The default `requestBestQuoteExactInput` derives the three standard 5/30/100 bps
+candidates from the factory. The candidate-aware variant accepts only a nine-bit
+fee/strategy-class bitmap, rejects more than three active bits and never accepts
+pool addresses. It skips missing or uninitialized variants, uses the same GT
+input, selects privately and emits one caller-encrypted winner. After submission, call
 `decryptConfidentialBestExecutionResult` with the expected operation, caller,
 request ID, token pair, transaction hash and exact encoded transaction calldata.
 Its trusted adapter must fetch the
 raw transaction and receipt by that hash; application code cannot inject either
 as evidence. The SDK verifies the chain, byte-for-byte calldata, exact router event,
-selected tier and a fresh canonical-pool lookup before decrypting. The currently
-recorded pre-router deployment uses pool-level `requestQuoteExactInput` as its
-primary working quote; after this router version is finalized and freshly
-deployed, that path remains supported for compatibility and diagnosis.
+selected tier/strategy and a fresh complete-key pool lookup before decrypting.
+Paid pool-level `requestQuoteExactInput` is the only proven primary quote path.
+The paid router may become the preferred integration transport after fresh
+funded proof, but neither path is gasless and the direct path is not merely a
+fallback.
 
 The verification and decryption adapters are trusted chain-data boundaries, not
 indexer callbacks. Expected addresses and runtime codehashes must come from the
@@ -157,35 +174,42 @@ successful call requires the router's starting token balance and every candidate
 allowance to be restored; any failure rolls the whole transaction back.
 
 Direct `swapExactInput` remains supported for a user that intentionally selects
-one verified pool. It requires fresh pool/selector-bound ciphertexts and is not
-the preferred best-execution path.
+one verified pool. It requires fresh pool/selector-bound ciphertexts. Promote
+the router as a preferred integration path only after its exact deployed source
+has passed the documented funded mixed-class proof.
 
 ## Launchpad bootstrap
 
-Launchpads use the factory's restricted bootstrap adapter to resolve the same
-canonical pool key as permissionless creation. There is no creator-scoped pool
-namespace. Index `PoolCreated`, `LaunchpadMigration` and
-`LaunchpadLockDisposition`; the latter two add provenance and LP-disposition
-metadata without defining a second market identity.
+Launchpads first use `buildConfidentialLaunchCommitment`, creator and
+launch-authority EIP-712 signatures, and `buildConfidentialLaunchCommitCall` to
+commit a reviewed strategy-bound protected pool. This is a distinct complete
+key from the standard `address(0)` pool, not a creator-scoped namespace. Index
+`PoolCreated`, `LaunchCommitted`, `LaunchCanceled`, `LaunchExpired`,
+`LaunchInitializationAuthorized`, `LaunchpadMigration` and
+`LaunchpadLockDisposition` as separate lifecycle evidence.
 
 Indexer JSON is untrusted discovery data. Parse it with the SDK shape guards,
 apply the semantic guards, and then call `verifyLaunchpadMigrationMetadata`
 through an RPC-backed adapter before presenting a migration or lock as verified.
 That final step binds the record to the successful transaction, configured
 migrator, canonical factory pool, exact migration/lock events and current public
-lock state. Shape validation alone is never transaction evidence.
+lock state. Receipt/event authentication rather than a top-level sender or
+selector assumption preserves verification for nested ERC-1271 wallet
+execution. Shape validation alone is never transaction evidence.
 
 Liquidity amounts, normalized price bounds, minted shares, reserves and TVL are
-not public discovery fields. A pre-existing initialized canonical pool rejects
-bootstrap before private token pulls. For an empty pool, the launchpad escrows
-exact amounts, grants exact pool allowances and lets the pool validate its own
-balance deltas. New pool creation, escrow, approvals and bootstrap roll back
-atomically if any later check fails. Prior unmanaged balances cannot become
-reserves or block this exact-delta initialization.
+not public discovery fields. The ordinary standard pool never blocks or receives
+the launch. The protected pool must match the active commitment and be empty;
+the factory and strategy consume its one-shot authorization atomically with
+escrow, exact pool allowances, pool balance-delta validation and bootstrap.
+Prior unmanaged balances cannot become reserves or block this exact-delta
+initialization.
 
 ## Version boundary
 
 Integrations must pin the expected factories, private LP-token factory and its
-runtime codehash, fee vault, protocol version, privacy mode and pool kind.
+runtime codehash, pool deployer/codehash, finalized strategy registry,
+strategy/migrator runtime codehashes, fee vault, protocol versions, privacy mode
+and pool kind.
 Unknown discovery schema versions and privacy mode `2` are rejected rather than
 inferred.

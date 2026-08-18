@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, realpath } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -13,7 +14,11 @@ import {
   verifyDeployedRuntimeArtifactWithProvenance,
   type RuntimeArtifactProvenance,
 } from "./runtime-artifact";
-import { trustedGitExecutable } from "./trusted-git";
+import {
+  trustedGitArguments,
+  trustedGitEnvironment,
+  trustedGitExecutable,
+} from "./trusted-git";
 
 const execFileAsync = promisify(execFile);
 const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
@@ -27,11 +32,14 @@ type JsonRecord = Record<string, unknown>;
 export type TestnetDeploymentContractRequirement = Readonly<{
   recordKey: string;
   contractName: string;
-  address: string;
+  address?: string;
 }>;
 
 export type VerifiedTestnetDeploymentRecord = Readonly<{
   path: string;
+  recordPath: string;
+  recordSha256: string;
+  manifestCommit: string;
   sourceCommit: string;
   evidenceCommit: string;
   chainId: string;
@@ -46,12 +54,18 @@ type ProvenanceDependencies = Readonly<{
     sourceCommit: string,
   ) => Promise<Readonly<{
     headCommit: string;
+    recordCommit: string;
     dirty: boolean;
     recordTracked: boolean;
     recordMatchesHead: boolean;
     sourceCommitIsAncestor: boolean;
     changedPathsSinceSource: readonly string[];
   }>>;
+  readImmutableRecord?: (
+    cwd: string,
+    allowedRecordPath: string,
+    evidenceCommit: string,
+  ) => Promise<string>;
   verifyRuntime?: (
     contractName: string,
     address: string,
@@ -89,7 +103,7 @@ function normalizePath(value: string): string {
 type GitExecutor = (
   executable: string,
   args: readonly string[],
-  options: Readonly<{ cwd: string }>,
+  options: Readonly<{ cwd: string; env: NodeJS.ProcessEnv }>,
 ) => Promise<Readonly<{ stdout: string }>>;
 
 export async function listTouchedPathsAcrossCommitRange(
@@ -102,10 +116,17 @@ export async function listTouchedPathsAcrossCommitRange(
     throw new Error("source commit for history audit is invalid");
   }
   const git = trustedGitExecutable(process.env, cwd);
+  const gitOptions = { cwd, env: trustedGitEnvironment() } as const;
   const commitsResult = await execute(
     git,
-    ["rev-list", "--reverse", "--topo-order", "--ancestry-path", `${sourceCommit}..${headCommit}`],
-    { cwd },
+    trustedGitArguments([
+      "rev-list",
+      "--reverse",
+      "--topo-order",
+      "--ancestry-path",
+      `${sourceCommit}..${headCommit}`,
+    ]),
+    gitOptions,
   );
   const commits = commitsResult.stdout
     .split(/\r?\n/u)
@@ -119,7 +140,7 @@ export async function listTouchedPathsAcrossCommitRange(
   for (const commit of commits) {
     const result = await execute(
       git,
-      [
+      trustedGitArguments([
         "diff-tree",
         "--root",
         "-m",
@@ -130,8 +151,8 @@ export async function listTouchedPathsAcrossCommitRange(
         commit,
         "--",
         ".",
-      ],
-      { cwd },
+      ]),
+      gitOptions,
     );
     for (const entry of result.stdout.split(/\r?\n/u)) {
       const normalized = normalizePath(entry.trim());
@@ -156,6 +177,7 @@ function assertCompilerProvenance(
     "compilerInputHash",
     "solcVersion",
     "solcLongVersion",
+    "immutableReferenceCount",
   ] as const) {
     if (recorded[key] !== actual[key]) {
       throw new Error(`${actual.contractName} compiler provenance mismatch for ${key}`);
@@ -172,6 +194,7 @@ async function defaultReadSourceState(
   sourceCommit: string,
 ): Promise<Readonly<{
   headCommit: string;
+  recordCommit: string;
   dirty: boolean;
   recordTracked: boolean;
   recordMatchesHead: boolean;
@@ -179,12 +202,17 @@ async function defaultReadSourceState(
   changedPathsSinceSource: readonly string[];
 }>> {
   const git = trustedGitExecutable(process.env, cwd);
+  const gitOptions = { cwd, env: trustedGitEnvironment() } as const;
   const [head, status] = await Promise.all([
-    execFileAsync(git, ["rev-parse", "--verify", "HEAD"], { cwd }),
     execFileAsync(
       git,
-      ["status", "--porcelain=v1", "--untracked-files=all", "--", "."],
-      { cwd },
+      trustedGitArguments(["rev-parse", "--verify", "HEAD"]),
+      gitOptions,
+    ),
+    execFileAsync(
+      git,
+      trustedGitArguments(["status", "--porcelain=v1", "--untracked-files=all", "--", "."]),
+      gitOptions,
     ),
   ]);
 
@@ -192,11 +220,28 @@ async function defaultReadSourceState(
   try {
     await execFileAsync(
       git,
-      ["ls-files", "--error-unmatch", "--", allowedRecordPath],
-      { cwd },
+      trustedGitArguments(["ls-files", "--error-unmatch", "--", allowedRecordPath]),
+      gitOptions,
     );
   } catch {
     recordTracked = false;
+  }
+
+  let recordCommit = "";
+  if (recordTracked) {
+    const result = await execFileAsync(
+      git,
+      trustedGitArguments([
+        "log",
+        "-1",
+        "--format=%H",
+        "HEAD",
+        "--",
+        allowedRecordPath,
+      ]),
+      gitOptions,
+    );
+    recordCommit = result.stdout.trim();
   }
 
   let recordMatchesHead = recordTracked;
@@ -204,8 +249,15 @@ async function defaultReadSourceState(
     try {
       await execFileAsync(
         git,
-        ["diff", "--quiet", "--no-ext-diff", "HEAD", "--", allowedRecordPath],
-        { cwd },
+        trustedGitArguments([
+          "diff",
+          "--quiet",
+          "--no-ext-diff",
+          "HEAD",
+          "--",
+          allowedRecordPath,
+        ]),
+        gitOptions,
       );
     } catch {
       recordMatchesHead = false;
@@ -216,8 +268,8 @@ async function defaultReadSourceState(
   try {
     await execFileAsync(
       git,
-      ["merge-base", "--is-ancestor", sourceCommit, "HEAD"],
-      { cwd },
+      trustedGitArguments(["merge-base", "--is-ancestor", sourceCommit, "HEAD"]),
+      gitOptions,
     );
   } catch {
     sourceCommitIsAncestor = false;
@@ -233,12 +285,45 @@ async function defaultReadSourceState(
 
   return Object.freeze({
     headCommit: head.stdout.trim(),
+    recordCommit,
     dirty: status.stdout.trim().length > 0,
     recordTracked,
     recordMatchesHead,
     sourceCommitIsAncestor,
     changedPathsSinceSource: Object.freeze(changedPathsSinceSource),
   });
+}
+
+async function defaultReadImmutableRecord(
+  cwd: string,
+  allowedRecordPath: string,
+  evidenceCommit: string,
+): Promise<string> {
+  if (!SOURCE_COMMIT_PATTERN.test(evidenceCommit)) {
+    throw new Error("deployment evidence commit is invalid");
+  }
+  const result = await execFileAsync(
+    trustedGitExecutable(process.env, cwd),
+    trustedGitArguments([
+      "show",
+      "--no-textconv",
+      "--no-ext-diff",
+      `${evidenceCommit}:${allowedRecordPath}`,
+    ]),
+    {
+      cwd,
+      env: trustedGitEnvironment(),
+      maxBuffer: MAX_RECORD_BYTES + 1,
+    },
+  );
+  if (
+    result.stderr.trim().length > 0 ||
+    Buffer.byteLength(result.stdout, "utf8") <= 0 ||
+    Buffer.byteLength(result.stdout, "utf8") > MAX_RECORD_BYTES
+  ) {
+    throw new Error("deployment record Git object is invalid or oversized");
+  }
+  return result.stdout;
 }
 
 async function resolveRecordPath(
@@ -330,7 +415,36 @@ export async function verifyConfiguredTestnetDeployment(
     throw new Error("deployment provenance verification requires at least one contract");
   }
   const resolved = await resolveRecordPath(configuredPath, cwd);
-  const parsed = JSON.parse(await readFile(resolved.resolvedPath, "utf8")) as unknown;
+  const sourceState = await (dependencies.readSourceState ?? defaultReadSourceState)(
+    cwd,
+    resolved.relativePath,
+    resolved.filenameCommit,
+  );
+  if (!SOURCE_COMMIT_PATTERN.test(sourceState.headCommit)) {
+    throw new Error("deployment evidence HEAD is not a full Git commit");
+  }
+  if (sourceState.dirty) {
+    throw new Error("configured deployment verification requires a completely clean worktree");
+  }
+  if (!sourceState.recordTracked || !sourceState.recordMatchesHead) {
+    throw new Error("deployment record must exactly match the Git-tracked evidence at HEAD");
+  }
+  if (!SOURCE_COMMIT_PATTERN.test(sourceState.recordCommit)) {
+    throw new Error("deployment manifest commit is not a full Git commit");
+  }
+  if (!sourceState.sourceCommitIsAncestor) {
+    throw new Error("deployment record source commit is not an ancestor of the evidence HEAD");
+  }
+  const immutableRecord = await (
+    dependencies.readImmutableRecord ?? defaultReadImmutableRecord
+  )(cwd, resolved.relativePath, sourceState.recordCommit.toLowerCase());
+  if (
+    Buffer.byteLength(immutableRecord, "utf8") <= 0 ||
+    Buffer.byteLength(immutableRecord, "utf8") > MAX_RECORD_BYTES
+  ) {
+    throw new Error("deployment record Git object is invalid or oversized");
+  }
+  const parsed = JSON.parse(immutableRecord) as unknown;
   const record = asRecord(parsed, "deployment record");
   const sourceCommit = requiredString(record, "sourceCommit", "deployment record").toLowerCase();
   const chainId = requiredString(record, "chainId", "deployment record");
@@ -343,24 +457,6 @@ export async function verifyConfiguredTestnetDeployment(
     sourceCommit !== resolved.filenameCommit
   ) {
     throw new Error("deployment record is not a complete COTI testnet v2 manifest");
-  }
-
-  const sourceState = await (dependencies.readSourceState ?? defaultReadSourceState)(
-    cwd,
-    resolved.relativePath,
-    sourceCommit,
-  );
-  if (!SOURCE_COMMIT_PATTERN.test(sourceState.headCommit)) {
-    throw new Error("deployment evidence HEAD is not a full Git commit");
-  }
-  if (sourceState.dirty) {
-    throw new Error("configured deployment verification requires a completely clean worktree");
-  }
-  if (!sourceState.recordTracked || !sourceState.recordMatchesHead) {
-    throw new Error("deployment record must exactly match the Git-tracked evidence at HEAD");
-  }
-  if (!sourceState.sourceCommitIsAncestor) {
-    throw new Error("deployment record source commit is not an ancestor of the evidence HEAD");
   }
   const permittedEvidencePaths = new Set([
     resolved.relativePath,
@@ -392,6 +488,7 @@ export async function verifyConfiguredTestnetDeployment(
     if (
       typeof evidenceProvider.getTransaction !== "function" ||
       typeof evidenceProvider.getTransactionReceipt !== "function" ||
+      typeof evidenceProvider.getCode !== "function" ||
       typeof evidenceProvider.call !== "function"
     ) {
       throw new Error("deployment transaction evidence requires a transaction-capable provider");
@@ -438,13 +535,19 @@ export async function verifyConfiguredTestnetDeployment(
       "address",
       `deployment record contracts.${requirement.recordKey}`,
     );
-    if (!sameAddress(recordedAddress, requirement.address)) {
+    if (
+      requirement.address !== undefined &&
+      !sameAddress(recordedAddress, requirement.address)
+    ) {
       throw new Error(`${requirement.recordKey} does not match the configured address`);
     }
   }
 
   return Object.freeze({
     path: resolved.resolvedPath,
+    recordPath: resolved.relativePath,
+    recordSha256: createHash("sha256").update(immutableRecord, "utf8").digest("hex"),
+    manifestCommit: sourceState.recordCommit.toLowerCase(),
     sourceCommit,
     evidenceCommit: sourceState.headCommit.toLowerCase(),
     chainId,

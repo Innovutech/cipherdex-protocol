@@ -23,14 +23,18 @@ discoverable by design.
 
 - pool and token contract addresses;
 - fee tier and token decimal metadata;
+- initialization strategy, strategy class and standard/launch-protected class;
 - pool initialization state;
 - caller/provider addresses and swap direction;
 - transaction timing, gas use and success/failure;
 - participant addresses in the underlying standard PrivateERC20 `Transfer` event.
 - confidential protocol-fee collection token, destination, aggregate swap count,
   and collection-window timing (but not the accumulated amount).
-- best-quote/best-swap caller, request ID, selected canonical pool and fee tier,
-  direction, transaction timing, gas and success/failure.
+- launch ID, creator, launch authority, protected pool, commitment hash,
+  deadlines, cancellation/expiry/completion status and public LP disposition;
+- best-quote/best-swap caller, request ID, selected canonical pool, fee tier and
+  initialization strategy, direction, transaction timing, gas and
+  success/failure.
 
 The core confidential pool exposes no public reserve-derived market data. Pool
 identity, token metadata, fee tier, protocol version and privacy mode are public;
@@ -73,3 +77,9 @@ authenticated encrypted-input format. Interface and exact-balance checks reduce
 integration mistakes but do not prove the behavior of an approved implementation.
 Mutable proxy and metamorphic implementations are unsupported. These are trust
 assumptions, not cryptographic proofs produced by this repository.
+
+Launch privacy does not hide that a launch-protected market was committed or
+initialized. Dual EIP-712 authorization protects who may claim and consume the
+initialization slot; it does not hide launch identity. Encrypted seed amounts,
+final-price bounds and LP share amounts remain confidential. After bootstrap the
+strategy receives no swap callback or privileged market information.

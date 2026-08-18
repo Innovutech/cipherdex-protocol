@@ -1,6 +1,5 @@
-import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { Contract, TransactionReceipt } from "ethers";
-import { ethers } from "hardhat";
+import { artifacts, ethers } from "../hardhat/runtime.js";
 
 import {
   CONFIDENTIAL_FACTORY_TESTNET_ABI,
@@ -9,12 +8,21 @@ import {
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import {
-  FundedRecoveryJournal,
-  RecoveryResource,
+  type FundedRecoveryJournal,
+  type RecoveryResource,
   verifyRecoveryResourceCreation,
 } from "./funded-recovery-journal";
-import { writeFundedRunEvidence } from "./funded-run-evidence";
+import { writePreparedFundedRunEvidence } from "./funded-run-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
+import {
+  FundedCotiWallet as CotiWallet,
+  openFundedRecoveryJournal,
+  withFundedTransactionEvidence,
+} from "./funded-transaction-wallet";
+import {
+  recoverPrivateAllowanceObligations,
+  setRecoverablePrivateAllowance,
+} from "./funded-private-allowance";
 import {
   FeeCollectionPendingError,
   requireFeeCollectionMature,
@@ -32,6 +40,7 @@ import {
 } from "./testnet-slippage";
 import {
   MinedTransactionStatusError,
+  requireMinedFailure,
   requireMinedSuccess,
   safeTestnetErrorSummary,
   transactionHashFromError,
@@ -68,6 +77,8 @@ type DisposableStack = Readonly<{
   factoryAddress: string;
   feeVaultAddress: string;
   lpFactoryAddress: string;
+  poolDeployerAddress: string;
+  strategyRegistryAddress: string;
   token0Address: string;
   token1Address: string;
   decimals0: number;
@@ -205,12 +216,14 @@ async function submit(
   stage = label;
   const started = Date.now();
   try {
-    const evidence = await requireMinedSuccess(
+    const evidence = await withFundedTransactionEvidence(
       label,
-      operation,
-      (hash) => ethers.provider.getTransactionReceipt(hash),
-      (hash) => journal().recordBroadcast(label, hash),
-      () => journal().recordSubmission(label),
+      journal(),
+      () => requireMinedSuccess(
+        label,
+        operation,
+        (hash) => ethers.provider.getTransactionReceipt(hash),
+      ),
     );
     journal().recordTransaction(
       evidence.transactionHash,
@@ -227,7 +240,7 @@ async function submit(
     if (hash) {
       if (!journal().transactions.some((transaction) =>
         transaction.hash.toLowerCase() === hash.toLowerCase()
-      )) journal().recordBroadcast(label, hash);
+      )) throw new Error("funded transaction was not locally signed and journaled", { cause: error });
       journal().recordTransaction(
         hash,
         error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
@@ -237,8 +250,35 @@ async function submit(
   }
 }
 
+async function submitExpectedFailure(
+  label: string,
+  operation: () => Promise<{ hash: string; wait(): Promise<TransactionReceipt | null> }>,
+): Promise<Submitted> {
+  stage = label;
+  const evidence = await withFundedTransactionEvidence(
+    label,
+    journal(),
+    () => requireMinedFailure(
+      label,
+      operation,
+      (hash) => ethers.provider.getTransactionReceipt(hash),
+    ),
+  );
+  journal().recordTransaction(
+    evidence.transactionHash,
+    "mined-failure",
+    evidence.receipt.blockNumber,
+  );
+  return evidence;
+}
+
 async function deployContract(
-  contractName: "CipherDEXFeeVault" | "PrivateLPTokenFactory" | "ConfidentialCPMMFactory",
+  contractName:
+    | "CipherDEXFeeVault"
+    | "PrivateLPTokenFactory"
+    | "ConfidentialCPMMDeployer"
+    | "ConfidentialInitializationStrategyRegistry"
+    | "ConfidentialCPMMFactory",
   wallet: CotiWallet,
   args: readonly unknown[],
 ): Promise<Readonly<{ contract: any; address: string; transactionHash: string }>> {
@@ -281,28 +321,17 @@ async function setPrivateAllowance(
   wallet: CotiWallet,
   label: string,
 ): Promise<void> {
-  const selector = token.interface.getFunction("approve")?.selector;
-  if (!selector) throw new Error("private approval selector unavailable");
-  const zeroApproval = await wallet.encryptValue256(0n, tokenAddress, selector);
-  await submit(
-    `${label} approval reset`,
-    () => token.approve(
-      poolAddress,
-      zeroApproval,
-      TX_OVERRIDES,
-    ),
-  );
-  if (amount > 0n) {
-    const encryptedAmount = await wallet.encryptValue256(amount, tokenAddress, selector);
-    await submit(
-      `${label} approval`,
-      () => token.approve(
-        poolAddress,
-        encryptedAmount,
-        TX_OVERRIDES,
-      ),
-    );
-  }
+  await setRecoverablePrivateAllowance({
+    journal: journal(),
+    wallet,
+    token,
+    tokenAddress,
+    spender: poolAddress,
+    amount,
+    label: `${label} approval`,
+    overrides: TX_OVERRIDES,
+    submit,
+  });
 }
 
 async function requestPrivateQuote(
@@ -382,6 +411,11 @@ async function validateStackResource(
   const factoryAddress = metadataAddress(resource, "factoryAddress");
   const feeVaultAddress = metadataAddress(resource, "feeVaultAddress");
   const lpFactoryAddress = metadataAddress(resource, "lpFactoryAddress");
+  const poolDeployerAddress = metadataAddress(resource, "poolDeployerAddress");
+  const strategyRegistryAddress = metadataAddress(
+    resource,
+    "strategyRegistryAddress",
+  );
   const token0Address = metadataAddress(resource, "token0Address");
   const token1Address = metadataAddress(resource, "token1Address");
   const decimals0 = Number(resource.metadata.decimals0);
@@ -394,7 +428,14 @@ async function validateStackResource(
     decimals0 > 18 ||
     decimals1 > 18
   ) throw new Error("disposable fee stack token decimals are invalid");
-  for (const address of [poolAddress, factoryAddress, feeVaultAddress, lpFactoryAddress]) {
+  for (const address of [
+    poolAddress,
+    factoryAddress,
+    feeVaultAddress,
+    lpFactoryAddress,
+    poolDeployerAddress,
+    strategyRegistryAddress,
+  ]) {
     if (reviewedAddresses.has(address.toLowerCase())) {
       throw new Error("fee runner refuses to mutate a reviewed deployment contract");
     }
@@ -405,10 +446,32 @@ async function validateStackResource(
     verifyDeployedRuntimeArtifact("ConfidentialCPMMFactory", factoryAddress),
     verifyDeployedRuntimeArtifact("CipherDEXFeeVault", feeVaultAddress),
     verifyDeployedRuntimeArtifact("PrivateLPTokenFactory", lpFactoryAddress),
+    verifyDeployedRuntimeArtifact(
+      "ConfidentialCPMMDeployer",
+      poolDeployerAddress,
+    ),
+    verifyDeployedRuntimeArtifact(
+      "ConfidentialInitializationStrategyRegistry",
+      strategyRegistryAddress,
+    ),
     verifyTransaction(metadataHash(resource, "feeVaultTx"), owner, undefined, feeVaultAddress),
     verifyTransaction(metadataHash(resource, "lpFactoryTx"), owner, undefined, lpFactoryAddress),
+    verifyTransaction(
+      metadataHash(resource, "poolDeployerTx"),
+      owner,
+      undefined,
+      poolDeployerAddress,
+    ),
+    verifyTransaction(
+      metadataHash(resource, "strategyRegistryTx"),
+      owner,
+      undefined,
+      strategyRegistryAddress,
+    ),
     verifyTransaction(metadataHash(resource, "factoryTx"), owner, undefined, factoryAddress),
     verifyTransaction(metadataHash(resource, "bindTx"), owner, feeVaultAddress),
+    verifyTransaction(metadataHash(resource, "poolDeployerBindTx"), owner, poolDeployerAddress),
+    verifyTransaction(metadataHash(resource, "strategyRegistryBindTx"), owner, strategyRegistryAddress),
     verifyTransaction(metadataHash(resource, "poolTx"), owner, factoryAddress),
   ]);
 
@@ -417,7 +480,24 @@ async function validateStackResource(
   const feeVault = await ethers.getContractAt("CipherDEXFeeVault", feeVaultAddress, wallet);
   const token0 = new Contract(token0Address, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const token1 = new Contract(token1Address, PRIVATE_ERC20_TESTNET_ABI, wallet);
-  const key = await factory.poolKey(token0Address, token1Address, decimals0, decimals1, FEE_BPS);
+  const key = await factory.poolKey(
+    token0Address,
+    token1Address,
+    decimals0,
+    decimals1,
+    FEE_BPS,
+    ethers.ZeroAddress,
+  );
+  const poolDeployer = await ethers.getContractAt(
+    "ConfidentialCPMMDeployer",
+    poolDeployerAddress,
+    wallet,
+  );
+  const strategyRegistry = await ethers.getContractAt(
+    "ConfidentialInitializationStrategyRegistry",
+    strategyRegistryAddress,
+    wallet,
+  );
   const [canonicalPool, token0Code, token1Code] = await Promise.all([
     factory.getPool(key),
     ethers.provider.getCode(token0Address),
@@ -428,12 +508,17 @@ async function validateStackResource(
     String(canonicalPool).toLowerCase() !== poolAddress.toLowerCase() ||
     String(await factory.feeVault()).toLowerCase() !== feeVaultAddress.toLowerCase() ||
     String(await feeVault.confidentialFactory()).toLowerCase() !== factoryAddress.toLowerCase() ||
+    String(await factory.poolDeployer()).toLowerCase() !== poolDeployerAddress.toLowerCase() ||
+    String(await poolDeployer.factory()).toLowerCase() !== factoryAddress.toLowerCase() ||
+    String(await factory.initializationStrategyRegistry()).toLowerCase() !==
+      strategyRegistryAddress.toLowerCase() ||
+    String(await strategyRegistry.factory()).toLowerCase() !== factoryAddress.toLowerCase() ||
     String(await pool.bootstrapper()).toLowerCase() !== factoryAddress.toLowerCase() ||
     String(await pool.feeVault()).toLowerCase() !== feeVaultAddress.toLowerCase() ||
     String(await pool.token0()).toLowerCase() !== token0Address.toLowerCase() ||
     String(await pool.token1()).toLowerCase() !== token1Address.toLowerCase() ||
     BigInt(await pool.feeBps()) !== FEE_BPS ||
-    BigInt(await pool.PROTOCOL_VERSION()) !== 2n ||
+    BigInt(await pool.PROTOCOL_VERSION()) !== 3n ||
     BigInt(await pool.PRIVACY_MODE()) !== 1n ||
     !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token0Code))) ||
     !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token1Code)))
@@ -445,6 +530,8 @@ async function validateStackResource(
     factoryAddress,
     feeVaultAddress,
     lpFactoryAddress,
+    poolDeployerAddress,
+    strategyRegistryAddress,
     token0Address,
     token1Address,
     decimals0,
@@ -474,14 +561,52 @@ async function createDisposableStack(
   ]);
   const feeVault = await deployContract("CipherDEXFeeVault", wallet, [beneficiary]);
   const lpFactory = await deployContract("PrivateLPTokenFactory", wallet, []);
+  const strategyArtifact = await artifacts.readArtifact(
+    "ConfidentialLaunchInitializationStrategy",
+  );
+  const reviewedStrategyRuntimeCodehash = ethers.keccak256(
+    strategyArtifact.deployedBytecode,
+  );
+  const strategyRegistry = await deployContract(
+    "ConfidentialInitializationStrategyRegistry",
+    wallet,
+    [[reviewedStrategyRuntimeCodehash]],
+  );
+  const strategyRegistryRuntimeCodehash = ethers.keccak256(
+    await ethers.provider.getCode(strategyRegistry.address),
+  );
+  const poolDeployer = await deployContract(
+    "ConfidentialCPMMDeployer",
+    wallet,
+    [],
+  );
+  const poolDeployerRuntimeCodehash = ethers.keccak256(
+    await ethers.provider.getCode(poolDeployer.address),
+  );
   const factory = await deployContract(
     "ConfidentialCPMMFactory",
     wallet,
-    [feeVault.address, lpFactory.address, codehashes],
+    [
+      feeVault.address,
+      lpFactory.address,
+      poolDeployer.address,
+      poolDeployerRuntimeCodehash,
+      codehashes,
+      strategyRegistry.address,
+      strategyRegistryRuntimeCodehash,
+    ],
   );
   const bind = await submit(
     "bind disposable fee vault",
     () => feeVault.contract.setConfidentialFactory(factory.address, TX_OVERRIDES),
+  );
+  const poolDeployerBind = await submit(
+    "bind disposable pool deployer",
+    () => poolDeployer.contract.bindFactory(factory.address, TX_OVERRIDES),
+  );
+  const strategyRegistryBind = await submit(
+    "bind disposable strategy registry",
+    () => strategyRegistry.contract.bindFactory(factory.address, TX_OVERRIDES),
   );
   const poolCreation = await submit(
     "create disposable 100 bps fee pool",
@@ -500,6 +625,7 @@ async function createDisposableStack(
     Number(decimalsA),
     Number(decimalsB),
     FEE_BPS,
+    ethers.ZeroAddress,
   );
   const poolAddress = ethers.getAddress(await factory.contract.getPool(key));
   const pool = new Contract(poolAddress, CONFIDENTIAL_POOL_TESTNET_ABI, wallet);
@@ -519,6 +645,8 @@ async function createDisposableStack(
       factoryAddress: factory.address,
       feeVaultAddress: feeVault.address,
       lpFactoryAddress: lpFactory.address,
+      poolDeployerAddress: poolDeployer.address,
+      strategyRegistryAddress: strategyRegistry.address,
       token0Address: ethers.getAddress(String(token0Address)),
       token1Address: ethers.getAddress(String(token1Address)),
       decimals0: Number(decimals0),
@@ -526,8 +654,12 @@ async function createDisposableStack(
       feeBps: Number(FEE_BPS),
       feeVaultTx: feeVault.transactionHash,
       lpFactoryTx: lpFactory.transactionHash,
+      poolDeployerTx: poolDeployer.transactionHash,
+      strategyRegistryTx: strategyRegistry.transactionHash,
       factoryTx: factory.transactionHash,
       bindTx: bind.transactionHash,
+      poolDeployerBindTx: poolDeployerBind.transactionHash,
+      strategyRegistryBindTx: strategyRegistryBind.transactionHash,
       poolTx: poolCreation.transactionHash,
     },
   });
@@ -541,7 +673,7 @@ async function removeAllLiquidity(
   wallet: CotiWallet,
   minimum0: bigint,
   minimum1: bigint,
-): Promise<TransactionReceipt | undefined> {
+): Promise<Submitted | undefined> {
   if (minimum0 <= 0n || minimum1 <= 0n) {
     throw new Error("fee-pool cleanup minima must be positive");
   }
@@ -573,7 +705,7 @@ async function removeAllLiquidity(
       TX_OVERRIDES,
     ),
   );
-  return evidence.receipt;
+  return evidence;
 }
 
 async function recoverDisposablePool(): Promise<void> {
@@ -593,7 +725,7 @@ async function recoverDisposablePool(): Promise<void> {
     recoveryOwner,
     reviewedAddresses,
   );
-  await removeAllLiquidity(stack, recoveryWallet, 1n, 1n);
+  const recovery = await removeAllLiquidity(stack, recoveryWallet, 1n, 1n);
   const [balance0, balance1, allowance0, allowance1] = await Promise.all([
     privateBalance(stack.token0, stack.poolAddress, recoveryWallet),
     privateBalance(stack.token1, stack.poolAddress, recoveryWallet),
@@ -603,7 +735,10 @@ async function recoverDisposablePool(): Promise<void> {
   if (balance0 !== 0n || balance1 !== 0n || allowance0 !== 0n || allowance1 !== 0n) {
     throw new Error("disposable fee-pool recovery left private-token residue or allowance");
   }
-  recoveryJournal.markRecovered(RESOURCE_ID);
+  recoveryJournal.markRecovered(
+    RESOURCE_ID,
+    [recovery?.transactionHash ?? resource.creationTransactionHash],
+  );
 }
 
 async function main(): Promise<void> {
@@ -652,7 +787,7 @@ async function main(): Promise<void> {
   wallet.setAesKey(aesKey);
   const owner = await wallet.getAddress();
   const sourceCommit = deploymentRecord.sourceCommit;
-  recoveryJournal = FundedRecoveryJournal.open({
+  recoveryJournal = openFundedRecoveryJournal(privateKey, {
     runner: "fee-collection",
     sourceCommit,
     chainId: Number(network.chainId),
@@ -666,6 +801,24 @@ async function main(): Promise<void> {
     throw new Error(
       `funded recovery has ${unresolved.length} transaction(s) with unknown outcome; do not retry`,
     );
+  }
+  await recoverPrivateAllowanceObligations({
+    journal: recoveryJournal,
+    wallets: [wallet],
+    overrides: TX_OVERRIDES,
+    submit,
+  });
+  if (
+    recoveryJournal.runStatus === "evidence-pending" ||
+    recoveryJournal.runStatus === "evidence-failed"
+  ) {
+    const finalEvidence = await writePreparedFundedRunEvidence({
+      journal: recoveryJournal,
+      provider: ethers.provider,
+      attestationSigner: wallet,
+    });
+    console.log(`fundedEvidence=${finalEvidence.path}`);
+    return;
   }
 
   let resource = recoveryJournal.activeResources.find((candidate) => candidate.id === RESOURCE_ID);
@@ -847,8 +1000,29 @@ async function main(): Promise<void> {
   const window0 = BigInt(await stack.pool.protocolFeeWindowStart0());
   const window1 = BigInt(await stack.pool.protocolFeeWindowStart1());
   const readyAt = (window0 > window1 ? window0 : window1) + COLLECTION_DELAY_SECONDS;
-  const latestBlock = await ethers.provider.getBlock("latest");
+  let latestBlock = await ethers.provider.getBlock("latest");
   if (!latestBlock) throw new Error("latest block unavailable");
+  const prematureLabel = "premature confidential protocol fee collection";
+  const existingPrematureProof = recoveryJournal.transactions.filter((transaction) =>
+    transaction.label === prematureLabel && transaction.status === "mined-failure"
+  );
+  if (existingPrematureProof.length > 1) {
+    throw new Error("fee maturity proof has multiple premature collection transactions");
+  }
+  if (existingPrematureProof.length === 0) {
+    if (BigInt(latestBlock.timestamp) >= readyAt) {
+      throw new Error("fee maturity rejection window was missed; recover and restart the disposable proof");
+    }
+    await submitExpectedFailure(
+      prematureLabel,
+      () => stack.pool.collectProtocolFees(true, true, TX_OVERRIDES),
+    );
+    recoveryJournal.updateResourceMetadata(RESOURCE_ID, {
+      phase: "maturity-rejection-proven",
+    });
+    latestBlock = await ethers.provider.getBlock("latest");
+    if (!latestBlock) throw new Error("latest block unavailable after maturity rejection");
+  }
   stage = "fee collection maturity gate";
   requireFeeCollectionMature(BigInt(latestBlock.timestamp), readyAt);
 
@@ -918,13 +1092,14 @@ async function main(): Promise<void> {
   }
   recoveryJournal.updateResourceMetadata(RESOURCE_ID, { phase: "terminal-swapped" });
 
-  const terminalReceipt = await removeAllLiquidity(
+  const terminalExit = await removeAllLiquidity(
     stack,
     wallet,
     minimumWithSlippage(model.reserve0),
     minimumWithSlippage(model.reserve1),
   );
-  if (!terminalReceipt) throw new Error("terminal full exit produced no transaction");
+  if (!terminalExit) throw new Error("terminal full exit produced no transaction");
+  const terminalReceipt = terminalExit.receipt;
   const terminalDeposits = terminalReceipt.logs.flatMap((log) => {
     if (log.address.toLowerCase() !== stack.feeVaultAddress.toLowerCase()) return [];
     try {
@@ -953,20 +1128,39 @@ async function main(): Promise<void> {
   if (poolBalance0 !== 0n || poolBalance1 !== 0n || allowanceAfter0 !== 0n || allowanceAfter1 !== 0n) {
     throw new Error("completed disposable fee proof left private-token residue or allowance");
   }
-  recoveryJournal.markRecovered(RESOURCE_ID);
+  await setPrivateAllowance(
+    stack.token0, stack.token0Address, stack.poolAddress, 0n, wallet, "fee token0 final cleanup",
+  );
+  await setPrivateAllowance(
+    stack.token1, stack.token1Address, stack.poolAddress, 0n, wallet, "fee token1 final cleanup",
+  );
+  recoveryJournal.markRecovered(RESOURCE_ID, [terminalExit.transactionHash]);
   const lpTokenAddress = ethers.getAddress(await stack.pool.lpToken());
-  recoveryJournal.markRun("passed");
-  const finalEvidence = await writeFundedRunEvidence({
-    journal: recoveryJournal,
-    provider: ethers.provider,
+  const [privateTokenCodehashes, poolDeployerCode, strategyRegistryCode,
+    reviewedStrategyArtifact] = await Promise.all([
+      resolvePrivateTokenCodehashes(
+        ethers.provider,
+        [stack.token0Address, stack.token1Address],
+      ),
+      ethers.provider.getCode(stack.poolDeployerAddress),
+      ethers.provider.getCode(stack.strategyRegistryAddress),
+      artifacts.readArtifact("ConfidentialLaunchInitializationStrategy"),
+    ]);
+  const poolDeployerRuntimeCodehash = ethers.keccak256(poolDeployerCode);
+  const strategyRegistryRuntimeCodehash = ethers.keccak256(strategyRegistryCode);
+  const reviewedStrategyRuntimeCodehash = ethers.keccak256(
+    reviewedStrategyArtifact.deployedBytecode,
+  );
+  recoveryJournal.prepareEvidence({
     participants: [owner],
     configuration: {
       chainId: Number(network.chainId),
-      confidentialPoolVersion: 2,
+      confidentialPoolVersion: 3,
       privacyMode: 1,
       totalFeeBps: Number(FEE_BPS),
       targetSwapCountPerDirection: Number(TARGET_SWAP_COUNT),
       collectionDelaySeconds: Number(COLLECTION_DELAY_SECONDS),
+      collectionReadyAt: Number(readyAt),
       tokenA: tokenAAddress,
       tokenB: tokenBAddress,
       feeBeneficiary,
@@ -976,16 +1170,44 @@ async function main(): Promise<void> {
         label: "disposable fee vault",
         contractName: "CipherDEXFeeVault",
         address: stack.feeVaultAddress,
+        creationTransactionHash: metadataHash(stack.resource, "feeVaultTx"),
+        constructorArguments: [feeBeneficiary],
       },
       {
         label: "disposable private LP factory",
         contractName: "PrivateLPTokenFactory",
         address: stack.lpFactoryAddress,
+        creationTransactionHash: metadataHash(stack.resource, "lpFactoryTx"),
+        constructorArguments: [],
       },
       {
         label: "disposable confidential factory",
         contractName: "ConfidentialCPMMFactory",
         address: stack.factoryAddress,
+        creationTransactionHash: metadataHash(stack.resource, "factoryTx"),
+        constructorArguments: [
+          stack.feeVaultAddress,
+          stack.lpFactoryAddress,
+          stack.poolDeployerAddress,
+          poolDeployerRuntimeCodehash,
+          privateTokenCodehashes,
+          stack.strategyRegistryAddress,
+          strategyRegistryRuntimeCodehash,
+        ],
+      },
+      {
+        label: "disposable confidential pool deployer",
+        contractName: "ConfidentialCPMMDeployer",
+        address: stack.poolDeployerAddress,
+        creationTransactionHash: metadataHash(stack.resource, "poolDeployerTx"),
+        constructorArguments: [],
+      },
+      {
+        label: "disposable initialization strategy registry",
+        contractName: "ConfidentialInitializationStrategyRegistry",
+        address: stack.strategyRegistryAddress,
+        creationTransactionHash: metadataHash(stack.resource, "strategyRegistryTx"),
+        constructorArguments: [[reviewedStrategyRuntimeCodehash]],
       },
       {
         label: "disposable confidential fee pool",
@@ -1009,6 +1231,11 @@ async function main(): Promise<void> {
       "reviewed deployment contracts were not mutated",
     ],
   });
+  const finalEvidence = await writePreparedFundedRunEvidence({
+    journal: recoveryJournal,
+    provider: ethers.provider,
+    attestationSigner: wallet,
+  });
   console.log(`disposableFeePool=${stack.poolAddress}`);
   console.log(`disposableFeeVault=${stack.feeVaultAddress}`);
   console.log(`fundedEvidence=${finalEvidence.path}`);
@@ -1018,6 +1245,14 @@ async function main(): Promise<void> {
 }
 
 void main().catch(async (error: unknown) => {
+  if (recoveryJournal?.runStatus === "evidence-failed") {
+    console.error(
+      `COTI fee-collection evidence generation failed: ` +
+        `${safeTestnetErrorSummary(error)}; paid execution will not be repeated.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (error instanceof FeeCollectionPendingError) {
     recoveryJournal?.markRun("awaiting-maturity");
     console.error(

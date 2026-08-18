@@ -8,6 +8,7 @@ import {
   uniqueFunctionBody,
   uniqueFunctionDeclaration,
 } from "./source-boundary-lint.mjs";
+import { buildReviewedRuntimeEnvironment } from "./fresh-runtime-environment.mjs";
 import { assertCompiledPrivacyDecryptBoundary } from "./solidity-privacy-ast.mjs";
 
 const fixture = `
@@ -60,71 +61,139 @@ assert.doesNotThrow(() => assertEarlyHardhatRunSequence(
 
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const freshRunnerSource = readFileSync("scripts/run-fresh-hardhat.mjs", "utf8");
-const freshTargets = new Map([
-  ["testnet:harness", "scripts/testnet-harness.ts --network cotiTestnet"],
-  ["testnet:preflight", "scripts/testnet-preflight.ts --network cotiTestnet"],
-  ["testnet:quote-call-probe", "scripts/testnet-quote-call-probe.ts --network cotiTestnet"],
-  ["testnet:best-execution-feasibility", "scripts/testnet-best-execution-feasibility.ts --network cotiTestnet"],
-  ["testnet:best-execution", "scripts/testnet-best-execution.ts --network cotiTestnet"],
-  ["testnet:launchpad", "scripts/testnet-launchpad.ts --network cotiTestnet"],
-  ["testnet:fee-collection", "scripts/testnet-fee-collection.ts --network cotiTestnet"],
-  ["evidence:finalize", "scripts/finalize-funded-evidence.ts --network cotiTestnet"],
-  ["evidence:verify", "scripts/verify-funded-suite-evidence.ts --network cotiTestnet"],
-  ["gas:measure", "scripts/measure-deployment-gas.ts"],
-  ["deploy:testnet", "scripts/deploy-testnet.ts --network cotiTestnet"],
-]);
-for (const [script, target] of freshTargets) {
-  assert.equal(
-    packageJson.scripts[script],
-    `node scripts/run-fresh-hardhat.mjs ${target}`,
-  );
+const operatorLauncherSource = readFileSync("scripts/operator-funded-launcher.mjs", "utf8");
+for (const script of [
+  "testnet:harness",
+  "testnet:preflight",
+  "testnet:quote-call-probe",
+  "testnet:best-execution-feasibility",
+  "testnet:best-execution",
+  "testnet:launchpad",
+  "testnet:fee-collection",
+  "evidence:finalize",
+  "evidence:verify",
+  "deploy:testnet",
+  "secure:funded-env",
+]) {
+  assert.equal(packageJson.scripts[script], undefined);
 }
+assert.equal(packageJson.scripts["gas:measure"], "hardhat run scripts/measure-deployment-gas.ts");
+assert.match(
+  readFileSync("scripts/prepare-funded-runtime.mjs", "utf8"),
+  /Repository-local funded runtime preparation is disabled/,
+);
 assert.doesNotMatch(freshRunnerSource, /from\s+["']\.\.?\//);
+assert.doesNotMatch(operatorLauncherSource, /^import[\s\S]*?from\s+["'](?!node:)/mu);
 assert.doesNotMatch(readFileSync("hardhat.config.ts", "utf8"), /dotenv(?:\/config)?/);
 assert.doesNotMatch(freshRunnerSource, /env:\s*process\.env/);
-assert.doesNotMatch(freshRunnerSource, /spawnSync\(["']git["']/);
+assert.doesNotMatch(freshRunnerSource, /process\.loadEnvFile/);
+assert.doesNotMatch(freshRunnerSource + operatorLauncherSource, /spawnSync\(["']git["']/);
 for (const required of [
   "TRUSTED_GIT_CANDIDATES",
-  "trustedGitExecutable",
-  "trustedGitRealpath",
-  "refuses a repository-controlled Git executable",
+  '"cat-file", "-t", input.commit',
+  '"fetch", "--quiet", "--no-tags"',
+  '"checkout", "--quiet", "--detach", input.commit',
+  '"ci", "--ignore-scripts"',
+  "materializeInternalFileLinks(runtime)",
+  "privateFilesystem.assertPrivateTree(runtime)",
+  'CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE: "1"',
 ]) {
-  assert.ok(freshRunnerSource.includes(required));
+  assert.ok(operatorLauncherSource.includes(required));
 }
 const sourceCheckPosition = freshRunnerSource.indexOf(
-  'runGit(["status", "--porcelain=v1", "--untracked-files=all"])',
+  'runGit(git, executionRoot, ["status", "--porcelain=v1", "--untracked-files=all"])',
 );
 const hardhatResolvePosition = freshRunnerSource.indexOf(
-  'require.resolve("hardhat/internal/cli/cli.js")',
+  'createRequire(resolve(executionRoot, "package.json"))',
 );
-const cleanPosition = freshRunnerSource.lastIndexOf('runHardhat(["clean"], systemEnvironment)');
-const compilePosition = freshRunnerSource.lastIndexOf('runHardhat(["compile"], systemEnvironment)');
-const envLoadPosition = freshRunnerSource.indexOf("process.loadEnvFile(");
-const runPosition = freshRunnerSource.lastIndexOf(
-  'runHardhat(["run", "--no-compile", target, ...targetArguments], runtimeEnvironment)',
+const envLoadPosition = freshRunnerSource.indexOf(
+  'await import("./fresh-runtime-environment.mjs")',
+);
+const reviewedBuildPosition = freshRunnerSource.indexOf(
+  "verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles })",
+);
+const environmentReadPosition = freshRunnerSource.indexOf(
+  "readReviewedEnvironment(environmentPath)",
+);
+const runPosition = freshRunnerSource.indexOf(
+  '[hardhatCli, "run", "--no-compile", target, ...targetArguments]',
 );
 assert.ok(
   sourceCheckPosition >= 0 &&
-  sourceCheckPosition < hardhatResolvePosition &&
-  hardhatResolvePosition < cleanPosition &&
-  cleanPosition < compilePosition &&
-  compilePosition < envLoadPosition &&
+  sourceCheckPosition < reviewedBuildPosition &&
+  reviewedBuildPosition < envLoadPosition &&
+  envLoadPosition < environmentReadPosition &&
+  environmentReadPosition < hardhatResolvePosition &&
+  hardhatResolvePosition < runPosition &&
   envLoadPosition < runPosition,
 );
 for (const required of [
-  "Fresh Hardhat runner requires a clean committed worktree",
   "SYSTEM_ENVIRONMENT",
   "NETWORK_ENVIRONMENT",
   "FUNDED_NETWORK_ENVIRONMENT",
   "targetPolicy.funded",
   "targetPolicy.environment",
-  "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath",
+  "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git",
+  "buildReviewedRuntimeEnvironment",
+  "readReviewedEnvironment",
+  "fresh-runtime-environment.mjs",
+  "GIT_CONFIG_NOSYSTEM",
+  "GIT_NO_REPLACE_OBJECTS",
+  "--no-replace-objects",
+  "core.fsmonitor",
 ]) {
   assert.ok(freshRunnerSource.includes(required));
 }
+assert.match(
+  freshRunnerSource,
+  /funded targets may run only through the externally installed operator-funded launcher/,
+);
+assert.doesNotMatch(
+  freshRunnerSource.slice(freshRunnerSource.indexOf("async function main()")),
+  /["'](?:clean|compile)["']/,
+);
+
+const reviewedEnvironment = buildReviewedRuntimeEnvironment({
+  ambientEnvironment: { PATH: "system-path", POLICY: "reviewed", AMBIENT_ONLY: "ambient" },
+  fileEnvironment: { POLICY: "reviewed", FILE_ONLY: "file" },
+  systemNames: ["PATH"],
+  configurationNames: ["POLICY", "AMBIENT_ONLY", "FILE_ONLY"],
+});
+assert.deepEqual(reviewedEnvironment, {
+  NODE_OPTIONS: "--max-old-space-size=8192",
+  PATH: "system-path",
+  POLICY: "reviewed",
+  AMBIENT_ONLY: "ambient",
+  FILE_ONLY: "file",
+});
+assert.throws(
+  () => buildReviewedRuntimeEnvironment({
+    ambientEnvironment: { POLICY: "ambient-secret" },
+    fileEnvironment: { POLICY: "file-secret" },
+    systemNames: [],
+    configurationNames: ["POLICY"],
+  }),
+  (error) => error instanceof Error &&
+    error.message === "fresh Hardhat environment conflict for POLICY" &&
+    !error.message.includes("ambient-secret") &&
+    !error.message.includes("file-secret"),
+);
+assert.deepEqual(
+  buildReviewedRuntimeEnvironment({
+    ambientEnvironment: { PATH: "system-path", POLICY: "ambient-secret" },
+    fileEnvironment: { POLICY: "file-secret" },
+    systemNames: ["PATH"],
+    configurationNames: ["POLICY"],
+    allowAmbientConfiguration: false,
+  }),
+  {
+    NODE_OPTIONS: "--max-old-space-size=8192",
+    PATH: "system-path",
+    POLICY: "file-secret",
+  },
+);
 const trustedGitConsumers = [
   "scripts/deploy-testnet.ts",
-  "scripts/funded-deployment-binding.ts",
   "scripts/funded-suite-evidence.ts",
   "scripts/testnet-deployment-provenance.ts",
   "scripts/testnet-quote-call-probe.ts",
@@ -132,6 +201,8 @@ const trustedGitConsumers = [
 for (const path of trustedGitConsumers) {
   const source = readFileSync(path, "utf8");
   assert.match(source, /trustedGitExecutable/);
+  assert.match(source, /trustedGitEnvironment/);
+  assert.match(source, /trustedGitArguments/);
   assert.doesNotMatch(source, /(?:execFileAsync|execFileSync|spawnSync)\(\s*["']git["']/);
 }
 assert.doesNotMatch(
@@ -327,21 +398,29 @@ assert.throws(
 function compileAst(body, options = {}) {
   const path = options.path ?? "contracts/ConfidentialBestExecutionRouter.sol";
   const contractName = options.contractName ?? "ConfidentialBestExecutionRouter";
-  const source = `
-    pragma solidity ^0.8.20;
-    type gtUint256 is uint256;
-    type gtBool is uint256;
-    library MpcCore {
+  const decryptDeclarations = options.decryptDeclarations ?? `
       function decrypt(gtUint256 value) internal pure returns (uint256) {
         return gtUint256.unwrap(value);
       }
       function decrypt(gtBool value) internal pure returns (bool) {
         return gtBool.unwrap(value) != 0;
       }
+  `;
+  const source = `
+    pragma solidity ^0.8.20;
+    type gtUint256 is uint256;
+    type gtBool is uint256;
+    library MpcCore {
+      ${decryptDeclarations}
     }
     contract ${contractName} {
       error InvalidCanonicalPool();
-      struct CandidateSet { address[] pools; uint256[] feeTiers; uint256 count; }
+      struct CandidateSet {
+        address[] pools;
+        uint256[] feeTiers;
+        address[] initializationStrategies;
+        uint256 count;
+      }
       ${body}
     }
   `;
@@ -357,12 +436,17 @@ function compileAst(body, options = {}) {
 
 const safeAst = compileAst(`
   function _selectBest(gtUint256 bestIndex, CandidateSet memory candidates)
-    internal pure returns (address selectedPool, uint256 selectedFeeBps)
+    internal pure returns (
+      address selectedPool,
+      uint256 selectedFeeBps,
+      address selectedInitializationStrategy
+    )
   {
     uint256 selectedIndex = MpcCore.decrypt(bestIndex);
     if (selectedIndex >= candidates.count) revert InvalidCanonicalPool();
     selectedPool = candidates.pools[selectedIndex];
     selectedFeeBps = candidates.feeTiers[selectedIndex];
+    selectedInitializationStrategy = candidates.initializationStrategies[selectedIndex];
   }
 `);
 assert.equal(
@@ -381,6 +465,33 @@ assert.throws(
   () => assertCompiledPrivacyDecryptBoundary(leakingAst.sources, [leakingAst.path]),
   /outside the reviewed route-index boundary/,
 );
+
+for (const { body: decryptAlias, declaration } of [
+  {
+    body: `function _aliasUint(gtUint256 secret) internal pure returns (uint256) {
+     function (gtUint256) internal pure returns (uint256) transform = MpcCore.decrypt;
+     return transform(secret);
+   }`,
+    declaration: `function decrypt(gtUint256 value) internal pure returns (uint256) {
+      return gtUint256.unwrap(value);
+    }`,
+  },
+  {
+    body: `function _aliasBool(gtBool secret) internal pure returns (bool) {
+     function (gtBool) internal pure returns (bool) predicate = MpcCore.decrypt;
+     return predicate(secret);
+   }`,
+    declaration: `function decrypt(gtBool value) internal pure returns (bool) {
+      return gtBool.unwrap(value) != 0;
+    }`,
+  },
+]) {
+  const aliasAst = compileAst(decryptAlias, { decryptDeclarations: declaration });
+  assert.throws(
+    () => assertCompiledPrivacyDecryptBoundary(aliasAst.sources, [aliasAst.path]),
+    /may not be aliased, stored, or referenced outside a direct call/,
+  );
+}
 
 for (const unsafeRouteIndex of [
   `function _selectBest(gtUint256 bestIndex, CandidateSet memory candidates)
@@ -452,13 +563,35 @@ for (const unsafeRouteIndex of [
     uint256 selectedIndex = MpcCore.decrypt(bestIndex);
     if (selectedIndex >= candidates.count) revert InvalidCanonicalPool();
     selectedPool = candidates.pools[selectedIndex];
+     selectedFeeBps = candidates.feeTiers[selectedIndex];
+   }`,
+  `function _selectBest(gtUint256 bestIndex, CandidateSet memory candidates)
+    internal pure returns (address selectedPool, uint256 selectedFeeBps)
+  {
+    candidates.initializationStrategies[0] = address(1);
+    uint256 selectedIndex = MpcCore.decrypt(bestIndex);
+    if (selectedIndex >= candidates.count) revert InvalidCanonicalPool();
+    selectedPool = candidates.pools[selectedIndex];
+    selectedFeeBps = candidates.feeTiers[selectedIndex];
+  }`,
+  `function _selectBest(gtUint256 bestIndex, CandidateSet memory candidates)
+    internal pure returns (address selectedPool, uint256 selectedFeeBps)
+  {
+    delete candidates.initializationStrategies[0];
+    uint256 selectedIndex = MpcCore.decrypt(bestIndex);
+    if (selectedIndex >= candidates.count) revert InvalidCanonicalPool();
+    selectedPool = candidates.pools[selectedIndex];
     selectedFeeBps = candidates.feeTiers[selectedIndex];
   }`,
 ]) {
-  const fixtureAst = compileAst(unsafeRouteIndex);
+  const completeUnsafeRouteIndex = unsafeRouteIndex.replace(
+    /(selectedFeeBps\s*=\s*[^;]+;)/,
+    "$1\n    candidates.initializationStrategies[selectedIndex];",
+  );
+  const fixtureAst = compileAst(completeUnsafeRouteIndex);
   assert.throws(
     () => assertCompiledPrivacyDecryptBoundary(fixtureAst.sources, [fixtureAst.path]),
-    /canonical bound|canonical guard|unreviewed sink|CandidateSet is mutated|array escapes/,
+    /canonical bound|canonical guard|unreviewed sink|CandidateSet is mutated|CandidateSet is deleted|array escapes/,
   );
 }
 

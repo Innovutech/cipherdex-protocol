@@ -9,11 +9,14 @@ latency only. A release record should include:
 
 - network and chain ID;
 - compiler version, EVM target and optimizer settings;
-- confidential factory, its configured best-execution router, pool, LP-token
-  factory, launchpad migrator, public factory, quoter and router addresses;
+- confidential factory, its configured best-execution router, pool deployer,
+  LP-token factory, finalized initialization-strategy registry, registered launch
+  strategy, constructor-created launchpad migrator, public factory, quoter and
+  router addresses;
 - deployment transaction hashes, receipts, exact constructor arguments and gas used;
-- one-time vault/factory, best-router and launchpad-adapter binding targets,
-  arguments and transaction hashes;
+- one-time vault/factory, pool-deployer/factory, strategy-registry/factory,
+  strategy registration/finalization and best-router binding targets, arguments
+  and transaction hashes;
 - ABI/schema version and source commit;
 - known limitations and independent-review status.
 
@@ -36,9 +39,11 @@ every post-source change except that exact manifest and
 self-reference that would result from requiring a generated manifest to be
 contained in the same commit named by its `sourceCommit`.
 
-Verification also retrieves all eight canonical deployment transactions and all
-three one-time binding transactions from the configured chain. It rejects a
-missing, duplicate, failed or extra transaction; mismatched gas/address/receipt;
-creation data that differs from the reviewed artifact plus canonical constructor
-arguments; binding calldata that differs from the expected target/function/args;
-or final contract relationships that do not match the manifest.
+Verification retrieves the complete manifest-declared deployment and one-time
+binding transaction sets from the configured chain; it does not rely on a stale
+hard-coded count. It rejects a missing, duplicate, failed or extra transaction;
+mismatched gas/address/receipt; creation data that differs from the reviewed
+artifact plus canonical constructor arguments; constructor-child migrator
+provenance that does not match its strategy deployment; binding calldata that
+differs from the expected target/function/args; or final contract relationships
+that do not match the manifest.

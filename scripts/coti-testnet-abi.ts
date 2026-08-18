@@ -21,8 +21,9 @@ export const CONFIDENTIAL_FACTORY_TESTNET_ABI = [
   "function approvedPrivateTokenCodehash(uint256 index) view returns (bytes32)",
   "function isPool(address pool) view returns (bool)",
   "function bestExecutionRouter() view returns (address)",
+  "function BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH() view returns (bytes32)",
   "function getPool(bytes32 key) view returns (address)",
-  "function poolKey(address token0,address token1,uint8 decimals0,uint8 decimals1,uint256 feeBps) pure returns (bytes32)",
+  "function poolKey(address token0,address token1,uint8 decimals0,uint8 decimals1,uint256 feeBps,address initializationStrategy) pure returns (bytes32)",
   "function createPool(address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps) returns (address)",
   "function setBestExecutionRouter(address router)",
 ] as const;
@@ -43,9 +44,11 @@ export const CONFIDENTIAL_BEST_EXECUTION_ROUTER_TESTNET_ABI = [
   "function factory() view returns (address)",
   "function usedRequestIds(address caller,bytes4 selector,bytes32 requestId) view returns (bool)",
   `function requestBestQuoteExactInput(address tokenIn,address tokenOut,${IT_UINT256} amountIn,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} result)`,
+  `function requestBestQuoteExactInputWithCandidates(address tokenIn,address tokenOut,${IT_UINT256} amountIn,uint16 candidateBitmap,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} result)`,
   `function swapBestExactInput(address tokenIn,address tokenOut,${IT_UINT256} amountIn,${IT_UINT256} minimumOut,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} result)`,
-  `event ConfidentialBestQuoteResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,bool zeroForOne,${CT_UINT256} result)`,
-  `event ConfidentialBestSwapResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,bool zeroForOne,${CT_UINT256} result)`,
+  `function swapBestExactInputWithCandidates(address tokenIn,address tokenOut,${IT_UINT256} amountIn,${IT_UINT256} minimumOut,uint16 candidateBitmap,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} result)`,
+  `event ConfidentialBestQuoteResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,address selectedInitializationStrategy,uint16 candidateBitmap,bool zeroForOne,${CT_UINT256} result)`,
+  `event ConfidentialBestSwapResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,address selectedInitializationStrategy,uint16 candidateBitmap,bool zeroForOne,${CT_UINT256} result)`,
 ] as const;
 
 export const CONFIDENTIAL_POOL_TESTNET_ABI = [
@@ -73,6 +76,7 @@ export const CONFIDENTIAL_POOL_TESTNET_ABI = [
   "function feeBps() view returns (uint256)",
   "function feeVault() view returns (address)",
   "function bootstrapper() view returns (address)",
+  "function initializationStrategy() view returns (address)",
   "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)",
   "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)",
   "function protocolFeeSwapCount0() view returns (uint32)",
@@ -82,6 +86,7 @@ export const CONFIDENTIAL_POOL_TESTNET_ABI = [
   "function nextLockNonce() view returns (uint256)",
   "function lpToken() view returns (address)",
   "function initialized() view returns (bool)",
+  "function protectedInitializationCompleted() view returns (bool)",
   `function myShares() returns (${CT_UINT256} shares)`,
   `function quoteExactInput(${IT_UINT256} amountIn,bool zeroForOne) returns (${CT_UINT256} amountOut)`,
   `function requestQuoteExactInput(${IT_UINT256} amountIn,bool zeroForOne,bytes32 requestId) returns (${CT_UINT256} result)`,

@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers } from "../../hardhat/runtime.js";
 import { deployFeeVault } from "../helpers/deployFeeVault";
 import {
   createPublicPool,
@@ -262,6 +262,65 @@ describe("CipherDEX v1 fee economics", function () {
       .to.emit(vault, "PublicFeesSwept")
       .withArgs(await mutable.getAddress(), beneficiary.address, claim);
     expect(await vault.publicFees(await mutable.getAddress())).to.equal(0n);
+  });
+
+  it("reconciles a public fee claim after an external token balance loss", async function () {
+    const [beneficiary, trader] = await ethers.getSigners();
+    const { vault, factory } = await deployPublicFactory(beneficiary.address);
+    const burnable = await (
+      await ethers.getContractFactory("ExternallyBurnableERC20")
+    ).deploy("Burnable token", "BURN", 18);
+    const paired = await (
+      await ethers.getContractFactory("MockERC20")
+    ).deploy("Paired token", "PAIR", 18);
+    await Promise.all([burnable.waitForDeployment(), paired.waitForDeployment()]);
+
+    const burnableAddress = await burnable.getAddress();
+    const pool = await createPublicPool(
+      factory,
+      burnableAddress,
+      await paired.getAddress(),
+      18,
+      18,
+    );
+    const poolAddress = await pool.getAddress();
+    const burnableIsToken0 = (await pool.token0()).toLowerCase() ===
+      burnableAddress.toLowerCase();
+    await burnable.mint(beneficiary.address, 10_000_000n);
+    await paired.mint(beneficiary.address, 10_000_000n);
+    await burnable.mint(trader.address, 1_000_000n);
+    await burnable.approve(poolAddress, 10_000_000n);
+    await paired.approve(poolAddress, 10_000_000n);
+    await pool.addLiquidity(
+      10_000_000n,
+      10_000_000n,
+      1n,
+      0n,
+      ethers.MaxUint256,
+      DEADLINE,
+    );
+    await burnable.connect(trader).approve(poolAddress, 1_000_000n);
+    await pool.connect(trader).swapExactInput(
+      1_000_000n,
+      0n,
+      burnableIsToken0,
+      DEADLINE,
+    );
+    await pool.collectProtocolFees(burnableIsToken0, !burnableIsToken0);
+
+    const claim = await vault.publicFees(burnableAddress);
+    expect(claim).to.be.greaterThan(1n);
+    await burnable.burnFrom(await vault.getAddress(), 1n);
+    const realizable = claim - 1n;
+    const sweep = vault.sweepPublicToken(burnableAddress);
+    await expect(sweep)
+      .to.emit(vault, "PublicFeeLossRecognized")
+      .withArgs(burnableAddress, claim, realizable);
+    await expect(sweep)
+      .to.emit(vault, "PublicFeesSwept")
+      .withArgs(burnableAddress, beneficiary.address, realizable);
+    expect(await vault.publicFees(burnableAddress)).to.equal(0n);
+    expect(await burnable.balanceOf(await vault.getAddress())).to.equal(0n);
   });
 
   it("accrues each input token separately while preserving quote and effective-reserve math", async function () {

@@ -2,6 +2,7 @@
   "name": "@cipherdex/protocol",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "COTI-native confidential AMM protocol proof of concept.",
   "engines": {
     "node": "24.16.x",
@@ -15,22 +16,14 @@
     "test:source-boundary": "node scripts/test-source-boundary-lint.mjs",
     "test:privacy-boundary": "hardhat clean && hardhat compile && node scripts/check-privacy-boundary.mjs",
     "test:security-boundary": "node scripts/check-security-boundary.mjs",
-    "testnet:harness": "node scripts/run-fresh-hardhat.mjs scripts/testnet-harness.ts --network cotiTestnet",
-    "testnet:preflight": "node scripts/run-fresh-hardhat.mjs scripts/testnet-preflight.ts --network cotiTestnet",
-    "testnet:quote-call-probe": "node scripts/run-fresh-hardhat.mjs scripts/testnet-quote-call-probe.ts --network cotiTestnet",
-    "testnet:best-execution-feasibility": "node scripts/run-fresh-hardhat.mjs scripts/testnet-best-execution-feasibility.ts --network cotiTestnet",
-    "testnet:best-execution": "node scripts/run-fresh-hardhat.mjs scripts/testnet-best-execution.ts --network cotiTestnet",
-    "testnet:launchpad": "node scripts/run-fresh-hardhat.mjs scripts/testnet-launchpad.ts --network cotiTestnet",
-    "testnet:fee-collection": "node scripts/run-fresh-hardhat.mjs scripts/testnet-fee-collection.ts --network cotiTestnet",
-    "evidence:finalize": "node scripts/run-fresh-hardhat.mjs scripts/finalize-funded-evidence.ts --network cotiTestnet",
-    "evidence:verify": "node scripts/run-fresh-hardhat.mjs scripts/verify-funded-suite-evidence.ts --network cotiTestnet",
-    "audit:graph": "npm ls --omit=dev --all",
+    "prepare:funded-runtime": "node scripts/prepare-funded-runtime.mjs",
+    "audit:graph": "npm ls --all",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && npm run compile",
-    "gas:measure": "node scripts/run-fresh-hardhat.mjs scripts/measure-deployment-gas.ts",
-    "audit:production": "npm audit --omit=dev --audit-level=high --json",
-    "verify": "npm run audit:production && npm run audit:graph && npm run test:source-boundary && npm run test:privacy-boundary && npm run test:security-boundary && npm run typecheck && npm run compile && npm test",
-    "deploy:testnet": "node scripts/run-fresh-hardhat.mjs scripts/deploy-testnet.ts --network cotiTestnet"
+    "gas:measure": "hardhat run scripts/measure-deployment-gas.ts",
+    "audit:production": "npm audit --omit=dev --audit-level=low --json",
+    "audit:operational": "npm audit --audit-level=low --json",
+    "verify": "npm run audit:production && npm run audit:operational && npm run audit:graph && npm run test:source-boundary && npm run test:privacy-boundary && npm run test:security-boundary && npm run typecheck && npm run compile && npm test"
   },
   "dependencies": {
     "@coti-io/coti-contracts": "1.3.5",
@@ -38,12 +31,23 @@
   },
   "devDependencies": {
     "@coti-io/coti-ethers": "1.0.6",
-    "@nomicfoundation/hardhat-toolbox": "5.0.0",
+    "@nomicfoundation/hardhat-ethers": "4.0.15",
+    "@nomicfoundation/hardhat-ethers-chai-matchers": "3.0.11",
+    "@nomicfoundation/hardhat-mocha": "3.1.0",
+    "@nomicfoundation/hardhat-typechain": "3.0.0",
+    "@types/mocha": "10.0.10",
     "@types/node": "26.1.1",
-    "chai": "4.5.0",
-    "hardhat": "2.29.0",
+    "chai": "5.3.3",
+    "ethers": "6.17.0",
+    "hardhat": "3.12.0",
+    "mocha": "11.8.0",
     "solc": "0.8.28",
-    "ts-node": "10.9.2",
     "typescript": "5.9.3"
+  },
+  "overrides": {
+    "diff": "8.0.3",
+    "glob": "13.0.6",
+    "serialize-javascript": "7.0.5",
+    "tmp": "0.2.7"
   }
 }

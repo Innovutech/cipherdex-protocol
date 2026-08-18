@@ -1,7 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 
 const ALLOWED_TARGETS = new Map([
   ["scripts/deploy-testnet.ts", {
@@ -10,6 +15,7 @@ const ALLOWED_TARGETS = new Map([
     environment: [
       "COTI_DEPLOYMENT_RECORD",
       "CIPHERDEX_FEE_BENEFICIARY",
+      "CIPHERDEX_LAUNCH_AUTHORITY",
       "COTI_TOKEN0",
       "COTI_TOKEN1",
       "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
@@ -48,10 +54,12 @@ const ALLOWED_TARGETS = new Map([
       "COTI_FACTORY",
       "COTI_FEE_VAULT",
       "COTI_BEST_EXECUTION_ROUTER",
-      "COTI_BEST_EXECUTION_SWAP_AMOUNT",
+      "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN0",
+      "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN1",
+      "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN0",
+      "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN1",
       "COTI_BEST_EXECUTION_GAS_LIMIT",
       "COTI_DEPLOYMENT_RECORD",
-      "CIPHERDEX_FEE_BENEFICIARY",
       "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
     ],
   }],
@@ -74,10 +82,12 @@ const ALLOWED_TARGETS = new Map([
   }],
   ["scripts/finalize-funded-evidence.ts", {
     arguments: ["--network", "cotiTestnet"],
+    reviewedRuntime: true,
     environment: ["COTI_DEPLOYMENT_RECORD"],
   }],
   ["scripts/verify-funded-suite-evidence.ts", {
     arguments: ["--network", "cotiTestnet"],
+    reviewedRuntime: true,
     environment: [
       "COTI_DEPLOYMENT_RECORD",
       "CIPHERDEX_FUNDED_EVIDENCE_RECORD",
@@ -101,13 +111,19 @@ const ALLOWED_TARGETS = new Map([
   ["scripts/testnet-quote-call-probe.ts", {
     arguments: ["--network", "cotiTestnet"],
     funded: true,
-    environment: ["COTI_QUOTE_PRIVATE_KEY", "COTI_QUOTE_AES_KEY"],
+    environment: [
+      "COTI_QUOTE_PRIVATE_KEY",
+      "COTI_QUOTE_AES_KEY",
+      "COTI_FACTORY",
+      "COTI_DEPLOYMENT_RECORD",
+    ],
   }],
   ["scripts/testnet-launchpad.ts", {
     arguments: ["--network", "cotiTestnet"],
     funded: true,
     environment: [
       "COTI_AES_KEY",
+      "COTI_QUOTE_PRIVATE_KEY",
       "COTI_TOKEN0",
       "COTI_TOKEN1",
       "COTI_TOKEN0_DECIMALS",
@@ -159,15 +175,26 @@ const SYSTEM_ENVIRONMENT = Object.freeze([
   "LANG", "LC_ALL", "CI", "GITHUB_ACTIONS",
 ]);
 
-const [target, ...targetArguments] = process.argv.slice(2);
-const targetPolicy = target ? ALLOWED_TARGETS.get(target) : undefined;
-if (
-  !target ||
-  !targetPolicy ||
-  JSON.stringify(targetArguments) !== JSON.stringify(targetPolicy.arguments)
-) {
-  throw new Error("unsupported fresh Hardhat target or arguments");
+const heldLeases = [];
+function releaseHeldLeases() {
+  let releaseError;
+  for (const lease of heldLeases.reverse()) {
+    try {
+      lease.release();
+    } catch (error) {
+      releaseError ??= error;
+    }
+  }
+  heldLeases.length = 0;
+  if (releaseError) throw releaseError;
 }
+process.on("exit", () => {
+  try {
+    releaseHeldLeases();
+  } catch {
+    // The next process validates ownership and safely recovers a dead-owner lease.
+  }
+});
 
 function selectedEnvironment(names, source = process.env) {
   const selected = { NODE_OPTIONS: "--max-old-space-size=8192" };
@@ -180,85 +207,223 @@ function selectedEnvironment(names, source = process.env) {
 
 const systemEnvironment = selectedEnvironment(SYSTEM_ENVIRONMENT);
 
-const TRUSTED_GIT_CANDIDATES = Object.freeze(
-  process.platform === "win32"
-    ? [
-        "C:\\Program Files\\Git\\cmd\\git.exe",
-        "C:\\Program Files (x86)\\Git\\cmd\\git.exe",
-      ]
-    : ["/usr/bin/git", "/bin/git"],
-);
-const trustedGitExecutable = TRUSTED_GIT_CANDIDATES.find((candidate) => existsSync(candidate));
-if (!trustedGitExecutable) {
-  throw new Error("Fresh Hardhat runner requires Git at a trusted system path");
-}
-const trustedGitRealpath = realpathSync(trustedGitExecutable);
-const workingTreeRealpath = realpathSync(resolve(process.cwd()));
-const pathComparison = process.platform === "win32"
-  ? [trustedGitRealpath.toLowerCase(), workingTreeRealpath.toLowerCase()]
-  : [trustedGitRealpath, workingTreeRealpath];
-if (
-  pathComparison[0] === pathComparison[1] ||
-  pathComparison[0].startsWith(`${pathComparison[1]}${process.platform === "win32" ? "\\" : "/"}`)
-) {
-  throw new Error("Fresh Hardhat runner refuses a repository-controlled Git executable");
+function requiredCanonicalDirectory(name) {
+  const configured = process.env[name]?.trim();
+  if (!configured || !isAbsolute(configured)) {
+    throw new Error(`${name} must be an absolute directory`);
+  }
+  const original = lstatSync(configured);
+  if (!original.isDirectory() || original.isSymbolicLink()) {
+    throw new Error(`${name} must be a real directory`);
+  }
+  return realpathSync(configured);
 }
 
-function runGit(arguments_) {
-  const result = spawnSync(trustedGitRealpath, arguments_, {
-    cwd: process.cwd(),
-    env: systemEnvironment,
-    encoding: "utf8",
-    windowsHide: true,
-  });
+function isInside(root, path) {
+  const fromRoot = relative(root, path);
+  return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
+}
+
+function trustedGit() {
+  const configured = process.env.CIPHERDEX_TRUSTED_GIT?.trim();
+  if (!configured || !isAbsolute(configured)) {
+    throw new Error("operator launcher did not provide an absolute trusted Git executable");
+  }
+  const original = lstatSync(configured);
+  if (!original.isFile() || original.isSymbolicLink()) {
+    throw new Error("operator launcher trusted Git path is invalid");
+  }
+  return realpathSync(configured);
+}
+
+function runGit(git, cwd, arguments_) {
+  const gitEnvironment = {
+    ...systemEnvironment,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "core.fsmonitor",
+    GIT_CONFIG_VALUE_0: "false",
+    GIT_CONFIG_KEY_1: "core.hooksPath",
+    GIT_CONFIG_VALUE_1: process.platform === "win32" ? "NUL" : "/dev/null",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_PAGER: "cat",
+  };
+  const result = spawnSync(
+    git,
+    ["--no-replace-objects", "--no-pager", ...arguments_],
+    {
+      cwd,
+      env: gitEnvironment,
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
   if (result.error || result.status !== 0) {
     throw new Error(`Unable to authenticate source with git ${arguments_.join(" ")}`);
   }
   return result.stdout.trim();
 }
 
-// Authenticate source before resolving Hardhat or loading any secret-bearing env file.
-const repositoryRoot = runGit(["rev-parse", "--show-toplevel"]);
-if (realpathSync(repositoryRoot) !== realpathSync(resolve(process.cwd()))) {
-  throw new Error("Fresh Hardhat runner must execute from the repository root");
-}
-const sourceCommit = runGit(["rev-parse", "--verify", "HEAD"]);
-if (!/^[0-9a-f]{40}$/i.test(sourceCommit)) {
-  throw new Error("Fresh Hardhat runner requires a resolvable committed HEAD");
-}
-if (runGit(["status", "--porcelain=v1", "--untracked-files=all"]) !== "") {
-  throw new Error("Fresh Hardhat runner requires a clean committed worktree");
-}
+async function main() {
+  const [target, ...targetArguments] = process.argv.slice(2);
+  const targetPolicy = target ? ALLOWED_TARGETS.get(target) : undefined;
+  if (
+    !target ||
+    !targetPolicy ||
+    JSON.stringify(targetArguments) !== JSON.stringify(targetPolicy.arguments)
+  ) throw new Error("unsupported private funded Hardhat target or arguments");
+  if (process.env.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE !== "1") {
+    throw new Error(
+      "funded targets may run only through the externally installed operator-funded launcher",
+    );
+  }
 
-const require = createRequire(import.meta.url);
-const hardhatCli = require.resolve("hardhat/internal/cli/cli.js");
+  const executionRoot = realpathSync(resolve(process.cwd()));
+  const publicRepositoryRoot = requiredCanonicalDirectory("CIPHERDEX_PUBLIC_REPOSITORY_ROOT");
+  if (isInside(executionRoot, publicRepositoryRoot) || isInside(publicRepositoryRoot, executionRoot)) {
+    throw new Error("private funded runtime and public repository must be separate trees");
+  }
+  const sourceCommit = process.env.CIPHERDEX_AUTHENTICATED_SOURCE_COMMIT?.trim().toLowerCase();
+  if (!sourceCommit || !/^[0-9a-f]{40}$/u.test(sourceCommit)) {
+    throw new Error("operator launcher did not provide an authenticated source commit");
+  }
+  const git = trustedGit();
+  if (isInside(executionRoot, git) || isInside(publicRepositoryRoot, git)) {
+    throw new Error("funded runner refuses a repository-controlled Git executable");
+  }
 
-function runHardhat(arguments_, environment) {
-  const result = spawnSync(process.execPath, [hardhatCli, ...arguments_], {
-    cwd: process.cwd(),
-    env: environment,
-    stdio: "inherit",
-    windowsHide: true,
+  const { assertPrivateFile, assertPrivateTree } = await import("./private-filesystem.mjs");
+  assertPrivateTree(executionRoot);
+  if (
+    realpathSync(runGit(git, executionRoot, ["rev-parse", "--show-toplevel"])) !== executionRoot ||
+    runGit(git, executionRoot, ["rev-parse", "--verify", "HEAD"]).toLowerCase() !== sourceCommit ||
+    runGit(git, executionRoot, ["status", "--porcelain=v1", "--untracked-files=all"]) !== ""
+  ) throw new Error("private funded runtime is not the clean authenticated source commit");
+  if (existsSync(resolve(executionRoot, ".env")) || existsSync(resolve(publicRepositoryRoot, ".env"))) {
+    throw new Error("funded execution refuses repository-local environment files");
+  }
+
+  const environmentConfigured = process.env.CIPHERDEX_FUNDED_ENV_FILE?.trim();
+  if (!environmentConfigured || !isAbsolute(environmentConfigured)) {
+    throw new Error("funded targets require an absolute external environment file");
+  }
+  const environmentPath = assertPrivateFile(environmentConfigured, "read");
+  if (isInside(executionRoot, environmentPath) || isInside(publicRepositoryRoot, environmentPath)) {
+    throw new Error("funded environment must remain outside runtime and public repository");
+  }
+
+  const trackedFiles = runGit(git, executionRoot, ["ls-files", "-z"])
+    .split("\0")
+    .filter(Boolean);
+  const { verifyReviewedBuild } = await import("./reviewed-build-receipt.mjs");
+  verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles });
+
+  const {
+    ACTIVE_SIGNER_LEASES_ENVIRONMENT,
+    acquireRepositoryExecutionLease,
+    acquireSignerExecutionLeases,
+    reconcileSignerExecutionLeases,
+    signerLeaseEnvironment,
+  } = await import("./funded-process-coordinator.mjs");
+  heldLeases.push(acquireRepositoryExecutionLease(publicRepositoryRoot));
+
+  const {
+    buildReviewedRuntimeEnvironment,
+    readReviewedEnvironment,
+  } = await import("./fresh-runtime-environment.mjs");
+  const runtimeEnvironment = buildReviewedRuntimeEnvironment({
+    ambientEnvironment: process.env,
+    fileEnvironment: readReviewedEnvironment(environmentPath),
+    systemNames: SYSTEM_ENVIRONMENT,
+    configurationNames: [
+      ...NETWORK_ENVIRONMENT,
+      ...(targetPolicy.funded ? FUNDED_NETWORK_ENVIRONMENT : []),
+      ...targetPolicy.environment,
+    ],
+    allowAmbientConfiguration: false,
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    process.exitCode = result.status ?? 1;
-    throw new Error(`Hardhat ${arguments_[0]} failed`);
+  runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git;
+  runtimeEnvironment.CIPHERDEX_AUTHENTICATED_SOURCE_COMMIT = sourceCommit;
+  runtimeEnvironment.CIPHERDEX_PUBLIC_REPOSITORY_ROOT = publicRepositoryRoot;
+
+  if (targetPolicy.funded) {
+    const { JsonRpcProvider, Wallet } = await import("ethers");
+    const { inspectFundedTransaction } = await import("./funded-rpc-confirmation.mjs");
+    const privateKeys = [
+      runtimeEnvironment.COTI_TESTNET_PRIVATE_KEY,
+      runtimeEnvironment.COTI_SECOND_LP_PRIVATE_KEY,
+      runtimeEnvironment.COTI_QUOTE_PRIVATE_KEY,
+    ].filter((value) => typeof value === "string" && value.length > 0);
+    if (privateKeys.length === 0) throw new Error("funded target has no reviewed signer key");
+    const signers = privateKeys.map((privateKey) => new Wallet(privateKey).address);
+    const signerLeases = acquireSignerExecutionLeases(7_082_400, signers);
+    heldLeases.push(...signerLeases);
+    const provider = new JsonRpcProvider(
+      runtimeEnvironment.COTI_TESTNET_RPC_URL ?? "https://testnet.coti.io/rpc",
+      7_082_400,
+      { staticNetwork: true },
+    );
+    try {
+      await reconcileSignerExecutionLeases(
+        signerLeases,
+        async (lease, transaction) => inspectFundedTransaction(provider, {
+          chainId: lease.chainId,
+          signer: lease.signer,
+          nonce: transaction.nonce,
+          hash: transaction.hash,
+        }),
+      );
+    } finally {
+      provider.destroy();
+    }
+    runtimeEnvironment[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = signerLeaseEnvironment(signerLeases);
+  }
+
+  const hardhatCli = createRequire(resolve(executionRoot, "package.json"))
+    .resolve("hardhat/internal/cli/cli.js");
+  const result = spawnSync(
+    process.execPath,
+    [hardhatCli, "run", "--no-compile", target, ...targetArguments],
+    { cwd: executionRoot, env: runtimeEnvironment, stdio: "inherit", windowsHide: true },
+  );
+  if (result.error || result.status !== 0) {
+    throw result.error ?? new Error(`reviewed funded target failed with status ${result.status}`);
+  }
+
+  // Detect mutation of authenticated source, dependencies or compiler outputs
+  // before any generated JSON crosses back into the public checkout.
+  verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles });
+  const { publishReviewedJson } = await import("./secure-publication.mjs");
+  for (const directoryName of ["deployments", "evidence"]) {
+    const sourceRoot = resolve(executionRoot, directoryName);
+    if (!existsSync(sourceRoot)) continue;
+    const sourceStat = lstatSync(sourceRoot);
+    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
+      throw new Error(`reviewed runtime output directory is invalid: ${directoryName}`);
+    }
+    const destinationRoot = resolve(publicRepositoryRoot, directoryName);
+    const destinationStat = lstatSync(destinationRoot);
+    if (!destinationStat.isDirectory() || destinationStat.isSymbolicLink()) {
+      throw new Error(`public output directory is invalid: ${directoryName}`);
+    }
+    const expectedName = directoryName === "deployments"
+      ? /^coti-testnet-(?:latest|[0-9a-f]{40})\.json$/u
+      : /^coti-testnet-[0-9a-f]{40}\.json$/u;
+    for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
+      if (!entry.isFile() || !expectedName.test(entry.name)) continue;
+      publishReviewedJson(
+        resolve(sourceRoot, entry.name),
+        resolve(destinationRoot, entry.name),
+      );
+    }
   }
 }
 
-// Build subprocesses receive no COTI/CipherDEX configuration or credentials.
-runHardhat(["clean"], systemEnvironment);
-runHardhat(["compile"], systemEnvironment);
-
-if (existsSync(resolve(process.cwd(), ".env"))) {
-  process.loadEnvFile(resolve(process.cwd(), ".env"));
+try {
+  await main();
+} finally {
+  releaseHeldLeases();
 }
-const runtimeEnvironment = selectedEnvironment([
-  ...SYSTEM_ENVIRONMENT,
-  ...NETWORK_ENVIRONMENT,
-  ...(targetPolicy.funded ? FUNDED_NETWORK_ENVIRONMENT : []),
-  ...targetPolicy.environment,
-]);
-runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath;
-runHardhat(["run", "--no-compile", target, ...targetArguments], runtimeEnvironment);

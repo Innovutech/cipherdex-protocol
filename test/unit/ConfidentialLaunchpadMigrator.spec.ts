@@ -1,183 +1,102 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
-import { deployConfidentialFactory } from "../helpers/deployConfidentialFactory";
+import { ethers } from "../../hardhat/runtime.js";
+import {
+  configureConfidentialLaunch,
+  deployConfidentialFactory,
+} from "../helpers/deployConfidentialFactory";
+
+const migrationTypes = {
+  Migration: [
+    { name: "launchId", type: "bytes32" },
+    { name: "launchCommitmentHash", type: "bytes32" },
+    { name: "initializationStrategy", type: "address" },
+    { name: "creator", type: "address" },
+    { name: "tokenA", type: "address" },
+    { name: "tokenB", type: "address" },
+    { name: "decimalsA", type: "uint8" },
+    { name: "decimalsB", type: "uint8" },
+    { name: "feeBps", type: "uint256" },
+    { name: "encryptedInputsHash", type: "bytes32" },
+    { name: "deadline", type: "uint64" },
+    { name: "withDisposition", type: "bool" },
+    { name: "disposition", type: "uint8" },
+    { name: "unlockTime", type: "uint64" },
+  ],
+};
+
+const input = (high: bigint, low: bigint, signature: string) => ({
+  ciphertext: { ciphertextHigh: high, ciphertextLow: low },
+  signature,
+});
+
+function inputCommitment(value: ReturnType<typeof input>) {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint256", "uint256", "bytes32"],
+      [
+        value.ciphertext.ciphertextHigh,
+        value.ciphertext.ciphertextLow,
+        ethers.keccak256(value.signature),
+      ],
+    ),
+  );
+}
 
 describe("ConfidentialLaunchpadMigrator", function () {
-  it("keeps the factory binding immutable and requires a deployed factory", async function () {
-    const [, outsider] = await ethers.getSigners();
-    const { factory, vault } = await deployConfidentialFactory();
-
-    const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
-    const migrator = await migratorFactory.deploy(await factory.getAddress());
-    await migrator.waitForDeployment();
-
-    expect(await migrator.PROTOCOL_VERSION()).to.equal(3n);
-    expect(await migrator.factory()).to.equal(await factory.getAddress());
-    expect(await factory.feeVault()).to.equal(await vault.getAddress());
-    expect(await factory.isApprovedFeeTier(30)).to.equal(true);
-    expect(await factory.isApprovedFeeTier(25)).to.equal(false);
-    await expect(migratorFactory.deploy(ethers.ZeroAddress))
-      .to.be.revertedWithCustomError(migrator, "InvalidFactory");
-    await expect(migratorFactory.deploy(outsider.address))
-      .to.be.revertedWithCustomError(migrator, "InvalidFactory");
-  });
-
-  it("binds the creator, migration context and opaque MPC input commitments", async function () {
+  async function fixture() {
     const [creator, other] = await ethers.getSigners();
-    const { factory } = await deployConfidentialFactory();
-    const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
-    const migrator = await migratorFactory.deploy(await factory.getAddress());
-    await migrator.waitForDeployment();
-
-    const input = (high: bigint, low: bigint, signature: string) => ({
-      ciphertext: { ciphertextHigh: high, ciphertextLow: low },
-      signature,
-    });
-    const amount0 = input(1n, 2n, "0x1234");
-    const amount1 = input(3n, 4n, "0x5678");
-    const minShares = input(5n, 6n, "0x9abc");
-    const minPriceX18 = input(7n, 8n, "0xdef0");
-    const maxPriceX18 = input(9n, 10n, "0x1122");
-    const network = await ethers.provider.getNetwork();
-    const domain = {
-      name: "CipherDEX Launchpad Migrator",
-      version: "1",
-      chainId: network.chainId,
-      verifyingContract: await migrator.getAddress(),
-    };
-    const types = {
-      Migration: [
-        { name: "creator", type: "address" },
-        { name: "tokenA", type: "address" },
-        { name: "tokenB", type: "address" },
-        { name: "decimalsA", type: "uint8" },
-        { name: "decimalsB", type: "uint8" },
-        { name: "feeBps", type: "uint256" },
-        { name: "encryptedInputsHash", type: "bytes32" },
-        { name: "deadline", type: "uint64" },
-        { name: "withDisposition", type: "bool" },
-        { name: "disposition", type: "uint8" },
-        { name: "unlockTime", type: "uint64" },
-      ],
-    };
-    const commitment = (value: typeof amount0) => ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ["uint256", "uint256", "bytes32"],
-        [value.ciphertext.ciphertextHigh, value.ciphertext.ciphertextLow, ethers.keccak256(value.signature)],
-      ),
-    );
-    const values = {
-      creator: await creator.getAddress(),
-      tokenA: "0x0000000000000000000000000000000000000011",
-      tokenB: "0x0000000000000000000000000000000000000022",
-      decimalsA: 18,
-      decimalsB: 6,
-      feeBps: 30,
-      encryptedInputsHash: ethers.keccak256(
-        ethers.AbiCoder.defaultAbiCoder().encode(
-          ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32"],
-          [
-            commitment(amount0),
-            commitment(amount1),
-            commitment(minShares),
-            commitment(minPriceX18),
-            commitment(maxPriceX18),
-          ],
-        ),
-      ),
-      deadline: 2_000_000_000n,
-      withDisposition: false,
-      disposition: 0,
-      unlockTime: 0n,
-    };
-    const authorization = await creator.signTypedData(domain, types, values);
-    expect(ethers.TypedDataEncoder.hash(domain, types, values)).to.match(/^0x[0-9a-f]{64}$/);
-    expect(await migrator.MIGRATION_TYPEHASH()).to.equal(
-      ethers.id("Migration(address creator,address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,bytes32 encryptedInputsHash,uint64 deadline,bool withDisposition,uint8 disposition,uint64 unlockTime)"),
-    );
-    expect(authorization).to.match(/^0x[0-9a-f]{130}$/);
-    expect(await other.getAddress()).to.not.equal(await creator.getAddress());
-  });
-
-  it("rejects caller, domain, payload and disposition authorization mismatches before MPC", async function () {
-    const [creator, other] = await ethers.getSigners();
-    const { factory, vault } = await deployConfidentialFactory();
-    const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
-    const migrator = await migratorFactory.deploy(await factory.getAddress());
-    await migrator.waitForDeployment();
-
-    const input = (high: bigint, low: bigint, signature: string) => ({
-      ciphertext: { ciphertextHigh: high, ciphertextLow: low },
-      signature,
-    });
-    // COTI's ctUint128 words are represented by uint256 Solidity values.
-    // Keep this fixture above 128 bits so the off-chain commitment cannot
-    // regress to an incorrectly narrowed ABI type.
+    const deployment = await deployConfidentialFactory();
+    const launch = await configureConfidentialLaunch(deployment);
     const amount0 = input(1n << 200n, (1n << 220n) + 2n, "0x1234");
     const amount1 = input(3n, 4n, "0x5678");
     const minShares = input(5n, 6n, "0x9abc");
     const minPriceX18 = input(7n, 8n, "0xdef0");
     const maxPriceX18 = input(9n, 10n, "0x1122");
-    const commitment = (value: typeof amount0) => ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ["uint256", "uint256", "bytes32"],
-        [
-          value.ciphertext.ciphertextHigh,
-          value.ciphertext.ciphertextLow,
-          ethers.keccak256(value.signature),
-        ],
-      ),
-    );
     const encryptedInputsHash = ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(
         ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32"],
         [
-          commitment(amount0),
-          commitment(amount1),
-          commitment(minShares),
-          commitment(minPriceX18),
-          commitment(maxPriceX18),
+          inputCommitment(amount0),
+          inputCommitment(amount1),
+          inputCommitment(minShares),
+          inputCommitment(minPriceX18),
+          inputCommitment(maxPriceX18),
         ],
       ),
     );
+    const latest = await ethers.provider.getBlock("latest");
+    if (!latest) throw new Error("Latest block unavailable");
     const network = await ethers.provider.getNetwork();
     const domain = {
       name: "CipherDEX Launchpad Migrator",
       version: "1",
       chainId: network.chainId,
-      verifyingContract: await migrator.getAddress(),
+      verifyingContract: await launch.migrator.getAddress(),
     };
-    const types = {
-      Migration: [
-        { name: "creator", type: "address" },
-        { name: "tokenA", type: "address" },
-        { name: "tokenB", type: "address" },
-        { name: "decimalsA", type: "uint8" },
-        { name: "decimalsB", type: "uint8" },
-        { name: "feeBps", type: "uint256" },
-        { name: "encryptedInputsHash", type: "bytes32" },
-        { name: "deadline", type: "uint64" },
-        { name: "withDisposition", type: "bool" },
-        { name: "disposition", type: "uint8" },
-        { name: "unlockTime", type: "uint64" },
-      ],
-    };
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     const values = {
-      creator: await creator.getAddress(),
+      launchId: ethers.id("committed-launch"),
+      launchCommitmentHash: ethers.id("launch-commitment"),
+      initializationStrategy: await launch.strategy.getAddress(),
+      creator: creator.address,
       tokenA: "0x0000000000000000000000000000000000000011",
       tokenB: "0x0000000000000000000000000000000000000022",
       decimalsA: 18,
       decimalsB: 6,
       feeBps: 30,
       encryptedInputsHash,
-      deadline,
+      deadline: BigInt(latest.timestamp + 600),
       withDisposition: false,
       disposition: 0,
       unlockTime: 0n,
     };
-    const authorization = await creator.signTypedData(domain, types, values);
+    const authorization = await creator.signTypedData(
+      domain,
+      migrationTypes,
+      values,
+    );
     const request = {
+      launchId: values.launchId,
+      launchCommitmentHash: values.launchCommitmentHash,
       tokenA: values.tokenA,
       tokenB: values.tokenB,
       decimalsA: values.decimalsA,
@@ -188,33 +107,149 @@ describe("ConfidentialLaunchpadMigrator", function () {
       minShares,
       minPriceX18,
       maxPriceX18,
-      deadline,
+      deadline: values.deadline,
       authorization,
     };
+    return {
+      creator,
+      deployment,
+      domain,
+      launch,
+      migrationValues: values,
+      network,
+      other,
+      request,
+    };
+  }
 
-    await expect(migrator.connect(other).migrate(request))
-      .to.be.revertedWithCustomError(migrator, "InvalidAuthorization");
+  it("binds immutably to the v3 factory and reviewed strategy", async function () {
+    const { deployment, launch, other } = await fixture();
+    const migratorFactory = await ethers.getContractFactory(
+      "ConfidentialLaunchpadMigrator",
+    );
+
+    expect(await launch.migrator.PROTOCOL_VERSION()).to.equal(4n);
+    expect(await launch.migrator.factory()).to.equal(
+      await deployment.factory.getAddress(),
+    );
+    expect(await launch.migrator.initializationStrategy()).to.equal(
+      await launch.strategy.getAddress(),
+    );
+    expect(await deployment.factory.feeVault()).to.equal(
+      await deployment.vault.getAddress(),
+    );
+    await expect(
+      migratorFactory.deploy(ethers.ZeroAddress, await launch.strategy.getAddress()),
+    ).to.be.revertedWithCustomError(migratorFactory, "InvalidFactory");
+    await expect(
+      migratorFactory.deploy(other.address, await launch.strategy.getAddress()),
+    ).to.be.revertedWithCustomError(migratorFactory, "InvalidFactory");
+    await expect(
+      migratorFactory.deploy(
+        await deployment.factory.getAddress(),
+        ethers.ZeroAddress,
+      ),
+    ).to.be.revertedWithCustomError(
+      migratorFactory,
+      "InvalidInitializationStrategy",
+    );
+  });
+
+  it("binds launch identity, strategy and opaque MPC inputs in EIP-712", async function () {
+    const { creator, domain, launch, migrationValues, other } = await fixture();
+    const authorization = await creator.signTypedData(
+      domain,
+      migrationTypes,
+      migrationValues,
+    );
+    expect(ethers.TypedDataEncoder.hash(domain, migrationTypes, migrationValues))
+      .to.match(/^0x[0-9a-f]{64}$/);
+    expect(await launch.migrator.MIGRATION_TYPEHASH()).to.equal(
+      ethers.id(
+        "Migration(bytes32 launchId,bytes32 launchCommitmentHash,address initializationStrategy,address creator,address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,bytes32 encryptedInputsHash,uint64 deadline,bool withDisposition,uint8 disposition,uint64 unlockTime)",
+      ),
+    );
+    expect(authorization).to.match(/^0x[0-9a-f]{130}$/);
+    expect(other.address).to.not.equal(creator.address);
+  });
+
+  it("rejects caller, domain, launch and disposition mismatches before MPC", async function () {
+    const {
+      creator,
+      deployment,
+      domain,
+      launch,
+      migrationValues,
+      network,
+      other,
+      request,
+    } = await fixture();
+
+    await expect(launch.migrator.connect(other).migrate(request))
+      .to.be.revertedWithCustomError(launch.migrator, "InvalidAuthorization");
 
     const wrongDomainAuthorization = await creator.signTypedData(
       { ...domain, chainId: network.chainId + 1n },
-      types,
-      values,
+      migrationTypes,
+      migrationValues,
     );
-    await expect(migrator.migrate({ ...request, authorization: wrongDomainAuthorization }))
-      .to.be.revertedWithCustomError(migrator, "InvalidAuthorization");
+    await expect(
+      launch.migrator.migrate({
+        ...request,
+        authorization: wrongDomainAuthorization,
+      }),
+    ).to.be.revertedWithCustomError(launch.migrator, "InvalidAuthorization");
 
     const wrongContractAuthorization = await creator.signTypedData(
-      { ...domain, verifyingContract: await factory.getAddress() },
-      types,
-      values,
+      { ...domain, verifyingContract: await deployment.factory.getAddress() },
+      migrationTypes,
+      migrationValues,
     );
-    await expect(migrator.migrate({ ...request, authorization: wrongContractAuthorization }))
-      .to.be.revertedWithCustomError(migrator, "InvalidAuthorization");
+    await expect(
+      launch.migrator.migrate({
+        ...request,
+        authorization: wrongContractAuthorization,
+      }),
+    ).to.be.revertedWithCustomError(launch.migrator, "InvalidAuthorization");
 
-    await expect(migrator.migrate({ ...request, feeBps: request.feeBps + 1 }))
-      .to.be.revertedWithCustomError(migrator, "InvalidAuthorization");
+    await expect(
+      launch.migrator.migrate({ ...request, feeBps: request.feeBps + 1 }),
+    ).to.be.revertedWithCustomError(launch.migrator, "InvalidAuthorization");
+    await expect(
+      launch.migrator.migrate({
+        ...request,
+        launchId: ethers.id("other-launch"),
+      }),
+    ).to.be.revertedWithCustomError(launch.migrator, "InvalidAuthorization");
+    await expect(launch.migrator.migrateWithDisposition(request, 2, 0))
+      .to.be.revertedWithCustomError(launch.migrator, "InvalidAuthorization");
 
-    await expect(migrator.migrateWithDisposition(request, 2, 0))
-      .to.be.revertedWithCustomError(migrator, "InvalidAuthorization");
+    await expect(launch.migrator.migrate(request))
+      .to.be.revertedWithCustomError(launch.migrator, "InvalidLaunchCommitment");
+  });
+
+  it("accepts ERC-1271 creator authorization before launch-state validation", async function () {
+    const { creator, domain, launch, migrationValues, request } = await fixture();
+    const wallet = await (
+      await ethers.getContractFactory("MockERC1271Wallet")
+    ).deploy(creator.address);
+    await wallet.waitForDeployment();
+    const contractCreatorValues = {
+      ...migrationValues,
+      creator: await wallet.getAddress(),
+    };
+    const authorization = await creator.signTypedData(
+      domain,
+      migrationTypes,
+      contractCreatorValues,
+    );
+    const call = launch.migrator.interface.encodeFunctionData("migrate", [{
+      ...request,
+      authorization,
+    }]);
+
+    await expect(
+      wallet.connect(creator).execute(await launch.migrator.getAddress(), call),
+    ).to.be.revertedWithCustomError(launch.migrator, "InvalidLaunchCommitment");
   });
 });

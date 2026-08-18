@@ -9,6 +9,10 @@ import {
   transactionHashFromError,
   UnknownBroadcastOutcomeError,
 } from "../../scripts/testnet-transaction-evidence";
+import {
+  validateFundedTransactionFeePolicy,
+  type FundedFeePolicy,
+} from "../../scripts/funded-transaction-wallet";
 
 describe("funded testnet transaction evidence", function () {
   const hash = `0x${"12".repeat(32)}`;
@@ -257,6 +261,54 @@ describe("funded testnet transaction evidence", function () {
         `funded action broadcast outcome is unknown; transactionHash=${hash}; do not retry automatically`,
       );
     }
+  });
+
+  it("rejects funded fee envelopes above reviewed per-gas and total caps", function () {
+    const policy: FundedFeePolicy = {
+      maxFeePerGasWei: 10n,
+      maxPriorityFeePerGasWei: 2n,
+      maxTransactionFeeWei: 100n,
+    };
+    expect(() => validateFundedTransactionFeePolicy({
+      gasLimit: 10n,
+      maxFeePerGas: 10n,
+      maxPriorityFeePerGas: 2n,
+    }, policy)).not.to.throw();
+    expect(() => validateFundedTransactionFeePolicy({
+      gasLimit: 10n,
+      maxFeePerGas: 11n,
+      maxPriorityFeePerGas: 2n,
+    }, policy)).to.throw("fee per gas exceeds");
+    expect(() => validateFundedTransactionFeePolicy({
+      gasLimit: 11n,
+      maxFeePerGas: 10n,
+      maxPriorityFeePerGas: 2n,
+    }, policy)).to.throw("maximum network fee exceeds");
+    expect(() => validateFundedTransactionFeePolicy({
+      gasLimit: 10n,
+      gasPrice: 10n,
+      maxFeePerGas: 10n,
+      maxPriorityFeePerGas: 2n,
+    }, policy)).to.throw("exactly one reviewed fee model");
+  });
+
+  it("rejects missing, partial, and excessive priority fee envelopes", function () {
+    const policy: FundedFeePolicy = {
+      maxFeePerGasWei: 10n,
+      maxPriorityFeePerGasWei: 2n,
+      maxTransactionFeeWei: 100n,
+    };
+    expect(() => validateFundedTransactionFeePolicy({ gasLimit: 10n }, policy))
+      .to.throw("exactly one reviewed fee model");
+    expect(() => validateFundedTransactionFeePolicy({
+      gasLimit: 10n,
+      maxFeePerGas: 10n,
+    }, policy)).to.throw("requires both fee fields");
+    expect(() => validateFundedTransactionFeePolicy({
+      gasLimit: 10n,
+      maxFeePerGas: 10n,
+      maxPriorityFeePerGas: 3n,
+    }, policy)).to.throw("priority fee exceeds the reviewed cap");
   });
 
   it("rejects a receipt whose hash does not match the returned transaction", async function () {

@@ -2,11 +2,9 @@ import {
   Contract,
   ContractFactory,
   TransactionReceipt,
-  Wallet as EthersWallet,
   ethers as ethersLibrary,
 } from "ethers";
-import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import { ethers } from "hardhat";
+import { ethers } from "../hardhat/runtime.js";
 
 import {
   CT_UINT256,
@@ -15,11 +13,17 @@ import {
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
 import {
-  FundedRecoveryJournal,
+  type FundedRecoveryJournal,
   verifyRecoveryResourceCreation,
 } from "./funded-recovery-journal";
-import { writeFundedRunEvidence } from "./funded-run-evidence";
+import { writePreparedFundedRunEvidence } from "./funded-run-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
+import {
+  FundedCotiWallet as CotiWallet,
+  FundedWallet,
+  openFundedRecoveryJournal,
+  withFundedTransactionEvidence,
+} from "./funded-transaction-wallet";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
   assertReviewedPrivateTokens,
@@ -104,12 +108,14 @@ async function submit(
 ): Promise<Readonly<{ transactionHash: string; receipt: TransactionReceipt }>> {
   stage = label;
   try {
-    const evidence = await requireMinedSuccess(
+    const evidence = await withFundedTransactionEvidence(
       label,
-      operation,
-      (hash) => ethers.provider.getTransactionReceipt(hash),
-      (hash) => journal().recordBroadcast(label, hash),
-      () => journal().recordSubmission(label),
+      journal(),
+      () => requireMinedSuccess(
+        label,
+        operation,
+        (hash) => ethers.provider.getTransactionReceipt(hash),
+      ),
     );
     journal().recordTransaction(
       evidence.transactionHash,
@@ -122,7 +128,7 @@ async function submit(
     if (hash) {
       if (!journal().transactions.some((transaction) =>
         transaction.hash.toLowerCase() === hash.toLowerCase()
-      )) journal().recordBroadcast(label, hash);
+      )) throw new Error("funded transaction was not locally signed and journaled", { cause: error });
       journal().recordTransaction(
         hash,
         error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
@@ -139,7 +145,7 @@ async function deployProbe(
   contractName: "MpcBestExecutionPoolProbe" | "MpcBestExecutionRouterProbe",
   resourceId: string,
   metadata: Readonly<Record<string, string | number | boolean>>,
-): Promise<any> {
+): Promise<Readonly<{ contract: any; address: string; transactionHash: string }>> {
   let contract: any;
   const deployment = await submit(label, async () => {
     contract = await factory.deploy(...args, { gasLimit: CALL_GAS_LIMIT });
@@ -150,14 +156,19 @@ async function deployProbe(
   if (!contract) {
     throw new Error(`${label} was mined but its contract handle is unavailable; do not retry automatically`);
   }
+  const address = ethersLibrary.getAddress(await contract.getAddress());
   journal().recordResource({
     id: resourceId,
     kind: "best-execution-probe",
-    address: ethersLibrary.getAddress(await contract.getAddress()),
+    address,
     creationTransactionHash: deployment.transactionHash,
     metadata: { contractName, ...metadata },
   });
-  return contract;
+  return Object.freeze({
+    contract,
+    address,
+    transactionHash: deployment.transactionHash,
+  });
 }
 
 async function recoverJournalProbes(): Promise<void> {
@@ -185,11 +196,22 @@ async function recoverJournalProbes(): Promise<void> {
     if (
       String(await probe.configurator()).toLowerCase() !== recoveryRecipient.toLowerCase()
     ) throw new Error("funded probe recovery configurator changed");
+    const recoveryLabel = `${resource.id} closure and recovery`;
+    let recoveryTransactionHash: string;
     if (!Boolean(await probe.closed())) {
-      await submit(
-        `${resource.id} closure and recovery`,
+      const recovery = await submit(
+        recoveryLabel,
         () => probe.closeAndRecover(recoveryRecipient, { gasLimit: CALL_GAS_LIMIT }),
       );
+      recoveryTransactionHash = recovery.transactionHash;
+    } else {
+      const prior = recoveryJournal.transactions.filter((transaction) =>
+        transaction.label === recoveryLabel && transaction.status === "mined-success"
+      );
+      if (prior.length !== 1) {
+        throw new Error("closed funded probe lacks unique recovery transaction evidence");
+      }
+      recoveryTransactionHash = prior[0].hash;
     }
     for (const tokenAddress of [tokenInAddress, tokenOutAddress].filter(Boolean)) {
       const token = new Contract(tokenAddress, PRIVATE_ERC20_TESTNET_ABI, recoveryWallet);
@@ -197,7 +219,7 @@ async function recoverJournalProbes(): Promise<void> {
         throw new Error(`closed probe retained private-token residue at ${resource.address}`);
       }
     }
-    recoveryJournal.markRecovered(resource.id);
+    recoveryJournal.markRecovered(resource.id, [recoveryTransactionHash]);
   }
 }
 
@@ -229,6 +251,7 @@ async function approveEncrypted(
 }
 
 async function transferEncrypted(
+  label: string,
   token: Contract,
   wallet: CotiWallet,
   tokenAddress: string,
@@ -242,7 +265,7 @@ async function transferEncrypted(
   }
   const input = await wallet.encryptValue256(amount, tokenAddress, selector);
   await submit(
-    "encrypted transfer",
+    label,
     () => transfer(recipient, input, { gasLimit: CALL_GAS_LIMIT }),
   );
 }
@@ -326,7 +349,7 @@ async function main(): Promise<void> {
   wallet.setAesKey(aesKey);
   const caller = await wallet.getAddress();
   const sourceCommit = deploymentRecord.sourceCommit;
-  recoveryJournal = FundedRecoveryJournal.open({
+  recoveryJournal = openFundedRecoveryJournal(privateKey, {
     runner: "best-execution-feasibility",
     sourceCommit,
     chainId: Number(network.chainId),
@@ -342,7 +365,19 @@ async function main(): Promise<void> {
     );
   }
   await recoverJournalProbes();
-  const deployer = new EthersWallet(privateKey, ethers.provider);
+  if (
+    recoveryJournal.runStatus === "evidence-pending" ||
+    recoveryJournal.runStatus === "evidence-failed"
+  ) {
+    const finalEvidence = await writePreparedFundedRunEvidence({
+      journal: recoveryJournal,
+      provider: ethers.provider,
+      attestationSigner: wallet,
+    });
+    console.log(`fundedEvidence=${finalEvidence.path}`);
+    return;
+  }
+  const deployer = new FundedWallet(privateKey, ethers.provider);
   const tokenIn = new Contract(tokenInAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const tokenOut = new Contract(tokenOutAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
 
@@ -356,7 +391,7 @@ async function main(): Promise<void> {
 
   stage = "pool probe deployment";
   const poolFactory = await ethers.getContractFactory("MpcBestExecutionPoolProbe", deployer);
-  const pool0 = await deployProbe(
+  const pool0Deployment = await deployProbe(
     "pool probe 0 deployment",
     poolFactory,
     [tokenInAddress, tokenOutAddress, 2n, 1n],
@@ -364,7 +399,7 @@ async function main(): Promise<void> {
     "pool-probe-0",
     { tokenInAddress, tokenOutAddress },
   );
-  const pool1 = await deployProbe(
+  const pool1Deployment = await deployProbe(
     "pool probe 1 deployment",
     poolFactory,
     [tokenInAddress, tokenOutAddress, 3n, 1n],
@@ -372,8 +407,10 @@ async function main(): Promise<void> {
     "pool-probe-1",
     { tokenInAddress, tokenOutAddress },
   );
-  const pool0Address = await pool0.getAddress();
-  const pool1Address = await pool1.getAddress();
+  const pool0 = pool0Deployment.contract;
+  const pool1 = pool1Deployment.contract;
+  const pool0Address = pool0Deployment.address;
+  const pool1Address = pool1Deployment.address;
   await Promise.all([
     verifyDeployedRuntimeArtifact("MpcBestExecutionPoolProbe", pool0Address),
     verifyDeployedRuntimeArtifact("MpcBestExecutionPoolProbe", pool1Address),
@@ -381,7 +418,7 @@ async function main(): Promise<void> {
 
   stage = "router probe deployment and binding";
   const routerFactory = await ethers.getContractFactory("MpcBestExecutionRouterProbe", deployer);
-  const routerDeployment = await deployProbe(
+  const routerProbeDeployment = await deployProbe(
     "router probe deployment",
     routerFactory,
     [tokenInAddress, pool0Address, pool1Address, caller],
@@ -389,7 +426,8 @@ async function main(): Promise<void> {
     "router-probe",
     { tokenInAddress, tokenOutAddress: "" },
   );
-  const routerAddress = await routerDeployment.getAddress();
+  const routerDeployment = routerProbeDeployment.contract;
+  const routerAddress = routerProbeDeployment.address;
   await verifyDeployedRuntimeArtifact("MpcBestExecutionRouterProbe", routerAddress);
   await submit(
     "pool probe 0 router binding",
@@ -402,8 +440,22 @@ async function main(): Promise<void> {
 
   stage = "pool output funding";
   const poolFunding = expectedBestOutput * 2n;
-  await transferEncrypted(tokenOut, wallet, tokenOutAddress, pool0Address, poolFunding);
-  await transferEncrypted(tokenOut, wallet, tokenOutAddress, pool1Address, poolFunding);
+  await transferEncrypted(
+    "pool probe 0 output funding",
+    tokenOut,
+    wallet,
+    tokenOutAddress,
+    pool0Address,
+    poolFunding,
+  );
+  await transferEncrypted(
+    "pool probe 1 output funding",
+    tokenOut,
+    wallet,
+    tokenOutAddress,
+    pool1Address,
+    poolFunding,
+  );
 
   const router = new Contract(routerAddress, ROUTER_ABI, wallet);
   const quoteRequestId = ethersLibrary.keccak256(
@@ -510,14 +562,15 @@ async function main(): Promise<void> {
     ["pool probe 1", "pool-probe-1", pool1],
     ["router probe", "router-probe", routerDeployment],
   ] as const) {
-    recoveryEvidence.push(await submit(
+    const recovery = await submit(
       `${label} closure and recovery`,
       () => probe.closeAndRecover(caller, { gasLimit: CALL_GAS_LIMIT }),
-    ));
+    );
+    recoveryEvidence.push(recovery);
     if (!Boolean(await probe.closed())) {
       throw new Error(`${label} did not remain permanently closed`);
     }
-    recoveryJournal.markRecovered(resourceId);
+    recoveryJournal.markRecovered(resourceId, [recovery.transactionHash]);
   }
 
   const probeAddresses = [pool0Address, pool1Address, routerAddress];
@@ -555,10 +608,7 @@ async function main(): Promise<void> {
   console.log(
     "COTI testnet GT feasibility passed: current runtime artifacts reused caller-bound GT across two contracts, selected privately, escrowed exactly, consumed allowances, restored the router's starting input balance, permanently closed every disposable probe, and recovered all private assets",
   );
-  recoveryJournal.markRun("passed");
-  const finalEvidence = await writeFundedRunEvidence({
-    journal: recoveryJournal,
-    provider: ethers.provider,
+  recoveryJournal.prepareEvidence({
     participants: [caller],
     configuration: {
       chainId: Number(network.chainId),
@@ -576,16 +626,22 @@ async function main(): Promise<void> {
         label: "GT pool probe 0",
         contractName: "MpcBestExecutionPoolProbe",
         address: pool0Address,
+        creationTransactionHash: pool0Deployment.transactionHash,
+        constructorArguments: [tokenInAddress, tokenOutAddress, 2, 1],
       },
       {
         label: "GT pool probe 1",
         contractName: "MpcBestExecutionPoolProbe",
         address: pool1Address,
+        creationTransactionHash: pool1Deployment.transactionHash,
+        constructorArguments: [tokenInAddress, tokenOutAddress, 3, 1],
       },
       {
         label: "GT router probe",
         contractName: "MpcBestExecutionRouterProbe",
         address: routerAddress,
+        creationTransactionHash: routerProbeDeployment.transactionHash,
+        constructorArguments: [tokenInAddress, pool0Address, pool1Address, caller],
       },
     ],
     assertions: [
@@ -597,10 +653,23 @@ async function main(): Promise<void> {
       "disposable probes closed with zero residue",
     ],
   });
+  const finalEvidence = await writePreparedFundedRunEvidence({
+    journal: recoveryJournal,
+    provider: ethers.provider,
+    attestationSigner: wallet,
+  });
   console.log(`fundedEvidence=${finalEvidence.path}`);
 }
 
 void main().catch(async (error: unknown) => {
+  if (recoveryJournal?.runStatus === "evidence-failed") {
+    console.error(
+      `COTI best-execution feasibility evidence generation failed: ` +
+        `${safeTestnetErrorSummary(error)}; paid execution will not be repeated.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (error instanceof UnknownBroadcastOutcomeError) {
     recoveryJournal?.markRun("failed");
     console.error(

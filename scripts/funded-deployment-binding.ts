@@ -1,13 +1,4 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
-import { promisify } from "node:util";
-
 import type { VerifiedTestnetDeploymentRecord } from "./testnet-deployment-provenance";
-import { trustedGitExecutable } from "./trusted-git";
-
-const execFileAsync = promisify(execFile);
 const COMMIT = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const RECORD_PATH = /^deployments\/coti-testnet-([0-9a-f]{40})\.json$/;
@@ -48,22 +39,11 @@ export function validateFundedDeploymentBinding(value: unknown): FundedDeploymen
 
 export async function createFundedDeploymentBinding(
   deployment: VerifiedTestnetDeploymentRecord,
-  cwd = process.cwd(),
 ): Promise<FundedDeploymentBinding> {
-  const recordPath = relative(resolve(cwd), resolve(deployment.path)).replaceAll("\\", "/");
-  const manifest = await execFileAsync(
-    trustedGitExecutable(process.env, cwd),
-    ["log", "-1", "--format=%H", "--", recordPath],
-    { cwd },
-  );
-  const manifestCommit = manifest.stdout.trim().toLowerCase();
-  const recordSha256 = createHash("sha256")
-    .update(readFileSync(resolve(deployment.path)))
-    .digest("hex");
   return validateFundedDeploymentBinding({
-    recordPath,
-    recordSha256,
-    manifestCommit,
+    recordPath: deployment.recordPath,
+    recordSha256: deployment.recordSha256,
+    manifestCommit: deployment.manifestCommit,
     sourceCommit: deployment.sourceCommit.toLowerCase(),
   });
 }

@@ -115,7 +115,9 @@ function assertRouterIndexDeclassification(path, call, ancestors) {
     walk(root, (node) => {
       if (
         node.nodeType === "MemberAccess" &&
-        ["count", "pools", "feeTiers", "zeroForOne"].includes(node.memberName) &&
+        ["count", "pools", "feeTiers", "initializationStrategies", "zeroForOne"].includes(
+          node.memberName,
+        ) &&
         candidateMember(node, node.memberName)
       ) found = true;
     });
@@ -134,7 +136,7 @@ function assertRouterIndexDeclassification(path, call, ancestors) {
     }
     if (
       node.nodeType === "MemberAccess" &&
-      ["pools", "feeTiers"].includes(node.memberName) &&
+      ["pools", "feeTiers", "initializationStrategies"].includes(node.memberName) &&
       candidateMember(node, node.memberName)
     ) {
       const parent = nodeAncestors[nodeAncestors.length - 1];
@@ -181,11 +183,15 @@ function assertRouterIndexDeclassification(path, call, ancestors) {
       });
     }
   });
-  if (references.length !== 3) {
+  if (references.length !== 4) {
     throw new Error(`${path}: decrypted route index has an unexpected use count`);
   }
 
-  const allowedMembers = new Set(["pools", "feeTiers"]);
+  const allowedMembers = new Set([
+    "pools",
+    "feeTiers",
+    "initializationStrategies",
+  ]);
   let boundCheck;
   const indexedMembers = new Set();
   const indexedAccesses = [];
@@ -227,8 +233,8 @@ function assertRouterIndexDeclassification(path, call, ancestors) {
     }
     throw new Error(`${path}: decrypted route index reaches an unreviewed sink`);
   }
-  if (!boundCheck || indexedMembers.size !== 2 || indexedAccesses.length !== 2) {
-    throw new Error(`${path}: decrypted route index is not limited to the bounded pool/tier lookup`);
+  if (!boundCheck || indexedMembers.size !== 3 || indexedAccesses.length !== 3) {
+    throw new Error(`${path}: decrypted route index is not limited to the bounded pool/tier/strategy lookup`);
   }
   const boundPosition = functionNode.body.statements?.indexOf(boundCheck) ?? -1;
   if (
@@ -238,7 +244,7 @@ function assertRouterIndexDeclassification(path, call, ancestors) {
       return position <= boundPosition;
     })
   ) {
-    throw new Error(`${path}: canonical route-index bound does not dominate both lookups`);
+    throw new Error(`${path}: canonical route-index bound does not dominate every lookup`);
   }
 }
 
@@ -366,24 +372,24 @@ function assertBooleanControlFlowDeclassification(path, call, ancestors) {
 }
 
 export function assertCompiledPrivacyDecryptBoundary(compilationSources, targetPaths) {
-  let hasPotentialDecrypt = false;
   for (const path of targetPaths) {
     const ast = compilationSources[path]?.ast;
     if (!ast) throw new Error(`${path}: compiled Solidity AST is unavailable`);
-    walk(ast, (node) => {
-      if (
-        node.nodeType === "FunctionCall" &&
-        node.expression?.nodeType === "MemberAccess" &&
-        node.expression.memberName === "decrypt"
-      ) hasPotentialDecrypt = true;
-    });
   }
-  if (!hasPotentialDecrypt) return 0;
 
   const decryptIds = mpcDecryptDeclarationIds(compilationSources);
   let plaintextUintDecryptions = 0;
   for (const path of targetPaths) {
     const ast = compilationSources[path]?.ast;
+    walk(ast, (node, ancestors) => {
+      if (!decryptIds.has(node.referencedDeclaration)) return;
+      const parent = ancestors.at(-1);
+      if (parent?.nodeType !== "FunctionCall" || parent.expression !== node) {
+        throw new Error(
+          `${path}: MpcCore.decrypt may not be aliased, stored, or referenced outside a direct call`,
+        );
+      }
+    });
     walk(ast, (node, ancestors) => {
       if (
         node.nodeType !== "FunctionCall" ||

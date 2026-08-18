@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { artifacts, ethers } from "../../hardhat/runtime.js";
 
 import { verifyDeploymentTransactionEvidence } from "../../scripts/deployment-transaction-provenance";
 
@@ -87,13 +87,49 @@ describe("deployment transaction provenance", function () {
       [],
     );
     const privateCodehash = `0x${"11".repeat(32)}`;
+    const strategyArtifact = await artifacts.readArtifact(
+      "ConfidentialLaunchInitializationStrategy",
+    );
+    const reviewedStrategyCodehash = ethers.keccak256(
+      strategyArtifact.deployedBytecode,
+    );
+    const strategyRegistry = await deployed(
+      "confidentialInitializationStrategyRegistry",
+      "ConfidentialInitializationStrategyRegistry",
+      [[reviewedStrategyCodehash]],
+      [reviewedStrategyCodehash],
+    );
+    strategyRegistry.record.reviewedStrategyCodehashes = [reviewedStrategyCodehash];
+    strategyRegistry.record.runtimeCodehash = ethers.keccak256(
+      await ethers.provider.getCode(strategyRegistry.record.address),
+    );
+    const poolDeployer = await deployed(
+      "confidentialPoolDeployer",
+      "ConfidentialCPMMDeployer",
+      [],
+    );
+    poolDeployer.record.runtimeCodehash = ethers.keccak256(
+      await ethers.provider.getCode(poolDeployer.record.address),
+    );
     const confidentialFactory = await deployed(
       "confidentialFactory",
       "ConfidentialCPMMFactory",
-      [vault.record.address, lpFactory.record.address, [privateCodehash]],
+      [
+        vault.record.address,
+        lpFactory.record.address,
+        poolDeployer.record.address,
+        poolDeployer.record.runtimeCodehash,
+        [privateCodehash],
+        strategyRegistry.record.address,
+        strategyRegistry.record.runtimeCodehash,
+      ],
       vault.record.address,
       lpFactory.record.address,
+      poolDeployer.record.address,
+      poolDeployer.record.runtimeCodehash,
       [privateCodehash],
+      strategyRegistry.record.address,
+      strategyRegistry.record.runtimeCodehash,
     );
     confidentialFactory.record.approvedPrivateTokenCodehashes = [privateCodehash];
     const vaultBinding = await bound(
@@ -102,6 +138,64 @@ describe("deployment transaction provenance", function () {
       vault.contract,
       "setConfidentialFactory",
       [confidentialFactory.record.address],
+    );
+    const poolDeployerBinding = await bound(
+      "confidential pool-deployer factory binding",
+      "confidentialPoolDeployerBinding",
+      poolDeployer.contract,
+      "bindFactory",
+      [confidentialFactory.record.address],
+    );
+    const strategyRegistryBinding = await bound(
+      "confidential strategy-registry factory binding",
+      "confidentialStrategyRegistryBinding",
+      strategyRegistry.contract,
+      "bindFactory",
+      [confidentialFactory.record.address],
+    );
+    const launchStrategy = await deployed(
+      "confidentialLaunchInitializationStrategy",
+      "ConfidentialLaunchInitializationStrategy",
+      [
+        confidentialFactory.record.address,
+        strategyRegistry.record.address,
+        deployer.address,
+      ],
+      confidentialFactory.record.address,
+      strategyRegistry.record.address,
+      deployer.address,
+    );
+    launchStrategy.record.launchAuthority = deployer.address;
+    const migratorAddress = await launchStrategy.contract.migrator();
+    const migrator = {
+      record: {
+        address: migratorAddress,
+        deploymentTx: launchStrategy.record.deploymentTx,
+        gasUsed: launchStrategy.record.gasUsed,
+        constructorArgs: [
+          confidentialFactory.record.address,
+          launchStrategy.record.address,
+        ],
+        creationKind: "strategy-constructor-child",
+        creationParent: launchStrategy.record.address,
+        runtimeCodehash: ethers.keccak256(
+          await ethers.provider.getCode(migratorAddress),
+        ),
+      },
+    };
+    const strategyRegistration = await bound(
+      "confidential initialization-strategy registration",
+      "confidentialStrategyRegistration",
+      strategyRegistry.contract,
+      "registerInitializationStrategy",
+      [launchStrategy.record.address],
+    );
+    const strategyRegistryFinalization = await bound(
+      "confidential strategy-registry finalization",
+      "confidentialStrategyRegistryFinalization",
+      strategyRegistry.contract,
+      "finalize",
+      [],
     );
     const confidentialRouter = await deployed(
       "confidentialBestExecutionRouter",
@@ -115,19 +209,6 @@ describe("deployment transaction provenance", function () {
       confidentialFactory.contract,
       "setBestExecutionRouter",
       [confidentialRouter.record.address],
-    );
-    const migrator = await deployed(
-      "launchpadMigrator",
-      "ConfidentialLaunchpadMigrator",
-      [confidentialFactory.record.address],
-      confidentialFactory.record.address,
-    );
-    const adapterBinding = await bound(
-      "launchpad adapter binding",
-      "bootstrapAdapterBinding",
-      confidentialFactory.contract,
-      "setBootstrapAdapter",
-      [migrator.record.address],
     );
     const publicFactory = await deployed(
       "publicFactory",
@@ -159,12 +240,18 @@ describe("deployment transaction provenance", function () {
       contracts: {
         feeVault: vault.record,
         confidentialLpTokenFactory: lpFactory.record,
+        confidentialInitializationStrategyRegistry: strategyRegistry.record,
+        confidentialPoolDeployer: poolDeployer.record,
         confidentialFactory: confidentialFactory.record,
         confidentialFeeVaultBinding: vaultBinding,
+        confidentialPoolDeployerBinding: poolDeployerBinding,
+        confidentialStrategyRegistryBinding: strategyRegistryBinding,
+        confidentialLaunchInitializationStrategy: launchStrategy.record,
         confidentialBestExecutionRouter: confidentialRouter.record,
         bestExecutionRouterBinding: routerBinding,
         launchpadMigrator: migrator.record,
-        bootstrapAdapterBinding: adapterBinding,
+        confidentialStrategyRegistration: strategyRegistration,
+        confidentialStrategyRegistryFinalization: strategyRegistryFinalization,
         publicFactory: publicFactory.record,
         publicFeeVaultBinding: publicVaultBinding,
         publicQuoter: publicQuoter.record,
@@ -194,6 +281,39 @@ describe("deployment transaction provenance", function () {
     await expectRejected(
       verifyDeploymentTransactionEvidence(record, ethers.provider),
       "transaction hashes must be unique",
+    );
+  });
+
+  it("rejects a successful binding transaction against a lookalike deployment", async function () {
+    const record = await fixture();
+    const lookalike = await (
+      await ethers.getContractFactory("CipherDEXFeeVault")
+    ).deploy(record.contracts.feeVault.beneficiary);
+    const lookalikeFactory = await (
+      await ethers.getContractFactory("PublicCPMMFactory")
+    ).deploy(await lookalike.getAddress());
+    const binding = await lookalike.setPublicFactory(await lookalikeFactory.getAddress());
+    const receipt = await binding.wait();
+    expect(receipt?.status).to.equal(1);
+
+    const original = record.transactions.find(
+      (transaction: Record<string, unknown>) =>
+        transaction.label === "public fee-vault factory binding",
+    );
+    expect(original).to.not.equal(undefined);
+    original!.transactionHash = binding.hash;
+    original!.gasUsed = receipt!.gasUsed.toString();
+    record.contracts.publicFeeVaultBinding = {
+      target: await lookalike.getAddress(),
+      function: "setPublicFactory",
+      args: [await lookalikeFactory.getAddress()],
+      transaction: binding.hash,
+      gasUsed: receipt!.gasUsed.toString(),
+    };
+
+    await expectRejected(
+      verifyDeploymentTransactionEvidence(record, ethers.provider),
+      "target does not match the canonical deployment",
     );
   });
 });

@@ -1,70 +1,59 @@
 # Dependency Audit Report
 
-Date: 2026-08-16
+Date: 2026-08-18
 
-## Baseline
+## Environment and result
 
-- Node: `v24.16.0`
-- npm: `11.13.0`
-- install procedure: `npm ci --ignore-scripts`
-- production audit: `0` vulnerabilities (`npm audit --omit=dev --audit-level=high`)
-- production dependency graph: `npm ls --omit=dev --all` passes
-- full graph audit: `46` findings (`0` critical, `17` high, `10` moderate,
-  `19` low)
+- Node: `v24.16.x`
+- npm: `11.13.x`
+- install: `npm ci --ignore-scripts`
+- production audit: `0` findings at every severity
+- full operational audit: `0` findings at every severity
+- dependency graph: complete, with no missing or invalid required package
+- production dependencies: COTI contracts and OpenZeppelin contracts only
 
-## Production disposition
+The previous Hardhat 2/toolbox graph and its advisory-bearing transitive
+packages were removed. CipherDEX now uses pinned Hardhat 3 and the smallest set
+of official Nomic Foundation plugins required for compile, ethers integration,
+Mocha, Chai matchers, and TypeChain.
 
-The production graph contains only the official COTI contracts/runtime dependency
-tree, OpenZeppelin contracts and dotenv. No production critical or high advisory
-was reported. The vulnerable packages listed below are development-only Hardhat,
-coverage, verification or compiler tooling and are not bundled into deployed
-contracts or the testnet deployment runtime.
+## Compatibility work completed
 
-This is not an ignore file. The findings remain visible in the full audit and are
-re-evaluated by the production audit on every verification run.
+The migration included:
 
-## High findings in the development graph
+- an ESM Hardhat 3 configuration;
+- local plugin composition instead of `hardhat-toolbox`;
+- the Hardhat 3 runtime/task and Solidity hook adapters under `hardhat/`;
+- split build-info handling for privacy/security AST checks;
+- TypeScript `ESNext`/bundler module resolution;
+- unchanged Solidity `0.8.28` and Paris EVM output;
+- complete contract, SDK, deployment-runner, evidence, and security tests.
 
-| Surface | Path / advisory evidence | Disposition |
+`skipLibCheck` remains enabled only for incompatible upstream declaration output
+from the pinned COTI/TypeChain packages. CipherDEX source remains under strict
+type checking, and runtime/API validation is not weakened.
+
+## Lifecycle and native-code review
+
+The lockfile contains two packages marked with lifecycle scripts:
+
+| Package | Purpose | Disposition |
 | --- | --- | --- |
-| `hardhat@2.29.0` | Old Hardhat graph includes `adm-zip` (`GHSA-xcpc-8h2w-3j85`), `undici` high advisories, `uuid` range, and `solc -> tmp` (`GHSA-ph9p-34f9-6g65`) | Dev/build-only; no forced major upgrade. Migrate to Hardhat 3 only as a separate compatibility project. |
-| `@nomicfoundation/hardhat-toolbox@5.0.0` | Pulls the vulnerable Hardhat plugin set and `hardhat-gas-reporter`/`solidity-coverage` | Dev/test-only. No runtime import. |
-| `@nomicfoundation/hardhat-chai-matchers` | High surfaced through the old Hardhat plugin graph | Dev/test-only; covered by the Hardhat 3 migration decision. |
-| `@nomicfoundation/hardhat-ethers` | High surfaced through the old Hardhat plugin graph | Dev/test-only; no application runtime use. |
-| `@nomicfoundation/hardhat-ignition` and `@nomicfoundation/hardhat-ignition-ethers` | High surfaced through the old Hardhat/verification graph | Not imported by this repository; retained only by the toolbox dependency set. |
-| `@nomicfoundation/hardhat-network-helpers` | High surfaced through the legacy EthereumJS helper graph | Test-only; not used in deployment runtime. |
-| `@nomicfoundation/hardhat-verify` | High surfaced through old `undici` and legacy ethers packages | Not enabled in the project config; dev-only transitive package. |
-| `@typechain/hardhat` | High surfaced through the toolbox graph | Type generation only; not runtime. |
-| `adm-zip` | `GHSA-xcpc-8h2w-3j85`, crafted archive memory allocation; reachable through Hardhat | Hardhat build tooling only; do not process untrusted archives in build jobs. |
-| `hardhat-gas-reporter` | High surfaced by the old toolbox graph | Not configured or used. Dev-only. |
-| `lodash` | `GHSA-r5fr-rjxr-66jc` plus prototype-pollution advisories through Ignition | Dev-only transitive dependency. No untrusted input reaches the protocol build. |
-| `serialize-javascript` | `GHSA-5c6j-r48x-rmvq` through Mocha/coverage | Test-only; tests do not serialize untrusted input. |
-| `solidity-coverage` | High surfaced by old coverage/toolbox dependencies | Not configured or run. Dev-only. |
-| `tmp` | `GHSA-ph9p-34f9-6g65` through `solc` | Compiler/build-only; `npm ci --ignore-scripts` and isolated build environment are required. |
-| `undici` | `GHSA-vrm6-8vpv-qv8q`, `GHSA-v9p9-hfj2-hcw8`, `GHSA-vxpw-j846-p89q` and related advisories | Hardhat verification/build tooling only; not the protocol runtime. |
-| `ws` | `GHSA-96hv-2xvq-fx4p` on nested legacy ethers provider | Vulnerable copy is dev-only. The production graph resolves `ws@8.21.0`. |
+| `esbuild@0.28.2` | Hardhat build dependency | Script execution is disabled. The exact platform binary is lockfile-pinned and compile/tests prove availability. |
+| `fsevents@2.3.3` | Optional macOS filesystem events | Optional, not loaded on the supported Windows/Linux paths, and its script is not executed. |
 
-The audit's package-level high count is therefore not evidence that deployed pool
-bytecode contains these JavaScript packages. It is still a release-process risk,
-which is why the build must run with lifecycle scripts disabled and the full graph
-must remain recorded rather than hidden.
+No project lifecycle script, Git dependency, downloaded external compiler, or
+unreviewed native package is required. The compiler is the exact npm-pinned
+`solc@0.8.28` package.
 
-## Lifecycle and native binary review
+## Override disposition
 
-The installed graph was inspected without executing lifecycle scripts. The only
-`install` scripts found were:
+The exact overrides for `diff@8.0.3`, `glob@13.0.6`,
+`serialize-javascript@7.0.5`, and `tmp@0.2.7` replace advisory-affected
+transitive ranges with compatible patched releases. They are covered by the full
+compile/test/boundary suite and must be removed when every direct upstream range
+naturally resolves to the same or newer reviewed versions.
 
-- `keccak@3.0.4`: `node-gyp-build || exit 0`
-- `secp256k1@4.0.5`: `node-gyp-build || exit 0`
-
-They are development-only transitive packages. The mandated install command is
-`npm ci --ignore-scripts`; no package's postinstall/preinstall is needed by the
-protocol build. No GitHub dependency or downloaded external build tool is present
-in the manifest.
-
-## Remediation policy
-
-No broad override or advisory suppression was added. A future Hardhat 3 migration
-must be reviewed separately because it changes the configuration/plugin model and
-would affect the build toolchain. Production deployment remains blocked if the
-production-only audit reports a new critical or high advisory.
+No advisory is ignored or baselined. Any future critical, high, medium, or low
+finding in either audit is a release blocker until explicitly investigated and
+resolved.

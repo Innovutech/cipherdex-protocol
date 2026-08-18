@@ -148,9 +148,10 @@ constructor-bound. There is no administrator setter. Changing those economics
 requires a new approved protocol version and new pool identity; an existing pool
 cannot be silently repriced.
 
-Manual creation and launchpad bootstrap resolve the same canonical pool key and
-inherit exactly the same immutable fee policy and fee vault. There is no
-creator-scoped parallel market namespace. A future pool-creation anti-spam fee
+Standard and launch-protected pools have distinct complete keys because their
+initialization strategies differ, but inherit exactly the same immutable fee
+policy and fee vault. There is no creator-scoped parallel market namespace and
+the initialization strategy cannot alter economics. A future pool-creation anti-spam fee
 may be considered separately, but v1 has none. Such a fee would be a one-time
 native-COTI creation charge, never part of swap quote math.
 

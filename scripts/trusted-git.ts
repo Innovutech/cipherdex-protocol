@@ -10,6 +10,11 @@ export const TRUSTED_GIT_CANDIDATES = Object.freeze(
     : ["/usr/bin/git", "/bin/git"],
 );
 
+const TRUSTED_GIT_ENVIRONMENT_KEYS = Object.freeze([
+  "PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "ComSpec", "COMSPEC",
+  "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL",
+]);
+
 function normalizedPath(value: string): string {
   return process.platform === "win32" ? value.toLowerCase() : value;
 }
@@ -41,4 +46,31 @@ export function trustedGitExecutable(
     throw new Error("CipherDEX refuses a repository-controlled Git executable");
   }
   return executable;
+}
+
+export function trustedGitEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const selected: NodeJS.ProcessEnv = {
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "core.fsmonitor",
+    GIT_CONFIG_VALUE_0: "false",
+    GIT_CONFIG_KEY_1: "core.hooksPath",
+    GIT_CONFIG_VALUE_1: process.platform === "win32" ? "NUL" : "/dev/null",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_PAGER: "cat",
+  };
+  for (const key of TRUSTED_GIT_ENVIRONMENT_KEYS) {
+    const value = environment[key];
+    if (typeof value === "string" && value.length > 0) selected[key] = value;
+  }
+  return selected;
+}
+
+export function trustedGitArguments(arguments_: readonly string[]): readonly string[] {
+  return Object.freeze(["--no-replace-objects", "--no-pager", ...arguments_]);
 }

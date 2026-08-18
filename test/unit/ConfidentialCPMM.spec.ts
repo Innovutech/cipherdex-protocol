@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { Interface } from "ethers";
-import { ethers } from "hardhat";
+import { ethers } from "../../hardhat/runtime.js";
 import { deployFeeVault } from "../helpers/deployFeeVault";
 
 describe("ConfidentialCPMM metadata and construction guards", function () {
@@ -11,6 +11,10 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     await token0.waitForDeployment();
     await token1.waitForDeployment();
     const vault = await deployFeeVault();
+    const bootstrapAdapter = await (
+      await ethers.getContractFactory("MockBootstrapAdapter")
+    ).deploy();
+    await bootstrapAdapter.waitForDeployment();
     const factory = await ethers.getContractFactory("ConfidentialCPMM");
     const pool = await factory.deploy(
       await token0.getAddress(),
@@ -19,9 +23,11 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
       6,
       feeBps,
       await vault.getAddress(),
+      ethers.ZeroAddress,
+      await bootstrapAdapter.getAddress(),
     );
     await pool.waitForDeployment();
-    return { pool, token0, token1, vault };
+    return { bootstrapAdapter, pool, token0, token1, vault };
   }
 
   it("pins the pair, fee, decimals and normalization scales", async function () {
@@ -41,7 +47,7 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
   });
 
   it("does not expose public reserve-derived market data", async function () {
-    const { pool } = await deploy();
+    const { bootstrapAdapter, pool } = await deploy();
     const abi = new Interface(pool.interface.fragments);
     expect(abi.getFunction("publishSpotPrice")).to.equal(null);
     expect(abi.getFunction("publicSpotPriceX18")).to.equal(null);
@@ -71,6 +77,8 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
         18,
         1_001,
         await vault.getAddress(),
+        ethers.ZeroAddress,
+        await vault.getAddress(),
       ),
     ).to.be.revertedWithCustomError(factory, "InvalidFee");
   });
@@ -91,6 +99,8 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
         18,
         25,
         await vault.getAddress(),
+        ethers.ZeroAddress,
+        await vault.getAddress(),
       ),
     ).to.be.revertedWithCustomError(factory, "InvalidFee");
   });
@@ -110,6 +120,8 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
         18,
         18,
         30,
+        await vault.getAddress(),
+        ethers.ZeroAddress,
         await vault.getAddress(),
       ),
     ).to.be.revertedWithCustomError(factory, "InvalidDecimals");
@@ -134,6 +146,8 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
         18,
         30,
         await vault.getAddress(),
+        ethers.ZeroAddress,
+        await vault.getAddress(),
       ),
     ).to.be.revertedWithCustomError(poolFactory, "UnsupportedPrivateToken");
   });
@@ -152,6 +166,8 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
         18,
         30,
         await vault.getAddress(),
+        ethers.ZeroAddress,
+        await vault.getAddress(),
       ),
     ).to.be.revertedWithCustomError(factory, "InvalidTokenPair");
     await expect(
@@ -161,6 +177,8 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
         18,
         18,
         30,
+        await vault.getAddress(),
+        ethers.ZeroAddress,
         await vault.getAddress(),
       ),
     ).to.be.revertedWithCustomError(factory, "InvalidTokenPair");
@@ -186,13 +204,20 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
   });
 
   it("prevents directly deployed pools from entering the liquidity lifecycle", async function () {
-    const { pool } = await deploy();
+    const { bootstrapAdapter, pool } = await deploy();
     const decoy = await (await ethers.getContractFactory("PrivateLPToken")).deploy(
       await pool.getAddress(),
     );
     await decoy.waitForDeployment();
 
     await expect(pool.initializeLPToken(await decoy.getAddress()))
+      .to.be.revertedWithCustomError(pool, "BootstrapUnauthorized");
+    await expect(
+      bootstrapAdapter.initializeLPToken(
+        await pool.getAddress(),
+        await decoy.getAddress(),
+      ),
+    )
       .to.be.revertedWithCustomError(pool, "InvalidLPToken");
     expect(await pool.lpToken()).to.equal(ethers.ZeroAddress);
 
@@ -209,9 +234,20 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
       false,
       (1n << 64n) - 1n,
     )).to.be.revertedWithCustomError(pool, "CanonicalLPTokenRequired");
+    const [caller] = await ethers.getSigners();
     await expect(pool.bootstrapLiquidity(
-      (await ethers.getSigners())[0].address,
-      (await ethers.getSigners())[0].address,
+      caller.address,
+      caller.address,
+      1n,
+      1n,
+      1n,
+      0n,
+      1n,
+    )).to.be.revertedWithCustomError(pool, "BootstrapUnauthorized");
+    await expect(bootstrapAdapter.bootstrapLiquidity(
+      await pool.getAddress(),
+      caller.address,
+      caller.address,
       1n,
       1n,
       1n,
@@ -223,11 +259,13 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
   });
 
   it("rejects invalid launchpad disposition metadata before MPC inputs", async function () {
-    const { pool } = await deploy();
+    const { bootstrapAdapter, pool } = await deploy();
+    const [caller] = await ethers.getSigners();
     await expect(
-      pool.bootstrapLiquidityWithDisposition(
-        await (await ethers.getSigners())[0].getAddress(),
-        await (await ethers.getSigners())[0].getAddress(),
+      bootstrapAdapter.bootstrapLiquidityWithDisposition(
+        await pool.getAddress(),
+        caller.address,
+        caller.address,
         1n,
         1n,
         1n,
@@ -238,9 +276,10 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
       ),
     ).to.be.revertedWithCustomError(pool, "InvalidLPDisposition");
     await expect(
-      pool.bootstrapLiquidityWithDisposition(
-        await (await ethers.getSigners())[0].getAddress(),
-        await (await ethers.getSigners())[0].getAddress(),
+      bootstrapAdapter.bootstrapLiquidityWithDisposition(
+        await pool.getAddress(),
+        caller.address,
+        caller.address,
         1n,
         1n,
         1n,

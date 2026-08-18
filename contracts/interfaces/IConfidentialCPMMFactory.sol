@@ -10,19 +10,29 @@ interface IConfidentialCPMMFactory {
         uint8 token0Decimals,
         uint8 token1Decimals,
         uint256 feeBps,
+        address initializationStrategy,
         address pool
     );
     event PrivateLPTokenCreated(address indexed pool, address indexed token);
-    event BootstrapAdapterConfigured(address indexed adapter);
     event BestExecutionRouterConfigured(address indexed router);
 
     function PROTOCOL_VERSION() external view returns (uint256);
     function PRIVACY_MODE() external view returns (uint8);
     function feeVault() external view returns (address);
     function lpTokenFactory() external view returns (address);
+    function poolDeployer() external view returns (address);
+    function poolDeployerRuntimeCodehash() external view returns (bytes32);
     function bootstrapConfigurator() external view returns (address);
-    function bootstrapAdapter() external view returns (address);
     function bestExecutionRouter() external view returns (address);
+    function BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH() external view returns (bytes32);
+    function initializationStrategyRegistry() external view returns (address);
+    function initializationStrategyRegistryRuntimeCodehash() external view returns (bytes32);
+    function initializationStrategyRegistryFinalized() external view returns (bool);
+    function initializationStrategiesLength() external view returns (uint256);
+    function initializationStrategyAt(uint8 classIndex) external view returns (address);
+    function initializationStrategyClass(address strategy) external view returns (uint8);
+    function initializationStrategyRuntimeCodehash(address strategy) external view returns (bytes32);
+    function initializationStrategyRegistration(address strategy) external view returns (bytes32);
     function getPool(bytes32 key) external view returns (address);
     function isPool(address pool) external view returns (bool);
     function isApprovedPrivateTokenCodehash(bytes32 codehash) external view returns (bool);
@@ -36,23 +46,26 @@ interface IConfidentialCPMMFactory {
         uint8 decimalsB,
         uint256 feeBps
     ) external returns (address pool);
-    function getOrCreatePoolForBootstrap(
+    function getOrCreatePoolForCommitment(
         address tokenA,
         address tokenB,
         uint8 decimalsA,
         uint8 decimalsB,
         uint256 feeBps
     ) external returns (address pool);
-    function setBootstrapAdapter(address adapter) external;
     function setBestExecutionRouter(address router) external;
     function poolKey(
         address token0,
         address token1,
         uint8 decimals0,
         uint8 decimals1,
-        uint256 feeBps
+        uint256 feeBps,
+        address initializationStrategy
     ) external pure returns (bytes32);
     function bootstrapPool(
+        address initializationStrategy,
+        bytes32 launchId,
+        bytes32 launchCommitmentHash,
         address pool,
         address provider,
         uint256 amount0,
@@ -62,6 +75,9 @@ interface IConfidentialCPMMFactory {
         uint256 maxPriceX18
     ) external returns (ctUint256 memory mintedShares);
     function bootstrapPoolWithDisposition(
+        address initializationStrategy,
+        bytes32 launchId,
+        bytes32 launchCommitmentHash,
         address pool,
         address provider,
         uint256 amount0,

@@ -1,5 +1,12 @@
 import { expect } from "chai";
-import { AbiCoder, Interface, ZeroHash, keccak256, zeroPadValue } from "ethers";
+import {
+  AbiCoder,
+  Interface,
+  ZeroAddress,
+  ZeroHash,
+  keccak256,
+  zeroPadValue,
+} from "ethers";
 import {
   CONFIDENTIAL_CPMM_ABI,
   CONFIDENTIAL_CPMM_FACTORY_ABI,
@@ -13,9 +20,13 @@ import {
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION,
   CONFIDENTIAL_QUOTE_TRANSPORT,
   CIPHERDEX_FEE_VAULT_ABI,
+  CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION,
+  CIPHERDEX_PUBLIC_PROTOCOL_VERSION,
   CIPHERDEX_PROTOCOL_VERSION,
   CIPHERDEX_V1_FEE_POLICY,
   DISCLOSURE_SCHEMA_VERSION,
+  buildConfidentialLaunchCommitCall,
+  buildConfidentialLaunchCommitment,
   LAUNCHPAD_MIGRATION_EIP712_TYPES,
   LAUNCHPAD_LOCK_DISPOSITION_TOPIC,
   LAUNCHPAD_MIGRATE_SELECTOR,
@@ -50,8 +61,103 @@ import {
 } from "../../sdk/src/index";
 
 describe("stable SDK surface", function () {
+  it("canonicalizes and snapshots confidential launch commitments", function () {
+    const tokenHigh = "0x00000000000000000000000000000000000000f2";
+    const tokenLow = "0x0000000000000000000000000000000000000011";
+    const commitment = buildConfidentialLaunchCommitment({
+      launchId: `0x${"12".repeat(32)}`,
+      creator: "0x0000000000000000000000000000000000000022",
+      tokenA: tokenHigh,
+      tokenB: tokenLow,
+      decimalsA: 6,
+      decimalsB: 18,
+      feeBps: 30,
+      factory: "0x0000000000000000000000000000000000000033",
+      migrator: "0x0000000000000000000000000000000000000044",
+      initializationStrategy: "0x0000000000000000000000000000000000000055",
+      launchAuthority: "0x0000000000000000000000000000000000000066",
+      chainId: 2_632_500n,
+      authorizationDeadline: 1_000n,
+      migrationDeadline: 1_000n,
+    });
+
+    expect(commitment).to.deep.include({
+      token0: tokenLow,
+      token1: tokenHigh,
+      decimals0: 18,
+      decimals1: 6,
+      privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
+      poolVersion: CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION,
+    });
+    expect(Object.isFrozen(commitment)).to.equal(true);
+
+    const creatorAuthorization = new Uint8Array([0x12, 0x34]);
+    const call = buildConfidentialLaunchCommitCall(
+      commitment,
+      creatorAuthorization,
+      "0xabcd",
+    );
+    creatorAuthorization[0] = 0xff;
+    expect(call.functionName).to.equal("commitLaunch");
+    expect(call.args[0]).to.deep.equal(commitment);
+    expect(call.args[1]).to.equal("0x1234");
+    expect(call.args[2]).to.equal("0xabcd");
+    expect(Object.isFrozen(call)).to.equal(true);
+    expect(Object.isFrozen(call.args)).to.equal(true);
+  });
+
+  it("rejects invalid or noncanonical confidential launch commitments", function () {
+    const valid = {
+      launchId: `0x${"34".repeat(32)}`,
+      creator: "0x0000000000000000000000000000000000000022",
+      tokenA: "0x0000000000000000000000000000000000000011",
+      tokenB: "0x00000000000000000000000000000000000000f2",
+      decimalsA: 18,
+      decimalsB: 6,
+      feeBps: 30,
+      factory: "0x0000000000000000000000000000000000000033",
+      migrator: "0x0000000000000000000000000000000000000044",
+      initializationStrategy: "0x0000000000000000000000000000000000000055",
+      launchAuthority: "0x0000000000000000000000000000000000000066",
+      chainId: 2_632_500n,
+      authorizationDeadline: 1_000n,
+      migrationDeadline: 2_000n,
+    } as const;
+
+    expect(() =>
+      buildConfidentialLaunchCommitment({
+        ...valid,
+        launchAuthority: valid.creator,
+      }),
+    ).to.throw("Invalid confidential launch commitment");
+    expect(() =>
+      buildConfidentialLaunchCommitment({ ...valid, feeBps: 25 }),
+    ).to.throw("Invalid confidential launch commitment");
+    expect(() =>
+      buildConfidentialLaunchCommitment({
+        ...valid,
+        migrationDeadline: valid.authorizationDeadline - 1n,
+      }),
+    ).to.throw("Invalid confidential launch commitment");
+
+    const commitment = buildConfidentialLaunchCommitment(valid);
+    expect(() =>
+      buildConfidentialLaunchCommitCall(
+        {
+          ...commitment,
+          poolVersion: (CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION + 1) as typeof CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION,
+        },
+        "0x12",
+        "0x34",
+      ),
+    ).to.throw("Noncanonical confidential launch commitment");
+    expect(() =>
+      buildConfidentialLaunchCommitCall(commitment, "0x", "0x34"),
+    ).to.throw("Invalid launch authorization bytes");
+  });
+
   it("parses the published pool and factory ABI fragments", function () {
-    expect(DISCLOSURE_SCHEMA_VERSION).to.equal(5);
+    expect(DISCLOSURE_SCHEMA_VERSION).to.equal(6);
     const pool = new Interface(CONFIDENTIAL_CPMM_ABI);
     const factory = new Interface(CONFIDENTIAL_CPMM_FACTORY_ABI);
     const bestExecutionPool = new Interface(CONFIDENTIAL_BEST_EXECUTION_POOL_ABI);
@@ -79,11 +185,11 @@ describe("stable SDK surface", function () {
     expect(pool.getFunction("bootstrapLiquidity")).to.not.equal(null);
     expect(pool.getFunction("bootstrapLiquidityWithDisposition")).to.not.equal(null);
     expect(factory.getFunction("createPool")).to.not.equal(null);
-    expect(factory.getFunction("getOrCreatePoolForBootstrap")).to.not.equal(null);
+    expect(factory.getFunction("getOrCreatePoolForCommitment")).to.not.equal(null);
     expect(factory.getFunction("createPoolWithPublisher")).to.equal(null);
     expect(factory.getFunction("PRIVACY_MODE")).to.not.equal(null);
-    expect(factory.getFunction("setBootstrapAdapter")).to.not.equal(null);
-    expect(factory.getFunction("bootstrapAdapter")).to.not.equal(null);
+    expect(factory.getFunction("setBootstrapAdapter")).to.equal(null);
+    expect(factory.getFunction("bootstrapAdapter")).to.equal(null);
     expect(factory.getFunction("setBestExecutionRouter")).to.not.equal(null);
     expect(factory.getFunction("bestExecutionRouter")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPool")).to.not.equal(null);
@@ -98,7 +204,7 @@ describe("stable SDK surface", function () {
     expect(bestExecutionRouter.getFunction("swapBestExactInput")).to.not.equal(null);
     expect(bestExecutionRouter.getEvent("ConfidentialBestQuoteResult")).to.not.equal(null);
     expect(bestExecutionRouter.getEvent("ConfidentialBestSwapResult")).to.not.equal(null);
-    expect(CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION).to.equal(1);
+    expect(CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION).to.equal(2);
     expect(privateLpToken.getFunction("pool")).to.not.equal(null);
     expect(privateLpToken.getFunction("balanceOf")).to.not.equal(null);
     expect(launchpad.getFunction("migrate")).to.not.equal(null);
@@ -122,7 +228,7 @@ describe("stable SDK surface", function () {
     expect(PRIVACY_MODE.TRANSPARENT).to.equal(0);
     expect(PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP).to.equal(1);
     expect(PRIVACY_MODE.UNSUPPORTED_FULLY_CONFIDENTIAL).to.equal(2);
-    expect(LAUNCHPAD_MIGRATION_EIP712_TYPES).to.have.length(11);
+    expect(LAUNCHPAD_MIGRATION_EIP712_TYPES).to.have.length(14);
   });
 
   it("accepts only the public privacy-minimal discovery shape", function () {
@@ -141,7 +247,11 @@ describe("stable SDK surface", function () {
         feeVault,
         feePolicy,
         privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-        poolKind: "private-erc20-cpmm-v2",
+        initializationStrategy: ZeroAddress,
+        strategyClass: 0,
+        poolClass: "standard",
+        initialized: true,
+        poolKind: "private-erc20-cpmm-v3",
         quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
       }),
     ).to.equal(true);
@@ -163,7 +273,7 @@ describe("stable SDK surface", function () {
     expect(
       isPublicPoolDiscovery({
         disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
-        protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+        protocolVersion: CIPHERDEX_PUBLIC_PROTOCOL_VERSION,
         pool: "0x0000000000000000000000000000000000000001",
         token0: "0x0000000000000000000000000000000000000002",
         token1: "0x0000000000000000000000000000000000000003",
@@ -194,6 +304,9 @@ describe("stable SDK surface", function () {
     expect(
       isLaunchpadMigrationMetadata({
         disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+        launchId: `0x${"12".repeat(32)}`,
+        launchCommitmentHash: `0x${"13".repeat(32)}`,
+        initializationStrategy: feeVault,
         creator: owner,
         pool,
         disposition: LP_DISPOSITION.PERMANENT_LOCK,
@@ -225,7 +338,11 @@ describe("stable SDK surface", function () {
         feeVault,
         feePolicy,
         privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-        poolKind: "private-erc20-cpmm-v2",
+        initializationStrategy: ZeroAddress,
+        strategyClass: 0,
+        poolClass: "standard",
+        initialized: true,
+        poolKind: "private-erc20-cpmm-v3",
         quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
         totalShares: "private",
       }),
@@ -248,8 +365,31 @@ describe("stable SDK surface", function () {
     expect(isConfidentialLockDiscoveryShape(contradictoryLock)).to.equal(true);
     expect(isConfidentialLockDiscovery(contradictoryLock)).to.equal(false);
 
+    const stableLock = {
+      disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      pool,
+      lockId,
+      owner: creator,
+      unlockTime: "10",
+      permanent: false,
+      released: false,
+    };
+    const hostileLock = new Proxy(stableLock, {
+      get() {
+        throw new Error("semantic guard must not reread proxy properties");
+      },
+    });
+    expect(isConfidentialLockDiscovery(hostileLock)).to.equal(true);
+    expect(isConfidentialLockDiscovery({
+      ...stableLock,
+      unlockTime: "1".repeat(79),
+    })).to.equal(false);
+
     const contradictoryMigration = {
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      launchId: `0x${"31".repeat(32)}`,
+      launchCommitmentHash: `0x${"32".repeat(32)}`,
+      initializationStrategy: "0x0000000000000000000000000000000000000044",
       creator,
       pool,
       disposition: LP_DISPOSITION.CREATOR_HELD,
@@ -279,12 +419,19 @@ describe("stable SDK surface", function () {
     const token1 = "0x0000000000000000000000000000000000000066";
     const feeVault = "0x0000000000000000000000000000000000000077";
     const lpToken = "0x0000000000000000000000000000000000000088";
+    const initializationStrategy = "0x0000000000000000000000000000000000000099";
+    const launchId = `0x${"bb".repeat(32)}`;
+    const launchCommitmentHash = `0x${"cc".repeat(32)}`;
     const transactionHash = `0x${"99".repeat(32)}`;
     const lockId = `0x${"aa".repeat(32)}`;
     const factoryCode = "0x6001600055";
     const migratorCode = "0x6002600055";
+    const initializationStrategyCode = "0x6003600055";
     const metadata = {
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      launchId,
+      launchCommitmentHash,
+      initializationStrategy,
       creator,
       pool,
       disposition: LP_DISPOSITION.TIMED_LOCK,
@@ -299,8 +446,16 @@ describe("stable SDK surface", function () {
       logs: [
         {
           address: migrator,
-          topics: [LAUNCHPAD_MIGRATION_TOPIC, topicAddress(creator), topicAddress(pool)],
-          data: "0x",
+          topics: [
+            LAUNCHPAD_MIGRATION_TOPIC,
+            launchId,
+            topicAddress(creator),
+            topicAddress(pool),
+          ],
+          data: abi.encode(
+            ["address", "bytes32"],
+            [initializationStrategy, launchCommitmentHash],
+          ),
         },
         {
           address: pool,
@@ -320,9 +475,11 @@ describe("stable SDK surface", function () {
     };
     const adapter = {
       readChainId: async () => chainId,
-      getCode: async (address: string) => address.toLowerCase() === factory.toLowerCase()
-        ? factoryCode
-        : migratorCode,
+      getCode: async (address: string) => {
+        if (address.toLowerCase() === factory.toLowerCase()) return factoryCode;
+        if (address.toLowerCase() === migrator.toLowerCase()) return migratorCode;
+        return initializationStrategyCode;
+      },
       hashRuntimeCode: (code: string) => keccak256(code),
       getTransaction: async () => ({
         chainId,
@@ -333,10 +490,15 @@ describe("stable SDK surface", function () {
       }),
       getTransactionReceipt: async () => receipt,
       readFactoryProtocolVersion: async () => CIPHERDEX_PROTOCOL_VERSION,
-      readFactoryBootstrapAdapter: async () => migrator,
+      readInitializationStrategyMigrator: async () => migrator,
+      readInitializationStrategyMigratorRuntimeCodehash: async () => keccak256(migratorCode),
       isFactoryPool: async () => true,
       readMigratorProtocolVersion: async () => CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION,
       readMigratorFactory: async () => factory,
+      readMigratorInitializationStrategy: async () => initializationStrategy,
+      readFactoryInitializationStrategyClass: async () => 1,
+      readFactoryInitializationStrategyRuntimeCodehash: async () =>
+        keccak256(initializationStrategyCode),
       readPoolState: async () => ({
         protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
         privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
@@ -347,6 +509,8 @@ describe("stable SDK surface", function () {
         feeBps: 30,
         feeVault,
         lpToken,
+        initializationStrategy,
+        initialized: true,
       }),
       getCanonicalPool: async () => pool,
       readLockInfo: async () => ({
@@ -362,6 +526,10 @@ describe("stable SDK surface", function () {
       expectedFactoryRuntimeCodehash: keccak256(factoryCode),
       expectedMigrator: migrator,
       expectedMigratorRuntimeCodehash: keccak256(migratorCode),
+      expectedInitializationStrategy: initializationStrategy,
+      expectedInitializationStrategyRuntimeCodehash: keccak256(
+        initializationStrategyCode,
+      ),
       expectedFeeVault: feeVault,
       expectedFactoryProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
       expectedPoolProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
@@ -378,9 +546,9 @@ describe("stable SDK surface", function () {
     expect(Object.isFrozen(verified)).to.equal(true);
 
     for (const overrides of [
-      { getTransaction: async () => ({ ...(await adapter.getTransaction()), from: token0 }) },
+      { getTransaction: async () => ({ ...(await adapter.getTransaction()), hash: ZeroHash }) },
       { getTransactionReceipt: async () => ({ ...receipt, status: 0 }) },
-      { readFactoryBootstrapAdapter: async () => token0 },
+      { readInitializationStrategyMigrator: async () => token0 },
       { isFactoryPool: async () => false },
       { getCanonicalPool: async () => token0 },
       { readLockInfo: async () => ({ owner: creator, unlockTime: 100n, permanent: false, released: true }) },
@@ -418,8 +586,16 @@ describe("stable SDK surface", function () {
         status: 1,
         logs: [{
           address: migrator,
-          topics: [LAUNCHPAD_MIGRATION_TOPIC, topicAddress(creator), topicAddress(pool)],
-          data: "0x",
+          topics: [
+            LAUNCHPAD_MIGRATION_TOPIC,
+            launchId,
+            topicAddress(creator),
+            topicAddress(pool),
+          ],
+          data: abi.encode(
+            ["address", "bytes32"],
+            [initializationStrategy, launchCommitmentHash],
+          ),
         }],
       }),
       readLockInfo: async () => {
@@ -432,6 +608,66 @@ describe("stable SDK surface", function () {
       creatorHeldAdapter,
     );
     expect(creatorHeld.disposition).to.equal(LP_DISPOSITION.CREATOR_HELD);
+
+    const smartWallet = "0x00000000000000000000000000000000000000a1";
+    const bundler = "0x00000000000000000000000000000000000000b1";
+    const accountEntryPoint = "0x00000000000000000000000000000000000000c1";
+    const smartWalletMetadata = {
+      ...metadata,
+      creator: smartWallet,
+    } as const;
+    const smartWalletReceipt = {
+      ...receipt,
+      logs: [
+        {
+          ...receipt.logs[0],
+          topics: [
+            LAUNCHPAD_MIGRATION_TOPIC,
+            launchId,
+            topicAddress(smartWallet),
+            topicAddress(pool),
+          ],
+        },
+        {
+          ...receipt.logs[1],
+          topics: [
+            CONFIDENTIAL_LIQUIDITY_LOCKED_TOPIC,
+            lockId,
+            topicAddress(smartWallet),
+          ],
+        },
+        {
+          ...receipt.logs[2],
+          topics: [
+            LAUNCHPAD_LOCK_DISPOSITION_TOPIC,
+            topicAddress(smartWallet),
+            topicAddress(pool),
+          ],
+        },
+      ],
+    };
+    const smartWalletVerified = await verifyLaunchpadMigrationMetadata(
+      { transactionHash, metadata: smartWalletMetadata },
+      policy,
+      {
+        ...adapter,
+        getTransaction: async () => ({
+          chainId,
+          hash: transactionHash,
+          from: bundler,
+          to: accountEntryPoint,
+          data: "0x12345678",
+        }),
+        getTransactionReceipt: async () => smartWalletReceipt,
+        readLockInfo: async () => ({
+          owner: smartWallet,
+          unlockTime: 100n,
+          permanent: false,
+          released: false,
+        }),
+      },
+    );
+    expect(smartWalletVerified.creator).to.equal(smartWallet);
 
     let dynamicMetadataReads = 0;
     const hostileMetadata = new Proxy({ ...creatorHeldMetadata }, {
@@ -714,7 +950,16 @@ describe("stable SDK surface", function () {
     );
     const encodedEvent = routerInterface.encodeEventLog(
       "ConfidentialBestQuoteResult",
-      [caller, requestId, selectedPool, 30n, true, [5n, 1n << 128n]],
+      [
+        caller,
+        requestId,
+        selectedPool,
+        30n,
+        ZeroAddress,
+        0x49,
+        true,
+        [5n, 1n << 128n],
+      ],
     );
     const expectation = {
       operation: "quote" as const,
@@ -776,11 +1021,56 @@ describe("stable SDK surface", function () {
       },
     )).to.equal(42n);
 
+    for (const boundedCase of [
+      {
+        expectation: {
+          ...expectation,
+          transactionData: `0x${"00".repeat(64 * 1024 + 1)}`,
+        },
+        adapter: decryptionAdapter,
+      },
+      {
+        expectation,
+        adapter: {
+          ...decryptionAdapter,
+          getTransactionReceipt: async () => ({
+            ...evidence.receipt,
+            logs: Array.from({ length: 4_097 }, () => evidence.receipt.logs[0]!),
+          }),
+        },
+      },
+      {
+        expectation,
+        adapter: {
+          ...decryptionAdapter,
+          getTransactionReceipt: async () => ({
+            ...evidence.receipt,
+            logs: [{
+              ...evidence.receipt.logs[0]!,
+              data: `0x${"00".repeat(64 * 1024 + 1)}`,
+            }],
+          }),
+        },
+      },
+    ]) {
+      let rejected = false;
+      try {
+        await decryptConfidentialBestExecutionResult(
+          verified,
+          boundedCase.expectation,
+          boundedCase.adapter,
+        );
+      } catch (error) {
+        rejected = error instanceof TypeError;
+      }
+      expect(rejected).to.equal(true);
+    }
+
     for (const overrides of [
       { readChainId: async () => BigInt(chainId + 1) },
       { readFactoryBestExecutionRouter: async () => caller },
       { readRouterFactory: async () => caller },
-      { readRouterProtocolVersion: async () => 2n },
+      { readRouterProtocolVersion: async () => 3n },
       { getCode: async () => "0x" },
     ]) {
       let rejected = false;
@@ -939,7 +1229,11 @@ describe("stable SDK surface", function () {
       feeVault: "0x0000000000000000000000000000000000000004",
       feePolicy: getCipherDEXV1FeePolicy(30),
       privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-      poolKind: "private-erc20-cpmm-v2" as const,
+      initializationStrategy: ZeroAddress,
+      strategyClass: 0,
+      poolClass: "standard" as const,
+      initialized: true,
+      poolKind: "private-erc20-cpmm-v3" as const,
       quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
     };
 
@@ -1007,6 +1301,9 @@ describe("stable SDK surface", function () {
     })).to.equal(false);
     expect(isLaunchpadMigrationMetadata({
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      launchId: "0x" + "22".repeat(32),
+      launchCommitmentHash: "0x" + "33".repeat(32),
+      initializationStrategy: valid.token1,
       creator: valid.token0,
       pool: valid.pool,
       disposition: LP_DISPOSITION.CREATOR_HELD,
@@ -1016,7 +1313,7 @@ describe("stable SDK surface", function () {
     })).to.equal(false);
     expect(isPublicPoolDiscovery({
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
-      protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      protocolVersion: CIPHERDEX_PUBLIC_PROTOCOL_VERSION,
       pool: valid.pool,
       token0: valid.token0,
       token1: valid.token1,
@@ -1041,6 +1338,9 @@ describe("stable SDK surface", function () {
     })).to.equal(false);
     expect(isLaunchpadMigrationMetadata({
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
+      launchId: "0x" + "22".repeat(32),
+      launchCommitmentHash: "0x" + "33".repeat(32),
+      initializationStrategy: valid.token1,
       creator: valid.token0,
       pool: valid.pool,
       disposition: LP_DISPOSITION.CREATOR_HELD,
@@ -1116,7 +1416,11 @@ describe("stable SDK surface", function () {
       feeVault,
       feePolicy: getCipherDEXV1FeePolicy(feeBps),
       privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-      poolKind: "private-erc20-cpmm-v2" as const,
+      initializationStrategy: ZeroAddress,
+      strategyClass: 0,
+      poolClass: "standard" as const,
+      initialized: true,
+      poolKind: "private-erc20-cpmm-v3" as const,
       quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
     });
     const adapter = (candidate: ReturnType<typeof discovery>, overrides: Record<string, unknown> = {}) => ({
@@ -1129,6 +1433,8 @@ describe("stable SDK surface", function () {
       isLPTokenIssued: async () => true,
       isFactoryPrivateTokenApproved: async () => true,
       isFactoryPool: async () => true,
+      readFactoryInitializationStrategyClass: async () => 0,
+      readFactoryInitializationStrategyRuntimeCodehash: async () => ZeroHash,
       getCanonicalPool: async () => candidate.pool,
       readPoolState: async () => ({
         protocolVersion: BigInt(CIPHERDEX_PROTOCOL_VERSION),
@@ -1140,6 +1446,8 @@ describe("stable SDK surface", function () {
         feeBps: BigInt(candidate.feeBps),
         feeVault,
         lpToken,
+        initializationStrategy: ZeroAddress,
+        initialized: true,
       }),
       ...overrides,
     });
@@ -1226,6 +1534,8 @@ describe("stable SDK surface", function () {
           feeBps: 30n,
           feeVault: "0x0000000000000000000000000000000000000088",
           lpToken,
+          initializationStrategy: ZeroAddress,
+          initialized: true,
         }),
       },
     ]) {
@@ -1245,7 +1555,7 @@ describe("stable SDK surface", function () {
     const feeVault = "0x0000000000000000000000000000000000000055";
     const discovery = {
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
-      protocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      protocolVersion: CIPHERDEX_PUBLIC_PROTOCOL_VERSION,
       pool: "0x0000000000000000000000000000000000000033",
       token0: "0x0000000000000000000000000000000000000011",
       token1: "0x0000000000000000000000000000000000000022",
@@ -1260,11 +1570,11 @@ describe("stable SDK surface", function () {
     const adapter = {
       readChainId: async () => BigInt(chainId),
       getCode: async () => "0x60006000",
-      readFactoryProtocolVersion: async () => BigInt(CIPHERDEX_PROTOCOL_VERSION),
+      readFactoryProtocolVersion: async () => BigInt(CIPHERDEX_PUBLIC_PROTOCOL_VERSION),
       isFactoryPool: async () => true,
       getCanonicalPool: async () => discovery.pool,
       readPoolState: async () => ({
-        protocolVersion: BigInt(CIPHERDEX_PROTOCOL_VERSION),
+        protocolVersion: BigInt(CIPHERDEX_PUBLIC_PROTOCOL_VERSION),
         privacyMode: 0n,
         token0: discovery.token0,
         token1: discovery.token1,
@@ -1278,7 +1588,7 @@ describe("stable SDK surface", function () {
       expectedChainId: chainId,
       expectedFactory: factory,
       expectedFeeVault: feeVault,
-      expectedProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
+      expectedProtocolVersion: CIPHERDEX_PUBLIC_PROTOCOL_VERSION,
     };
 
     const verified = await verifyPublicPoolDiscovery(discovery, policy, adapter);

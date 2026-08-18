@@ -45,7 +45,7 @@ for (const file of files) {
 const buildInfoDirectory = fileURLToPath(new URL("../artifacts/build-info/", import.meta.url));
 const buildInfoFiles = await Promise.all(
   (await readdir(buildInfoDirectory))
-    .filter((name) => name.endsWith(".json"))
+    .filter((name) => name.endsWith(".json") && !name.endsWith(".output.json"))
     .map(async (name) => ({
       name,
       modifiedAt: (await stat(join(buildInfoDirectory, name))).mtimeMs,
@@ -53,11 +53,35 @@ const buildInfoFiles = await Promise.all(
 );
 buildInfoFiles.sort((left, right) => right.modifiedAt - left.modifiedAt);
 
+function compilerSourceToDiskPath(buildInfo, compilerSourceName) {
+  const originalSourceName = Object.entries(buildInfo.userSourceNameMap ?? {})
+    .find(([, mappedName]) => mappedName === compilerSourceName)?.[0];
+  if (originalSourceName) {
+    return originalSourceName.startsWith("contracts/")
+      ? join(repositoryRoot, originalSourceName)
+      : join(repositoryRoot, "node_modules", originalSourceName);
+  }
+  if (compilerSourceName.startsWith("project/")) {
+    return join(repositoryRoot, compilerSourceName.slice("project/".length));
+  }
+  if (compilerSourceName.startsWith("npm/")) {
+    const versionedName = compilerSourceName.slice("npm/".length);
+    const scoped = versionedName.match(/^(@[^/]+\/[^/]+)@[^/]+\/(.+)$/);
+    const unscoped = versionedName.match(/^([^/@]+)@[^/]+\/(.+)$/);
+    const packagePath = scoped
+      ? `${scoped[1]}/${scoped[2]}`
+      : unscoped
+        ? `${unscoped[1]}/${unscoped[2]}`
+        : undefined;
+    return packagePath ? join(repositoryRoot, "node_modules", packagePath) : undefined;
+  }
+  return undefined;
+}
+
 async function sourceClosureMatches(buildInfo) {
   for (const [sourceName, sourceInput] of Object.entries(buildInfo.input?.sources ?? {})) {
-    const sourcePath = sourceName.startsWith("contracts/")
-      ? join(repositoryRoot, sourceName)
-      : join(repositoryRoot, "node_modules", sourceName);
+    const sourcePath = compilerSourceToDiskPath(buildInfo, sourceName);
+    if (!sourcePath) return false;
     let currentSource;
     try {
       currentSource = await readFile(sourcePath, "utf8");
@@ -70,23 +94,46 @@ async function sourceClosureMatches(buildInfo) {
 }
 
 const assignments = new Map();
+let mpcCompilationCount = 0;
 for (const { name } of buildInfoFiles) {
   const buildInfo = JSON.parse(await readFile(join(buildInfoDirectory, name), "utf8"));
+  const outputName = name.replace(/\.json$/, ".output.json");
+  let buildOutput;
+  try {
+    buildOutput = JSON.parse(await readFile(join(buildInfoDirectory, outputName), "utf8"));
+  } catch {
+    continue;
+  }
   if (!await sourceClosureMatches(buildInfo)) continue;
+  const normalizedOutputSources = Object.fromEntries(
+    Object.entries(buildOutput.output?.sources ?? {}).map(([sourceName, sourceOutput]) => [
+      sourceName.startsWith("project/") ? sourceName.slice("project/".length) : sourceName,
+      sourceOutput,
+    ]),
+  );
   const targetPaths = [];
   for (const [file, source] of productionSources) {
     const path = relative(repositoryRoot, file).replaceAll("\\", "/");
+    const compilerPath = buildInfo.userSourceNameMap?.[path] ?? `project/${path}`;
     if (
       !assignments.has(path) &&
-      buildInfo.input?.sources?.[path]?.content === source &&
-      buildInfo.output?.sources?.[path]?.ast
+      buildInfo.input?.sources?.[compilerPath]?.content === source &&
+      normalizedOutputSources[path]?.ast
     ) {
       assignments.set(path, name);
       targetPaths.push(path);
     }
   }
   if (targetPaths.length > 0) {
-    const count = assertCompiledPrivacyDecryptBoundary(buildInfo.output.sources, targetPaths);
+    const includesMpcCore = Object.values(normalizedOutputSources).some((source) =>
+      source?.ast?.nodes?.some(
+        (node) => node.nodeType === "ContractDefinition" && node.name === "MpcCore",
+      ),
+    );
+    const count = includesMpcCore
+      ? assertCompiledPrivacyDecryptBoundary(normalizedOutputSources, targetPaths)
+      : 0;
+    if (includesMpcCore) mpcCompilationCount += 1;
     assignments.set(`${name}:plaintext-count`, count);
   }
 }
@@ -97,6 +144,9 @@ const expectedPaths = [...productionSources.keys()].map((file) =>
 const missingAsts = expectedPaths.filter((path) => !assignments.has(path));
 if (missingAsts.length > 0) {
   throw new Error(`Fresh compiled Solidity AST is missing for: ${missingAsts.join(", ")}`);
+}
+if (mpcCompilationCount === 0) {
+  throw new Error("Fresh compiled Solidity AST omits the COTI MpcCore dependency graph");
 }
 const plaintextCount = [...assignments.entries()]
   .filter(([key]) => key.endsWith(":plaintext-count"))

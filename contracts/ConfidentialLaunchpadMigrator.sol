@@ -3,11 +3,11 @@ pragma solidity ^0.8.20;
 
 import "@coti-io/coti-contracts/contracts/token/PrivateERC20/IPrivateERC20.sol";
 import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-
 import "./interfaces/IConfidentialCPMM.sol";
 import "./interfaces/IConfidentialCPMMFactory.sol";
+import "./interfaces/IConfidentialInitializationStrategy.sol";
 import "./interfaces/IConfidentialLaunchpadMigrator.sol";
+import "./libraries/SignatureValidation.sol";
 
 /**
  * @title ConfidentialLaunchpadMigrator
@@ -24,28 +24,31 @@ import "./interfaces/IConfidentialLaunchpadMigrator.sol";
  * inside COTI MPC values.
  */
 contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
-    uint256 public constant PROTOCOL_VERSION = 3;
+    uint256 public constant PROTOCOL_VERSION = 4;
     bytes32 public constant EIP712_DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
     bytes32 private constant EIP712_NAME_HASH = keccak256("CipherDEX Launchpad Migrator");
     bytes32 private constant EIP712_VERSION_HASH = keccak256("1");
     bytes32 public constant MIGRATION_TYPEHASH = keccak256(
-        "Migration(address creator,address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,bytes32 encryptedInputsHash,uint64 deadline,bool withDisposition,uint8 disposition,uint64 unlockTime)"
+        "Migration(bytes32 launchId,bytes32 launchCommitmentHash,address initializationStrategy,address creator,address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,bytes32 encryptedInputsHash,uint64 deadline,bool withDisposition,uint8 disposition,uint64 unlockTime)"
     );
 
     address public immutable factory;
+    address public immutable initializationStrategy;
     uint256 private immutable deploymentChainId;
     bytes32 private immutable deploymentDomainSeparator;
     uint256 private reentrancyState = 1;
     mapping(bytes32 => bool) private consumedInputs;
 
     error InvalidFactory();
+    error InvalidInitializationStrategy();
     error InvalidTokenPair();
     error DeadlineExpired();
     error InputAlreadyConsumed();
     error Reentrancy();
     error InvalidAuthorization();
+    error InvalidLaunchCommitment();
     error PrivateTransferAmountMismatch();
 
     modifier nonReentrant() {
@@ -55,9 +58,18 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
         reentrancyState = 1;
     }
 
-    constructor(address factory_) {
+    constructor(address factory_, address initializationStrategy_) {
         if (factory_.code.length == 0) revert InvalidFactory();
+        // The reviewed strategy creates its own exact migrator while the
+        // strategy is under construction, so no proxy or lookalike facade can
+        // be admitted later. Calls back into the strategy are not possible
+        // until its constructor has completed.
+        if (
+            initializationStrategy_ == address(0) ||
+            msg.sender != initializationStrategy_
+        ) revert InvalidInitializationStrategy();
         factory = factory_;
+        initializationStrategy = initializationStrategy_;
         deploymentChainId = block.chainid;
         deploymentDomainSeparator = _buildDomainSeparator(block.chainid);
     }
@@ -104,6 +116,10 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
         uint64 unlockTime
     ) internal returns (address pool, ctUint256 memory mintedShares, bytes32 lockId) {
         if (request.deadline < block.timestamp) revert DeadlineExpired();
+        if (
+            request.launchId == bytes32(0) ||
+            request.launchCommitmentHash == bytes32(0)
+        ) revert InvalidLaunchCommitment();
         if (request.tokenA == address(0) || request.tokenB == address(0) || request.tokenA == request.tokenB) {
             revert InvalidTokenPair();
         }
@@ -122,17 +138,31 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             ? (request.tokenA, request.tokenB, request.decimalsA, request.decimalsB)
             : (request.tokenB, request.tokenA, request.decimalsB, request.decimalsA);
         IConfidentialCPMMFactory factoryContract = IConfidentialCPMMFactory(factory);
-        // Resolve the canonical market before invoking MPC. An initialized or
-        // maliciously pre-seeded pool therefore fails closed without consuming
-        // encrypted inputs or touching token allowances. If a new pool is
-        // created here, every later failure reverts that creation atomically.
-        pool = factoryContract.getOrCreatePoolForBootstrap(
+        bytes32 key = factoryContract.poolKey(
             token0,
             token1,
             decimals0,
             decimals1,
-            request.feeBps
+            request.feeBps,
+            initializationStrategy
         );
+        pool = factoryContract.getPool(key);
+        if (pool == address(0) || !factoryContract.isPool(pool)) {
+            revert InvalidLaunchCommitment();
+        }
+        IConfidentialCPMM canonicalPool = IConfidentialCPMM(pool);
+        if (
+            canonicalPool.PROTOCOL_VERSION() !=
+                factoryContract.PROTOCOL_VERSION() ||
+            canonicalPool.PRIVACY_MODE() != factoryContract.PRIVACY_MODE() ||
+            canonicalPool.token0() != token0 ||
+            canonicalPool.token1() != token1 ||
+            canonicalPool.token0Decimals() != decimals0 ||
+            canonicalPool.token1Decimals() != decimals1 ||
+            canonicalPool.feeBps() != request.feeBps ||
+            canonicalPool.initializationStrategy() != initializationStrategy ||
+            canonicalPool.initialized()
+        ) revert InvalidLaunchCommitment();
 
         gtUint256 gtAmount0 = _validateAndConsume(request.amount0, 0);
         gtUint256 gtAmount1 = _validateAndConsume(request.amount1, 1);
@@ -159,6 +189,9 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
 
         if (withDisposition) {
             (mintedShares, lockId) = factoryContract.bootstrapPoolWithDisposition(
+                initializationStrategy,
+                request.launchId,
+                request.launchCommitmentHash,
                 pool,
                 msg.sender,
                 gtUint256.unwrap(gtAmount0),
@@ -171,6 +204,9 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             );
         } else {
             mintedShares = factoryContract.bootstrapPool(
+                initializationStrategy,
+                request.launchId,
+                request.launchCommitmentHash,
                 pool,
                 msg.sender,
                 gtUint256.unwrap(gtAmount0),
@@ -182,7 +218,13 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
         }
         _requirePrivateBalance(IPrivateERC20(token0), startingBalance0);
         _requirePrivateBalance(IPrivateERC20(token1), startingBalance1);
-        emit LaunchpadMigration(msg.sender, pool);
+        emit LaunchpadMigration(
+            request.launchId,
+            msg.sender,
+            pool,
+            initializationStrategy,
+            request.launchCommitmentHash
+        );
         if (withDisposition) {
             emit LaunchpadLockDisposition(msg.sender, pool, disposition, lockId, unlockTime);
         }
@@ -202,8 +244,11 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             disposition,
             unlockTime
         );
-        (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(digest, request.authorization);
-        return error == ECDSA.RecoverError.NoError && recovered == creator;
+        return SignatureValidation.isValidSignatureNow(
+            creator,
+            digest,
+            request.authorization
+        );
     }
 
     function _pullPrivateExact(
@@ -243,6 +288,9 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             keccak256(
                 abi.encode(
                     MIGRATION_TYPEHASH,
+                    request.launchId,
+                    request.launchCommitmentHash,
+                    initializationStrategy,
                     creator,
                     request.tokenA,
                     request.tokenB,

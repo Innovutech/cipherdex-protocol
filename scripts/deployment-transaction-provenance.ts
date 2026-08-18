@@ -1,5 +1,5 @@
-import { Interface, concat, type InterfaceAbi } from "ethers";
-import { artifacts } from "hardhat";
+import { Interface, concat, getAddress, keccak256, type InterfaceAbi } from "ethers";
+import { artifacts } from "../hardhat/runtime.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -10,6 +10,7 @@ type DeploymentArtifact = Readonly<{
 
 export type DeploymentEvidenceProvider = Readonly<{
   getTransaction(hash: string): Promise<Readonly<{
+    from: string;
     to: string | null;
     data: string;
   }> | null>;
@@ -17,7 +18,13 @@ export type DeploymentEvidenceProvider = Readonly<{
     status: number | bigint | null;
     contractAddress: string | null;
     gasUsed: bigint;
+    logs: readonly Readonly<{
+      address: string;
+      topics: readonly string[];
+      data: string;
+    }>[];
   }> | null>;
+  getCode(address: string): Promise<string>;
   call(transaction: Readonly<{ to: string; data: string }>): Promise<string>;
 }>;
 
@@ -73,12 +80,29 @@ function requireGas(record: JsonRecord, key: string, label: string): bigint {
   return BigInt(value);
 }
 
-export const CANONICAL_TESTNET_DEPLOYMENTS = Object.freeze([
+type CanonicalTestnetDeployment = Readonly<{
+  key: string;
+  contractName: string;
+  label: string;
+  kind?: "strategy-constructor-child";
+  parentKey?: string;
+}>;
+
+export const CANONICAL_TESTNET_DEPLOYMENTS: readonly CanonicalTestnetDeployment[] = Object.freeze([
   Object.freeze({ key: "feeVault", contractName: "CipherDEXFeeVault", label: "CipherDEXFeeVault deployment" }),
   Object.freeze({ key: "confidentialLpTokenFactory", contractName: "PrivateLPTokenFactory", label: "PrivateLPTokenFactory deployment" }),
+  Object.freeze({ key: "confidentialInitializationStrategyRegistry", contractName: "ConfidentialInitializationStrategyRegistry", label: "ConfidentialInitializationStrategyRegistry deployment" }),
+  Object.freeze({ key: "confidentialPoolDeployer", contractName: "ConfidentialCPMMDeployer", label: "ConfidentialCPMMDeployer deployment" }),
   Object.freeze({ key: "confidentialFactory", contractName: "ConfidentialCPMMFactory", label: "ConfidentialCPMMFactory deployment" }),
+  Object.freeze({ key: "confidentialLaunchInitializationStrategy", contractName: "ConfidentialLaunchInitializationStrategy", label: "ConfidentialLaunchInitializationStrategy deployment" }),
   Object.freeze({ key: "confidentialBestExecutionRouter", contractName: "ConfidentialBestExecutionRouter", label: "ConfidentialBestExecutionRouter deployment" }),
-  Object.freeze({ key: "launchpadMigrator", contractName: "ConfidentialLaunchpadMigrator", label: "ConfidentialLaunchpadMigrator deployment" }),
+  Object.freeze({
+    key: "launchpadMigrator",
+    contractName: "ConfidentialLaunchpadMigrator",
+    label: "ConfidentialLaunchInitializationStrategy deployment",
+    kind: "strategy-constructor-child" as const,
+    parentKey: "confidentialLaunchInitializationStrategy",
+  }),
   Object.freeze({ key: "publicFactory", contractName: "PublicCPMMFactory", label: "PublicCPMMFactory deployment" }),
   Object.freeze({ key: "publicQuoter", contractName: "PublicCPMMQuoter", label: "PublicCPMMQuoter deployment" }),
   Object.freeze({ key: "publicRouter", contractName: "PublicCPMMRouter", label: "PublicCPMMRouter deployment" }),
@@ -90,24 +114,56 @@ const BINDINGS = Object.freeze([
     label: "confidential fee-vault factory binding",
     contractName: "CipherDEXFeeVault",
     functionName: "setConfidentialFactory",
+    targetKey: "feeVault",
+    argumentKeys: ["confidentialFactory"],
+  }),
+  Object.freeze({
+    key: "confidentialPoolDeployerBinding",
+    label: "confidential pool-deployer factory binding",
+    contractName: "ConfidentialCPMMDeployer",
+    functionName: "bindFactory",
+    targetKey: "confidentialPoolDeployer",
+    argumentKeys: ["confidentialFactory"],
+  }),
+  Object.freeze({
+    key: "confidentialStrategyRegistryBinding",
+    label: "confidential strategy-registry factory binding",
+    contractName: "ConfidentialInitializationStrategyRegistry",
+    functionName: "bindFactory",
+    targetKey: "confidentialInitializationStrategyRegistry",
+    argumentKeys: ["confidentialFactory"],
   }),
   Object.freeze({
     key: "publicFeeVaultBinding",
     label: "public fee-vault factory binding",
     contractName: "CipherDEXFeeVault",
     functionName: "setPublicFactory",
+    targetKey: "feeVault",
+    argumentKeys: ["publicFactory"],
   }),
   Object.freeze({
     key: "bestExecutionRouterBinding",
     label: "confidential best-execution router binding",
     contractName: "ConfidentialCPMMFactory",
     functionName: "setBestExecutionRouter",
+    targetKey: "confidentialFactory",
+    argumentKeys: ["confidentialBestExecutionRouter"],
   }),
   Object.freeze({
-    key: "bootstrapAdapterBinding",
-    label: "launchpad adapter binding",
-    contractName: "ConfidentialCPMMFactory",
-    functionName: "setBootstrapAdapter",
+    key: "confidentialStrategyRegistration",
+    label: "confidential initialization-strategy registration",
+    contractName: "ConfidentialInitializationStrategyRegistry",
+    functionName: "registerInitializationStrategy",
+    targetKey: "confidentialInitializationStrategyRegistry",
+    argumentKeys: ["confidentialLaunchInitializationStrategy"],
+  }),
+  Object.freeze({
+    key: "confidentialStrategyRegistryFinalization",
+    label: "confidential strategy-registry finalization",
+    contractName: "ConfidentialInitializationStrategyRegistry",
+    functionName: "finalize",
+    targetKey: "confidentialInitializationStrategyRegistry",
+    argumentKeys: [],
   }),
 ]);
 
@@ -120,6 +176,18 @@ function expectedConstructorArgs(contracts: JsonRecord): Readonly<Record<string,
   const confidentialFactory = asRecord(
     contracts.confidentialFactory,
     "contracts.confidentialFactory",
+  );
+  const strategyRegistry = asRecord(
+    contracts.confidentialInitializationStrategyRegistry,
+    "contracts.confidentialInitializationStrategyRegistry",
+  );
+  const poolDeployer = asRecord(
+    contracts.confidentialPoolDeployer,
+    "contracts.confidentialPoolDeployer",
+  );
+  const launchStrategy = asRecord(
+    contracts.confidentialLaunchInitializationStrategy,
+    "contracts.confidentialLaunchInitializationStrategy",
   );
   const confidentialRouter = asRecord(
     contracts.confidentialBestExecutionRouter,
@@ -147,17 +215,75 @@ function expectedConstructorArgs(contracts: JsonRecord): Readonly<Record<string,
   ) {
     throw new Error("confidential factory approved private-token codehashes are invalid");
   }
+  const reviewedStrategyCodehashes = asArray(
+    strategyRegistry.reviewedStrategyCodehashes,
+    "contracts.confidentialInitializationStrategyRegistry.reviewedStrategyCodehashes",
+  );
+  if (
+    reviewedStrategyCodehashes.length === 0 ||
+    reviewedStrategyCodehashes.some(
+      (value) => typeof value !== "string" || !HASH_PATTERN.test(value),
+    )
+  ) {
+    throw new Error("confidential initialization-strategy codehashes are invalid");
+  }
+  const strategyRegistryRuntimeCodehash = requiredString(
+    strategyRegistry,
+    "runtimeCodehash",
+    "contracts.confidentialInitializationStrategyRegistry",
+  );
+  const poolDeployerRuntimeCodehash = requiredString(
+    poolDeployer,
+    "runtimeCodehash",
+    "contracts.confidentialPoolDeployer",
+  );
+  if (
+    !HASH_PATTERN.test(strategyRegistryRuntimeCodehash) ||
+    !HASH_PATTERN.test(poolDeployerRuntimeCodehash)
+  ) {
+    throw new Error("confidential dependency runtime codehashes are invalid");
+  }
+  const strategyRegistryAddress = requireAddress(
+    strategyRegistry,
+    "address",
+    "contracts.confidentialInitializationStrategyRegistry",
+  );
+  const poolDeployerAddress = requireAddress(
+    poolDeployer,
+    "address",
+    "contracts.confidentialPoolDeployer",
+  );
+  const launchStrategyAddress = requireAddress(
+    launchStrategy,
+    "address",
+    "contracts.confidentialLaunchInitializationStrategy",
+  );
 
   return Object.freeze({
     feeVault: [requireAddress(feeVault, "beneficiary", "contracts.feeVault")],
     confidentialLpTokenFactory: [],
+    confidentialInitializationStrategyRegistry: [reviewedStrategyCodehashes],
+    confidentialPoolDeployer: [],
     confidentialFactory: [
       feeVaultAddress,
       requireAddress(lpFactory, "address", "contracts.confidentialLpTokenFactory"),
+      poolDeployerAddress,
+      poolDeployerRuntimeCodehash,
       reviewedCodehashes,
+      strategyRegistryAddress,
+      strategyRegistryRuntimeCodehash,
+    ],
+    confidentialLaunchInitializationStrategy: [
+      confidentialFactoryAddress,
+      strategyRegistryAddress,
+      requireAddress(
+        launchStrategy,
+        "launchAuthority",
+        "contracts.confidentialLaunchInitializationStrategy",
+      ),
     ],
     confidentialBestExecutionRouter: [confidentialFactoryAddress],
-    launchpadMigrator: [confidentialFactoryAddress],
+    launchpadMigrator: [confidentialFactoryAddress, launchStrategyAddress],
     publicFactory: [feeVaultAddress],
     publicQuoter: [publicFactoryAddress],
     publicRouter: [publicFactoryAddress],
@@ -175,11 +301,12 @@ async function readState(
   artifact: DeploymentArtifact,
   address: string,
   functionName: string,
+  args: readonly unknown[] = [],
 ): Promise<unknown> {
   const contractInterface = new Interface(artifact.abi);
   const result = await provider.call({
     to: address,
-    data: contractInterface.encodeFunctionData(functionName),
+    data: contractInterface.encodeFunctionData(functionName, args),
   });
   return contractInterface.decodeFunctionResult(functionName, result)[0];
 }
@@ -190,9 +317,14 @@ export async function verifyDeploymentTransactionEvidence(
   readArtifact: ArtifactReader = (contractName) => artifacts.readArtifact(contractName),
 ): Promise<void> {
   const contracts = asRecord(record.contracts, "deployment record contracts");
+  const addressOf = (key: string): string =>
+    requireAddress(asRecord(contracts[key], `contracts.${key}`), "address", `contracts.${key}`);
   const transactions = asArray(record.transactions, "deployment record transactions")
     .map((entry, index) => asRecord(entry, `deployment record transactions[${index}]`));
-  const expectedCount = CANONICAL_TESTNET_DEPLOYMENTS.length + BINDINGS.length;
+  const directDeploymentCount = CANONICAL_TESTNET_DEPLOYMENTS.filter(
+    (deployment) => deployment.kind !== "strategy-constructor-child",
+  ).length;
+  const expectedCount = directDeploymentCount + BINDINGS.length;
   if (transactions.length !== expectedCount) {
     throw new Error(`deployment record must contain exactly ${expectedCount} canonical transactions`);
   }
@@ -209,6 +341,7 @@ export async function verifyDeploymentTransactionEvidence(
   }
 
   const canonicalArgs = expectedConstructorArgs(contracts);
+  let deploymentAuthority: string | null = null;
   for (const deployment of CANONICAL_TESTNET_DEPLOYMENTS) {
     const label = `contracts.${deployment.key}`;
     const contract = asRecord(contracts[deployment.key], label);
@@ -217,6 +350,76 @@ export async function verifyDeploymentTransactionEvidence(
     const gasUsed = requireGas(contract, "gasUsed", label);
     const args = asArray(contract.constructorArgs, `${label}.constructorArgs`);
     assertJsonEqual(args, canonicalArgs[deployment.key], `${label}.constructorArgs`);
+
+    if (deployment.kind === "strategy-constructor-child") {
+      if (!deployment.parentKey) {
+        throw new Error(`${label} lacks a constructor-child parent key`);
+      }
+      if (contract.creationKind !== deployment.kind) {
+        throw new Error(`${label} creation kind is invalid`);
+      }
+      const parent = asRecord(
+        contracts[deployment.parentKey],
+        `contracts.${deployment.parentKey}`,
+      );
+      const parentAddress = requireAddress(
+        parent,
+        "address",
+        `contracts.${deployment.parentKey}`,
+      );
+      const parentHash = requireHash(
+        parent,
+        "deploymentTx",
+        `contracts.${deployment.parentKey}`,
+      );
+      if (
+        !sameAddress(
+          requireAddress(contract, "creationParent", label),
+          parentAddress,
+        ) ||
+        !sameHex(hash, parentHash)
+      ) {
+        throw new Error(`${label} is not bound to its reviewed parent deployment`);
+      }
+      const [receipt, childArtifact, childCode, strategyArtifact] = await Promise.all([
+        provider.getTransactionReceipt(parentHash),
+        readArtifact(deployment.contractName),
+        provider.getCode(address),
+        readArtifact("ConfidentialLaunchInitializationStrategy"),
+      ]);
+      if (!receipt || BigInt(receipt.status ?? 0) !== 1n || childCode === "0x") {
+        throw new Error(`${label} constructor-child deployment is unavailable`);
+      }
+      const strategyInterface = new Interface(strategyArtifact.abi);
+      const configured = receipt.logs.flatMap((log) => {
+        if (!sameAddress(log.address, parentAddress)) return [];
+        try {
+          const parsed = strategyInterface.parseLog({
+            topics: [...log.topics],
+            data: log.data,
+          });
+          return parsed?.name === "MigratorConfigured" ? [parsed] : [];
+        } catch {
+          return [];
+        }
+      }).filter((event) =>
+        sameAddress(String(event.args.migrator), address) &&
+        sameHex(String(event.args.runtimeCodehash), keccak256(childCode))
+      );
+      if (configured.length !== 1) {
+        throw new Error(`${label} lacks a unique constructor-child configuration event`);
+      }
+      if (
+        childArtifact.bytecode.length === 0 ||
+        !sameHex(
+          requiredString(contract, "runtimeCodehash", label),
+          keccak256(childCode),
+        )
+      ) {
+        throw new Error(`${label} runtime provenance is invalid`);
+      }
+      continue;
+    }
 
     const transactionRecord = transactionByHash.get(hash.toLowerCase());
     if (!transactionRecord || transactionRecord.label !== deployment.label) {
@@ -237,6 +440,11 @@ export async function verifyDeploymentTransactionEvidence(
     if (!transaction || !receipt || BigInt(receipt.status ?? 0) !== 1n) {
       throw new Error(`${label} does not have a successful mined transaction and receipt`);
     }
+    const transactionSender = getAddress(transaction.from);
+    if (deploymentAuthority === null) deploymentAuthority = transactionSender;
+    if (transactionSender !== deploymentAuthority) {
+      throw new Error(`${label} was not sent by the canonical deployment authority`);
+    }
     if (transaction.to !== null || !receipt.contractAddress || !sameAddress(receipt.contractAddress, address)) {
       throw new Error(`${label} receipt does not prove deployment at the recorded address`);
     }
@@ -255,6 +463,12 @@ export async function verifyDeploymentTransactionEvidence(
     const hash = requireHash(contract, "transaction", label);
     const gasUsed = requireGas(contract, "gasUsed", label);
     const args = asArray(contract.args, `${label}.args`);
+    const canonicalTarget = addressOf(binding.targetKey);
+    const canonicalArguments = binding.argumentKeys.map(addressOf);
+    if (!sameAddress(target, canonicalTarget)) {
+      throw new Error(`${label} target does not match the canonical deployment`);
+    }
+    assertJsonEqual(args, canonicalArguments, `${label}.args`);
     if (contract.function !== binding.functionName) {
       throw new Error(`${label} function does not match the canonical binding`);
     }
@@ -274,12 +488,21 @@ export async function verifyDeploymentTransactionEvidence(
     if (!transaction || !receipt || BigInt(receipt.status ?? 0) !== 1n) {
       throw new Error(`${label} does not have a successful mined transaction and receipt`);
     }
-    if (!transaction.to || !sameAddress(transaction.to, target) || receipt.contractAddress !== null) {
+    if (
+      deploymentAuthority === null ||
+      getAddress(transaction.from) !== deploymentAuthority
+    ) {
+      throw new Error(`${label} was not sent by the canonical deployment authority`);
+    }
+    if (!transaction.to || !sameAddress(transaction.to, canonicalTarget) || receipt.contractAddress !== null) {
       throw new Error(`${label} receipt does not prove the recorded binding target`);
     }
     if (receipt.gasUsed !== gasUsed) throw new Error(`${label} gas usage does not match its receipt`);
     const contractInterface = new Interface(artifact.abi);
-    const expectedData = contractInterface.encodeFunctionData(binding.functionName, args);
+    const expectedData = contractInterface.encodeFunctionData(
+      binding.functionName,
+      canonicalArguments,
+    );
     if (!sameHex(transaction.data, expectedData)) {
       throw new Error(`${label} calldata does not match the canonical binding`);
     }
@@ -293,8 +516,6 @@ export async function verifyDeploymentTransactionEvidence(
     artifactsByName.set(name, artifact);
     return artifact;
   };
-  const addressOf = (key: string): string =>
-    requireAddress(asRecord(contracts[key], `contracts.${key}`), "address", `contracts.${key}`);
   const assertAddressState = async (
     contractName: string,
     contractKey: string,
@@ -315,6 +536,13 @@ export async function verifyDeploymentTransactionEvidence(
   const feeVaultAddress = addressOf("feeVault");
   const confidentialFactoryAddress = addressOf("confidentialFactory");
   const lpFactoryAddress = addressOf("confidentialLpTokenFactory");
+  const strategyRegistryAddress = addressOf(
+    "confidentialInitializationStrategyRegistry",
+  );
+  const poolDeployerAddress = addressOf("confidentialPoolDeployer");
+  const launchStrategyAddress = addressOf(
+    "confidentialLaunchInitializationStrategy",
+  );
   const confidentialRouterAddress = addressOf("confidentialBestExecutionRouter");
   const migratorAddress = addressOf("launchpadMigrator");
   const publicFactoryAddress = addressOf("publicFactory");
@@ -327,10 +555,42 @@ export async function verifyDeploymentTransactionEvidence(
   await assertAddressState("CipherDEXFeeVault", "feeVault", "publicFactory", publicFactoryAddress);
   await assertAddressState("ConfidentialCPMMFactory", "confidentialFactory", "feeVault", feeVaultAddress);
   await assertAddressState("ConfidentialCPMMFactory", "confidentialFactory", "lpTokenFactory", lpFactoryAddress);
+  await assertAddressState("ConfidentialCPMMFactory", "confidentialFactory", "poolDeployer", poolDeployerAddress);
+  await assertAddressState(
+    "ConfidentialCPMMFactory",
+    "confidentialFactory",
+    "initializationStrategyRegistry",
+    strategyRegistryAddress,
+  );
   await assertAddressState("ConfidentialCPMMFactory", "confidentialFactory", "bestExecutionRouter", confidentialRouterAddress);
-  await assertAddressState("ConfidentialCPMMFactory", "confidentialFactory", "bootstrapAdapter", migratorAddress);
   await assertAddressState("ConfidentialBestExecutionRouter", "confidentialBestExecutionRouter", "factory", confidentialFactoryAddress);
   await assertAddressState("ConfidentialLaunchpadMigrator", "launchpadMigrator", "factory", confidentialFactoryAddress);
+  await assertAddressState("ConfidentialLaunchpadMigrator", "launchpadMigrator", "initializationStrategy", launchStrategyAddress);
+  await assertAddressState("ConfidentialCPMMDeployer", "confidentialPoolDeployer", "factory", confidentialFactoryAddress);
+  await assertAddressState(
+    "ConfidentialInitializationStrategyRegistry",
+    "confidentialInitializationStrategyRegistry",
+    "factory",
+    confidentialFactoryAddress,
+  );
+  await assertAddressState(
+    "ConfidentialLaunchInitializationStrategy",
+    "confidentialLaunchInitializationStrategy",
+    "factory",
+    confidentialFactoryAddress,
+  );
+  await assertAddressState(
+    "ConfidentialLaunchInitializationStrategy",
+    "confidentialLaunchInitializationStrategy",
+    "strategyRegistry",
+    strategyRegistryAddress,
+  );
+  await assertAddressState(
+    "ConfidentialLaunchInitializationStrategy",
+    "confidentialLaunchInitializationStrategy",
+    "migrator",
+    migratorAddress,
+  );
   await assertAddressState("PublicCPMMFactory", "publicFactory", "feeVault", feeVaultAddress);
   await assertAddressState("PublicCPMMQuoter", "publicQuoter", "factory", publicFactoryAddress);
   await assertAddressState("PublicCPMMRouter", "publicRouter", "factory", publicFactoryAddress);
@@ -341,7 +601,32 @@ export async function verifyDeploymentTransactionEvidence(
     confidentialRouterAddress,
     "PROTOCOL_VERSION",
   );
-  if (BigInt(String(routerVersion)) !== 1n) {
-    throw new Error("confidential best-execution router protocol version is not v1");
+  if (BigInt(String(routerVersion)) !== 2n) {
+    throw new Error("confidential best-execution router protocol version is not v2");
+  }
+  const [registryFinalized, strategyRegistered, strategyClass] = await Promise.all([
+    readState(
+      provider,
+      await artifactFor("ConfidentialInitializationStrategyRegistry"),
+      strategyRegistryAddress,
+      "finalized",
+    ),
+    readState(
+      provider,
+      await artifactFor("ConfidentialInitializationStrategyRegistry"),
+      strategyRegistryAddress,
+      "isRegisteredStrategy",
+      [launchStrategyAddress],
+    ),
+    readState(
+      provider,
+      await artifactFor("ConfidentialInitializationStrategyRegistry"),
+      strategyRegistryAddress,
+      "initializationStrategyClass",
+      [launchStrategyAddress],
+    ),
+  ]);
+  if (registryFinalized !== true || strategyRegistered !== true || BigInt(String(strategyClass)) !== 1n) {
+    throw new Error("confidential initialization-strategy registry is not canonically finalized");
   }
 }

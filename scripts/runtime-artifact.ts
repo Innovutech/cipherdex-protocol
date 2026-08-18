@@ -1,5 +1,6 @@
 import { keccak256, toUtf8Bytes } from "ethers";
-import { artifacts, ethers as hardhatEthers } from "hardhat";
+import { readFile } from "node:fs/promises";
+import { artifacts, ethers as hardhatEthers } from "../hardhat/runtime.js";
 
 type BytecodeReference = Readonly<{ start: number; length: number }>;
 type ImmutableReferenceMap = Readonly<Record<string, readonly BytecodeReference[]>>;
@@ -13,6 +14,29 @@ type DeployedBytecodeOutput = Readonly<{
   linkReferences?: LinkReferenceMap;
 }>;
 
+type HardhatBuildInfo = Readonly<{
+  userSourceNameMap?: Readonly<Record<string, string>>;
+  input: Readonly<{
+    settings: Readonly<{
+      evmVersion?: unknown;
+      metadata?: unknown;
+      optimizer?: Readonly<{ enabled?: unknown; runs?: unknown }>;
+      viaIR?: unknown;
+      [key: string]: unknown;
+    }>;
+  }>;
+  solcVersion: string;
+  solcLongVersion: string;
+}>;
+
+type HardhatBuildOutput = Readonly<{
+  output: Readonly<{
+    contracts?: Readonly<
+      Record<string, Readonly<Record<string, Readonly<{ evm?: { deployedBytecode?: unknown } }>>>>
+    >;
+  }>;
+}>;
+
 export type RuntimeArtifactProvenance = Readonly<{
   contractName: string;
   sourceName: string;
@@ -20,6 +44,7 @@ export type RuntimeArtifactProvenance = Readonly<{
   compilerInputHash: string;
   solcVersion: string;
   solcLongVersion: string;
+  immutableReferenceCount: number;
   settings: Readonly<{
     evmVersion: string | null;
     viaIR: boolean;
@@ -35,6 +60,13 @@ export type RuntimeCodeProvider = Readonly<{
 function hasReferences(references: LinkReferenceMap | undefined): boolean {
   return Object.values(references ?? {}).some((byName) =>
     Object.values(byName).some((entries) => entries.length > 0),
+  );
+}
+
+function countImmutableReferences(references: ImmutableReferenceMap | undefined): number {
+  return Object.values(references ?? {}).reduce(
+    (total, entries) => total + entries.length,
+    0,
   );
 }
 
@@ -68,11 +100,26 @@ export async function verifyDeployedRuntimeArtifactWithProvenance(
 ): Promise<RuntimeArtifactProvenance> {
   const artifact = await artifacts.readArtifact(contractName);
   const fullyQualifiedName = `${artifact.sourceName}:${artifact.contractName}`;
-  const buildInfo = await artifacts.getBuildInfo(fullyQualifiedName);
-  const deployedBytecode = buildInfo?.output.contracts?.[artifact.sourceName]?.[
+  const buildInfoId = await artifacts.getBuildInfoId(fullyQualifiedName);
+  const buildInfoPath = buildInfoId
+    ? await artifacts.getBuildInfoPath(buildInfoId)
+    : undefined;
+  const buildOutputPath = buildInfoId
+    ? await artifacts.getBuildInfoOutputPath(buildInfoId)
+    : undefined;
+  if (!buildInfoPath || !buildOutputPath) {
+    throw new Error(`${contractName} build provenance is unavailable`);
+  }
+  const [buildInfo, buildOutput] = await Promise.all([
+    readFile(buildInfoPath, "utf8").then((raw) => JSON.parse(raw) as HardhatBuildInfo),
+    readFile(buildOutputPath, "utf8").then((raw) => JSON.parse(raw) as HardhatBuildOutput),
+  ]);
+  const compilerSourceName = buildInfo.userSourceNameMap?.[artifact.sourceName] ??
+    artifact.sourceName;
+  const deployedBytecode = buildOutput.output.contracts?.[compilerSourceName]?.[
     artifact.contractName
   ]?.evm?.deployedBytecode as DeployedBytecodeOutput | undefined;
-  if (!buildInfo || !deployedBytecode || !/^[0-9a-fA-F]+$/.test(deployedBytecode.object)) {
+  if (!deployedBytecode || !/^[0-9a-fA-F]+$/.test(deployedBytecode.object)) {
     throw new Error(`${contractName} deployed artifact is unavailable`);
   }
   if (hasReferences(deployedBytecode.linkReferences)) {
@@ -106,6 +153,9 @@ export async function verifyDeployedRuntimeArtifactWithProvenance(
     ),
     solcVersion: buildInfo.solcVersion,
     solcLongVersion: buildInfo.solcLongVersion,
+    immutableReferenceCount: countImmutableReferences(
+      deployedBytecode.immutableReferences,
+    ),
     settings: Object.freeze({
       evmVersion: typeof settings.evmVersion === "string" ? settings.evmVersion : null,
       viaIR: settings.viaIR === true,

@@ -1,116 +1,132 @@
-# Confidential Launchpad Bootstrap
+# Confidential Launch-Protected Bootstrap
 
 ## Purpose
 
-`ConfidentialLaunchpadMigrator` atomically moves a creator's final private
-bonding-curve liquidity into the one canonical `ConfidentialCPMM` for the ordered
-pair, approved fee tier, privacy mode, and protocol version. It has no owner,
-withdrawal path, fee manager, token rescue, or alternate pool namespace.
+CipherDEX separates the ordinary permissionless confidential pool from a
+launch-protected pool. Canonical uniqueness applies to the complete key:
 
-The confidential factory binds one bootstrap adapter during deployment. That
-adapter can resolve or create a canonical pool and call its one initialization
-hook, but it cannot withdraw funds, change fees, replace the fee vault, or mutate
-an initialized pool.
+`ordered token pair + fee tier + privacy mode + protocol version + initialization strategy`
 
-## Canonical behavior
+The standard strategy is `address(0)`. A protected pool uses one reviewed,
+registry-authenticated initialization strategy. The two pools are distinct
+legitimate markets and may coexist for the same pair and fee tier. No creator ID
+or caller-selected pool address is part of the key.
 
-- If no canonical pool exists, factory creation and bootstrap occur in the same
-  outer migration transaction.
-- If the canonical pool exists and is empty, migration reuses it.
-- If it is initialized, migration rejects before MPC validation or token pulls.
-- No creator-specific market is created as a fallback.
-- A failed migration rolls back pool creation, encrypted-input consumption,
-  token transfers, reserve state, LP state, and events.
+## Components and authority
 
-This is a fail-closed safety boundary against front-running and malicious
-pre-initialization: an attacker cannot redirect creator assets, alter the signed
-launch terms, or force an alternate market. It is not a liveness reservation.
-A permissionless canonical market initialized first, whether legitimate or
-adversarial, is not overwritten; the launch rejects before MPC work or token
-movement and must resolve that product-level conflict explicitly.
+- `ConfidentialInitializationStrategyRegistry` admits at most two nonzero
+  strategy classes by exact reviewed runtime codehash and interface. It binds to
+  one factory and is permanently finalized before router binding.
+- `ConfidentialLaunchInitializationStrategy` stores launch commitments and can
+  authorize first initialization only. It receives no tokens, has no swap
+  callback and has no fee, reserve, LP, rescue or withdrawal authority.
+- `ConfidentialLaunchpadMigrator` performs exact encrypted escrow and atomic
+  bootstrap. Its strategy pins the migrator address and runtime codehash before
+  registration.
+- `ConfidentialCPMMFactory` authenticates the strategy, migrator and complete
+  pool key before invoking bootstrap.
 
-CipherDEX does not give a launch creator a privileged right to an otherwise
-permissionless canonical pair. A reservation or commit/reveal mechanism would
-need an explicit expiry, anti-squatting policy, and authority capable of deciding
-which creator owns a pair. That governance surface is not justified for this
-testnet protocol. Atomic canonical resolution plus rejection preserves custody
-and market uniqueness without introducing such an administrator.
+There is no factory-global bootstrap adapter. Every registered strategy proves
+its own reciprocal factory/migrator binding and pinned migrator codehash. This is
+what permits two reviewed strategy classes to use independent migrators without
+creating a second authority path.
 
-## Atomic sequence
+All configuration calls are one-time. Supporting a new strategy implementation
+or changed economics requires a reviewed new deployment/version rather than
+mutating an existing pool.
 
-1. The creator determines canonical token order, seed amounts, fee tier, and an
-   acceptable normalized price interval.
-2. The creator grants explicit encrypted allowances to the migrator on both
+## Commitment lifecycle
+
+1. The launch creator and fixed launch authority agree the launch ID, canonical
+   pair/decimals, approved fee tier, chain, authorization deadline and migration
+   deadline.
+2. Both sign the `LaunchCommitment` EIP-712 digest. Creator and authority must be
+   distinct. Contracts implementing ERC-1271 may authorize without relying on a
+   token `owner()` method.
+3. Anyone may submit both signatures to `commitLaunch`. The strategy verifies
+   every public field, its registry registration, factory/migrator bindings and
+   chain before creating or resolving its empty protected pool.
+4. One active launch may occupy a complete protected key. It may be canceled by
+   creator or authority, or marked expired by anyone after its deadline.
+5. A canceled or expired empty commitment may be safely superseded by another
+   fully dual-authorized launch. The empty pool remains protected and never
+   becomes permissionlessly initializable. A completed pool cannot be
+   superseded.
+
+The launch commitment exists before the final price or migration amounts are
+known. This prevents an unrelated account from taking the protected pool's first
+initialization slot while leaving the ordinary standard pool available.
+
+## Atomic graduation
+
+1. The creator grants exact encrypted allowances to the migrator on both
    `PrivateERC20` tokens.
-3. The COTI SDK signs each encrypted input for the exact migrator selector.
-4. The creator signs EIP-712 `Migration` data binding the creator, chain,
-   migrator, pair, decimals, fee tier, deadline, LP disposition, and an ordered
-   hash of all five encrypted-input commitments.
-5. The migrator verifies EIP-712 authorization, resolves the canonical pool,
-   validates and consumes MPC inputs, and pulls exact private amounts into its
-   transaction-scoped escrow through `transferFromGT`.
-6. The migrator grants the canonical pool exact encrypted allowances for both
-   escrowed amounts, then calls the factory bootstrap hook.
-7. The pool checks positive amounts, empty logical reserves, encrypted price
-   bounds, minimum shares and LP disposition, then pulls exact balance deltas
-   from the migrator before committing reserve/share state.
+2. The COTI SDK signs five encrypted migration inputs for the exact migrator and
+   exact migration selector.
+3. The creator signs the separate `Migration` EIP-712 value binding creator,
+   chain, migrator, protected pool, launch ID/commitment hash, canonical pair,
+   decimals, fee, deadline, LP disposition and ordered encrypted-input hashes.
+4. The migrator verifies and consumes the authorization, validates the protected
+   pool against the strategy commitment, validates every ciphertext, and pulls
+   exact private amounts into transaction-scoped escrow.
+5. The migrator grants exact encrypted allowances to the protected pool and asks
+   the factory to bootstrap it.
+6. The factory calls the strategy's factory-only one-shot authorization. It
+   verifies migrator caller/codehash, launch status, pool, creator, commitment
+   hash and deadline, then marks the launch completed inside the same transaction.
+7. The pool validates empty logical reserves, positive arbitrary-ratio amounts,
+   encrypted price bounds, minimum shares, LP disposition and exact token balance
+   deltas before committing state.
 
-Compatible transfers and pool accounting are atomic. The migrator verifies that
-its post-bootstrap balances return to their pre-escrow baselines. Unsolicited raw
-token balances do not enter logical reserves, affect price, become LP claims or
-block initialization of a precomputable pool address.
+Failure at any stage reverts launch consumption, escrow, allowances, pool state,
+LP state and events together. Unsolicited token balances are excluded from
+logical reserves and cannot alter initialization price or LP claims.
 
-## Price and LP conventions
+## Post-initialization behavior
 
-`priceX18` is normalized token1 per normalized token0:
+After bootstrap the protected pool is an ordinary permissionless confidential
+CPMM: anyone may swap, add proportional liquidity or remove owned shares. The
+strategy cannot initialize again or influence swaps, fees, reserves, LP locks or
+collection. Pool metadata retains its nonzero strategy so discovery can
+distinguish it from the standard pool.
 
-`normalizedAmount1 * 1e18 / normalizedAmount0`
+A true full LP exit clears current reserve/share state but does not erase launch
+history. `protectedInitializationCompleted` remains true, allowing ordinary
+permissionless liquidity to re-seed the market while permanently preventing the
+consumed launch strategy from bootstrapping it again.
 
-The inclusive `[minPriceX18,maxPriceX18]` bounds remain encrypted. Initial
-shares equal the smaller normalized deposit, so any positive launch ratio is
-valid while the first LP still owns 100% of issued shares.
+Initial shares equal the smaller normalized deposit, allowing any positive final
+launch ratio while giving the first LP all issued shares. The atomic public LP
+disposition is:
 
-LP disposition is part of signed public context:
-
-- `CREATOR_HELD`: mint private LP shares to the creator;
-- `TIMED_LOCK`: keep encrypted shares in a pool lock until the public unlock time;
-- `PERMANENT_LOCK`: keep encrypted shares permanently inaccessible.
+- `CREATOR_HELD`: private LP shares are minted to the creator;
+- `TIMED_LOCK`: encrypted shares remain pool-locked until the public unlock time;
+- `PERMANENT_LOCK`: encrypted shares are irreversibly inaccessible.
 
 No administrator can release a permanent lock.
 
-## Client requirements
+## SDK and discovery
 
-The creator authorizes only the migrator. The pool's allowance is created by the
-migrator from its transaction-scoped escrow and is rolled back with the entire
-migration on failure. Clients must use the official COTI SDK to prepare two
-encrypted creator-to-migrator approvals and five encrypted migration inputs. The
-SDK exports the migrator ABI plus
-`LAUNCHPAD_MIGRATOR_EIP712_DOMAIN` and
-`LAUNCHPAD_MIGRATION_EIP712_TYPES`.
+Use `buildConfidentialLaunchCommitment` to canonicalize the signed value and
+`LAUNCH_COMMITMENT_EIP712_TYPES` to produce both signatures. Then use
+`buildConfidentialLaunchCommitCall` to snapshot immutable calldata. Migration
+inputs use `LAUNCHPAD_MIGRATION_EIP712_TYPES` and the official COTI SDK.
 
-Input ciphertexts, signatures, plaintext amounts, bounds, AES keys, and decrypted
-shares must never be logged. Rejected transactions must be reported with sanitized
-stage/error metadata only.
+Discovery schema version 6 exposes only public identity/configuration:
+initialization strategy, strategy class, standard versus launch-protected class,
+initialized state, fee tier and protocol/privacy versions. It does not expose
+private seed amounts, reserves, LP supply, price bounds or accrued fees. Empty
+committed and expired/canceled protected pools must be excluded from routing
+until `initialized` is true.
 
 ## Testnet proof
 
-`npm run testnet:launchpad` verifies:
-
-- invalid encrypted price bounds roll back canonical creation and token pulls;
-- valid arbitrary-ratio bootstrap initializes the canonical registry entry;
-- factory fee policy and immutable vault are inherited;
-- creator-held shares can be fully exited from the disposable funded pool;
-- replay/pre-initialized attempts are rejected without additional token movement;
-- canonical discovery remains unchanged after rejection;
-- creator allowances and pool balances are returned to zero before evidence is
-  written.
-
-The funded runner intentionally uses creator-held disposition only so every
-private asset can be recovered after the proof. Timed-lock and permanent-lock
-semantics, including released-lock rejection, remain covered by the local unit,
-property and integration suites. The funded runner does not burn or deliberately
-pre-fund a deterministic address because such a donation cannot be recovered and
-would invalidate zero-residue evidence. Unsolicited-donation accounting remains
-covered by contract tests.
+The externally launched `scripts/testnet-launchpad.ts` target deploys a disposable complete strategy stack and
+verifies dual authorization, protected-pool creation, arbitrary-ratio atomic
+bootstrap, replay/preinitialized rejection, canonical provenance, exact cleanup
+and a full creator-held exit followed by an ordinary re-seed and second cleanup
+exit. Local unit/property tests cover cancellation,
+expiry, safe supersession, wrong commitment fields, registration squatting,
+factory-only one-shot authorization, timed locks and permanent locks.
 
 This remains testnet-only and is not a mainnet-readiness or external-audit claim.

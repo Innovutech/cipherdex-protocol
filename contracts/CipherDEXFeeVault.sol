@@ -76,6 +76,11 @@ contract CipherDEXFeeVault {
         address indexed beneficiary,
         uint256 amount
     );
+    event PublicFeeLossRecognized(
+        address indexed token,
+        uint256 previousClaim,
+        uint256 realizableClaim
+    );
     event PublicFeesSweepReceipt(
         address indexed token,
         address indexed beneficiary,
@@ -196,7 +201,16 @@ contract CipherDEXFeeVault {
         uint256 beneficiaryBalanceBefore = publicToken.balanceOf(beneficiary);
         amount = publicFees[token];
         if (amount == 0) revert NothingToSweep();
-        if (vaultBalanceBefore < amount) revert PublicTransferAmountMismatch();
+        if (vaultBalanceBefore < amount) {
+            uint256 previousClaim = amount;
+            amount = vaultBalanceBefore;
+            publicFees[token] = amount;
+            emit PublicFeeLossRecognized(token, previousClaim, amount);
+        }
+        if (amount == 0) {
+            publicFees[token] = 0;
+            return 0;
+        }
         publicFees[token] = 0;
         publicToken.safeTransfer(beneficiary, amount);
         uint256 vaultBalanceAfter = publicToken.balanceOf(address(this));

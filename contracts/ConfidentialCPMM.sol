@@ -25,7 +25,7 @@ import "./CipherDEXFeePolicy.sol";
  * deployment and has not received an external audit.
  */
 contract ConfidentialCPMM is CipherDEXFeePolicy {
-    uint256 public constant PROTOCOL_VERSION = 2;
+    uint256 public constant PROTOCOL_VERSION = 3;
     uint8 public constant PRIVACY_MODE = 1;
     uint256 public constant PRICE_SCALE = 1e18;
     uint32 public constant MIN_CONFIDENTIAL_COLLECTION_SWAPS = 8;
@@ -43,9 +43,11 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
     uint256 public immutable feeBps;
     address public immutable feeVault;
     address public immutable bootstrapper;
+    address public immutable initializationStrategy;
     address public lpToken;
 
     bool public initialized;
+    bool public protectedInitializationCompleted;
 
     // Ciphertext storage is intentionally not exposed through public getters.
     // Reserves are protocol accounting, not raw token-contract balance reads:
@@ -116,6 +118,7 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
     error InvalidSwapRecipient();
     error ResidualAllowance();
     error CanonicalLPTokenRequired();
+    error ProtectedInitializationRequired();
 
     event SwapExecuted(address indexed trader, bool indexed zeroForOne);
     event LiquidityAdded(address indexed provider);
@@ -153,7 +156,9 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         uint8 token0Decimals_,
         uint8 token1Decimals_,
         uint256 feeBps_,
-        address feeVault_
+        address feeVault_,
+        address initializationStrategy_,
+        address bootstrapper_
     ) {
         if (token0_ == address(0) || token1_ == address(0) || token0_ == token1_) {
             revert InvalidTokenPair();
@@ -161,6 +166,7 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         if (token0Decimals_ > 18 || token1Decimals_ > 18) revert InvalidDecimals();
         if (!isApprovedFeeTier(feeBps_)) revert InvalidFee();
         if (feeVault_.code.length == 0) revert InvalidFeeVault();
+        if (bootstrapper_.code.length == 0) revert BootstrapUnauthorized();
         if (!_supportsPrivateToken(token0_) || !_supportsPrivateToken(token1_)) {
             revert UnsupportedPrivateToken();
         }
@@ -175,9 +181,8 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         scale1 = 10 ** (18 - token1Decimals_);
         feeBps = feeBps_;
         feeVault = feeVault_;
-        // When created by the canonical factory this is the factory. Directly
-        // deployed pools deliberately retain the deployer as their bootstrapper.
-        bootstrapper = msg.sender;
+        initializationStrategy = initializationStrategy_;
+        bootstrapper = bootstrapper_;
     }
 
     /**
@@ -427,6 +432,13 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
     ) external nonReentrant returns (ctUint256 memory mintedShares) {
         _requireBeforeDeadline(deadline);
         if (initialized != expectedInitialized) revert UnexpectedInitializationState();
+        if (
+            !initialized &&
+            initializationStrategy != address(0) &&
+            !protectedInitializationCompleted
+        ) {
+            revert ProtectedInitializationRequired();
+        }
         _requireCanonicalLPToken();
         gtUint256 input0 = _validateAndConsume(amount0);
         gtUint256 input1 = _validateAndConsume(amount1);
@@ -642,13 +654,16 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
             maximumPrice
         );
 
-        // Pull from the immutable bootstrap adapter's atomic escrow and verify
+        // Pull from the strategy-bound migrator's atomic escrow and verify
         // exact deltas. Unmanaged balances already sent to this address remain
         // outside accounting and cannot grief canonical initialization.
         _pullPrivateExact(token0, fundingSource, amount0);
         _pullPrivateExact(token1, fundingSource, amount1);
 
         initialized = true;
+        if (initializationStrategy != address(0)) {
+            protectedInitializationCompleted = true;
+        }
         reserve0State = MpcCore.offBoard(amount0);
         reserve1State = MpcCore.offBoard(amount1);
         totalShares = MpcCore.offBoard(minted);

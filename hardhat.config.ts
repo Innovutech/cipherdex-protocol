@@ -1,56 +1,31 @@
-import "@nomicfoundation/hardhat-toolbox";
-import { subtask } from "hardhat/config";
-import {
-  TASK_COMPILE_SOLIDITY_GET_COMPILATION_JOBS,
-  TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD,
-  TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS,
-} from "hardhat/builtin-tasks/task-names";
-import type { HardhatUserConfig } from "hardhat/config";
+import hardhatEthers from "@nomicfoundation/hardhat-ethers";
+import hardhatEthersChaiMatchers from "@nomicfoundation/hardhat-ethers-chai-matchers";
+import hardhatMocha from "@nomicfoundation/hardhat-mocha";
+import hardhatTypechain from "@nomicfoundation/hardhat-typechain";
+import { defineConfig } from "hardhat/config";
+import { createRequire } from "node:module";
+import cipherdexSolidityBuildBoundary from "./hardhat/cipherdex-plugin";
 
-// Use the exact reviewed solc-js package instead of downloading a compiler during
-// compilation. This keeps the build reproducible and avoids an unpinned binary fetch.
-subtask(TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD).setAction(async (args, _hre, runSuper) => {
-  if (args.solcVersion === "0.8.28") {
-    return {
-      compilerPath: require.resolve("solc/soljson.js"),
-      isSolcJs: true,
-      version: "0.8.28",
-      longVersion: "0.8.28+commit.7893614a",
-    };
-  }
-  return runSuper();
-});
+const require = createRequire(import.meta.url);
+const solcPath = require.resolve("solc/soljson.js");
 
-// Interfaces are compiled as dependencies of the concrete roots that import
-// them. Keeping them out of the standalone root list avoids re-running the
-// COTI MPC graph in separate solc-js jobs. Their source and ABI remain part of
-// the concrete compilation inputs and the SDK's stable ABI surface.
-subtask(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS).setAction(async (_args, _hre, runSuper) => {
-  const sourcePaths = await runSuper();
-  return sourcePaths.filter((sourcePath: string) => {
-    const normalized = sourcePath.replaceAll("\\", "/");
-    return !normalized.includes("/contracts/interfaces/");
-  });
-});
-
-// Hardhat creates a compilation job for every file in a connected component,
-// including imported interface files. An interface-only COTI job repeats the
-// full MPC graph and can overflow solc-js memory. Concrete jobs below still
-// include all imported interfaces, so only redundant interface-only jobs are
-// removed here.
-subtask(TASK_COMPILE_SOLIDITY_GET_COMPILATION_JOBS).setAction(async (args, _hre, runSuper) => {
-  const result = await runSuper(args);
+function compilerSettings(runs: number, viaIR = true) {
   return {
-    ...result,
-    jobs: result.jobs.filter((job: { getResolvedFiles: () => Array<{ sourceName: string }> }) =>
-      job.getResolvedFiles().some(
-        ({ sourceName }) =>
-          sourceName.startsWith("contracts/") &&
-          !sourceName.startsWith("contracts/interfaces/")
-      )
-    ),
-  };
-});
+    version: "0.8.28",
+    path: solcPath,
+    settings: {
+      evmVersion: "paris",
+      viaIR,
+      optimizer: {
+        enabled: true,
+        runs,
+      },
+      metadata: {
+        bytecodeHash: "none",
+      },
+    },
+  } as const;
+}
 
 const privateKey = process.env.COTI_TESTNET_PRIVATE_KEY?.trim();
 const accounts = privateKey ? [privateKey] : [];
@@ -59,287 +34,62 @@ if (!Number.isSafeInteger(cotiTestnetGasLimit) || cotiTestnetGasLimit <= 0) {
   throw new Error("COTI_TESTNET_GAS_LIMIT must be a positive safe integer");
 }
 
-const config: HardhatUserConfig = {
-  defaultNetwork: "hardhat",
+export default defineConfig({
+  plugins: [
+    cipherdexSolidityBuildBoundary,
+    hardhatEthers,
+    hardhatEthersChaiMatchers,
+    hardhatMocha,
+    hardhatTypechain,
+  ],
   solidity: {
-    compilers: [
-      {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-    ],
-    // Keep large COTI MPC graphs in separate solc-js jobs. The one-job graph
-    // can exhaust solc-js memory; the one-step optimizer differences preserve
-    // the same compiler, target, IR mode, and optimization policy while making
-    // the split deterministic.
+    compilers: [compilerSettings(200)],
     overrides: {
-      "contracts/ConfidentialCPMM.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 201,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/ConfidentialCPMMFactory.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 202,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/ConfidentialLaunchpadMigrator.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 203,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/ConfidentialBestExecutionRouter.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 211,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/PrivateLPToken.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 204,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/PrivateLPTokenFactory.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 205,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/PublicCPMM.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: false,
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/PublicCPMMFactory.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: false,
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/PublicCPMMQuoter.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: false,
-          optimizer: {
-            enabled: true,
-            runs: 206,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/PublicCPMMRouter.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: false,
-          optimizer: {
-            enabled: true,
-            runs: 207,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/interfaces/IPublicCPMM.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: false,
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/interfaces/IPublicCPMMFactory.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: false,
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/mocks/MockERC20.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: false,
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/mocks/MockTokenMetadata.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: false,
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/mocks/MpcQuoteCallProbe.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 208,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/mocks/MpcBestExecutionPoolProbe.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 209,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
-      "contracts/mocks/MpcBestExecutionRouterProbe.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "paris",
-          viaIR: true,
-          optimizer: {
-            enabled: true,
-            runs: 210,
-          },
-          metadata: {
-            bytecodeHash: "none",
-          },
-        },
-      },
+      "contracts/ConfidentialCPMM.sol": compilerSettings(201),
+      "contracts/ConfidentialCPMMFactory.sol": compilerSettings(1),
+      "contracts/ConfidentialLaunchpadMigrator.sol": compilerSettings(203),
+      "contracts/ConfidentialCPMMDeployer.sol": compilerSettings(1),
+      "contracts/ConfidentialLaunchInitializationStrategy.sol": compilerSettings(1),
+      "contracts/ConfidentialInitializationStrategyRegistry.sol": compilerSettings(1),
+      "contracts/ConfidentialBestExecutionRouter.sol": compilerSettings(211),
+      "contracts/PrivateLPToken.sol": compilerSettings(204),
+      "contracts/PrivateLPTokenFactory.sol": compilerSettings(205),
+      "contracts/PublicCPMM.sol": compilerSettings(200, false),
+      "contracts/PublicCPMMFactory.sol": compilerSettings(200, false),
+      "contracts/PublicCPMMQuoter.sol": compilerSettings(206, false),
+      "contracts/PublicCPMMRouter.sol": compilerSettings(207, false),
+      "contracts/interfaces/IPublicCPMM.sol": compilerSettings(200, false),
+      "contracts/interfaces/IPublicCPMMFactory.sol": compilerSettings(200, false),
+      "contracts/mocks/MockERC20.sol": compilerSettings(200, false),
+      "contracts/mocks/MockTokenMetadata.sol": compilerSettings(200, false),
+      "contracts/mocks/MpcQuoteCallProbe.sol": compilerSettings(208),
+      "contracts/mocks/MpcBestExecutionPoolProbe.sol": compilerSettings(209),
+      "contracts/mocks/MpcBestExecutionRouterProbe.sol": compilerSettings(210),
     },
   },
   networks: {
-    hardhat: {
+    hardhatMainnet: {
+      type: "edr-simulated",
+      chainType: "l1",
       chainId: 31337,
     },
     cotiTestnet: {
+      type: "http",
+      chainType: "generic",
       url: process.env.COTI_TESTNET_RPC_URL ?? "https://testnet.coti.io/rpc",
       chainId: 7082400,
       accounts,
-      // COTI testnet intermittently rejects Hardhat's pending-block lookup while
-      // auto-populating transactions. The explicit cap avoids that unsupported
-      // lookup; receipts still charge and report only actual gas consumed.
+      // COTI testnet intermittently rejects pending-block lookups while
+      // populating transactions. Receipts still report actual gas consumed.
       gas: cotiTestnetGasLimit,
     },
   },
-  mocha: {
-    timeout: 120_000,
+  test: {
+    mocha: {
+      timeout: 120_000,
+    },
   },
-};
-
-export default config;
+  typechain: {
+    outDir: "typechain-types",
+  },
+});

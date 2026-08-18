@@ -24,8 +24,10 @@ interface IConfidentialCPMM {
     function PROTOCOL_FEE_SHARE_NUMERATOR() external view returns (uint256);
     function PROTOCOL_FEE_SHARE_DENOMINATOR() external view returns (uint256);
     function bootstrapper() external view returns (address);
+    function initializationStrategy() external view returns (address);
     function lpToken() external view returns (address);
     function initialized() external view returns (bool);
+    function protectedInitializationCompleted() external view returns (bool);
     function protocolFeeSwapCount0() external view returns (uint32);
     function protocolFeeSwapCount1() external view returns (uint32);
     function protocolFeeWindowStart0() external view returns (uint64);

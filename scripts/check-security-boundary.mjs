@@ -79,6 +79,17 @@ for (const forbidden of [
   }
 }
 
+for (const fragment of [
+  "bool public protectedInitializationCompleted",
+  "!protectedInitializationCompleted",
+  "protectedInitializationCompleted = true",
+  "initialized = false",
+]) {
+  if (!confidentialSource.includes(fragment)) {
+    throw new Error("Confidential protected-pool lifecycle cannot distinguish first bootstrap from re-seeding");
+  }
+}
+
 function functionBody(source, functionName, sourceLabel = "source") {
   return uniqueFunctionBody(source, functionName, sourceLabel);
 }
@@ -260,6 +271,9 @@ if (!confidentialSource.includes("_supportsPrivateToken(token0_)") ||
 const factorySource = maskSourceCommentsAndLiterals(
   await readFile("contracts/ConfidentialCPMMFactory.sol", "utf8"),
 );
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(factorySource)) {
+  throw new Error("Confidential factory contains an unsafe execution primitive");
+}
 if (
   !factorySource.includes("isApprovedPrivateTokenCodehash[tokenA.codehash]") ||
   !factorySource.includes("isApprovedPrivateTokenCodehash[tokenB.codehash]")
@@ -273,6 +287,121 @@ for (const fragment of [
 ]) {
   if (!factorySource.includes(fragment) && !confidentialSource.includes(fragment)) {
     throw new Error("Confidential LP-token factory provenance is not cryptographically bound");
+  }
+}
+for (const fragment of [
+  "feeBps,\n                PRIVACY_MODE,\n                PROTOCOL_VERSION,\n                initializationStrategy",
+  "poolDeployer.codehash != poolDeployerRuntimeCodehash",
+  "IConfidentialCPMMDeployer(poolDeployer).factory() != address(this)",
+  "_requireRegisteredStrategy(msg.sender)",
+  "IConfidentialCPMM(pool).initialized()",
+  "strategy.authorizeInitialization(",
+  "candidate.initializationStrategy() != initializationStrategy",
+  "initializationStrategyRegistry.codehash !=",
+]) {
+  if (!factorySource.includes(fragment)) {
+    throw new Error("Confidential factory does not enforce the complete protected-pool identity");
+  }
+}
+
+const poolDeployerSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/ConfidentialCPMMDeployer.sol", "utf8"),
+);
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(poolDeployerSource)) {
+  throw new Error("Confidential pool deployer contains an unsafe execution primitive");
+}
+for (const fragment of [
+  "if (msg.sender != factory) revert DeploymentUnauthorized()",
+  "factory != address(0)",
+  "IConfidentialCPMMFactory(factory_).poolDeployer() != address(this)",
+  "salt: key",
+]) {
+  if (!poolDeployerSource.includes(fragment)) {
+    throw new Error("Confidential pool deployer is not one-time factory-bound and key-derived");
+  }
+}
+
+const strategyRegistrySource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/ConfidentialInitializationStrategyRegistry.sol", "utf8"),
+);
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(strategyRegistrySource)) {
+  throw new Error("Initialization-strategy registry contains an unsafe execution primitive");
+}
+for (const fragment of [
+  "MAX_INITIALIZATION_STRATEGIES = 2",
+  "isReviewedInitializationStrategyCodehash[runtimeCodehash]",
+  "candidate.supportsInterface(",
+  "migrator.codehash != migratorRuntimeCodehash",
+  "IConfidentialLaunchpadMigrator(migrator).factory() != factory",
+  "IConfidentialLaunchpadMigrator(migrator).initializationStrategy() !=",
+  "candidate.factoryRegistration() != bytes32(0)",
+  "candidate.bindFactoryRegistration(registration)",
+  "if (finalized) revert InitializationStrategyRegistryAlreadyFinalized()",
+  "strategy.codehash != codehash",
+  "candidate.factoryRegistration() == registration",
+]) {
+  if (!strategyRegistrySource.includes(fragment)) {
+    throw new Error("Initialization-strategy registry omits bounded immutable provenance");
+  }
+}
+for (const fragment of [
+  "strategy.migrator() != msg.sender",
+  "msg.sender.codehash != strategy.migratorRuntimeCodehash()",
+  "candidate.token0Decimals() != decimals0",
+  "candidate.token1Decimals() != decimals1",
+]) {
+  if (!factorySource.includes(fragment)) {
+    throw new Error("Confidential factory does not bind immutable metadata and strategy-specific migrator authority");
+  }
+}
+if (
+  factorySource.includes("bootstrapAdapter") ||
+  factorySource.includes("setBootstrapAdapter")
+) {
+  throw new Error("Confidential factory retains obsolete global migrator authority");
+}
+
+const signatureValidationSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/libraries/SignatureValidation.sol", "utf8"),
+);
+for (const fragment of [
+  "ECDSA.tryRecover(digest, signature)",
+  "IERC1271.isValidSignature",
+  "signer.staticcall(",
+]) {
+  if (!signatureValidationSource.includes(fragment)) {
+    throw new Error("Shared creator-signature validation omits EOA or ERC-1271 support");
+  }
+}
+const launchStrategySource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/ConfidentialLaunchInitializationStrategy.sol", "utf8"),
+);
+for (const source of [launchStrategySource, maskSourceCommentsAndLiterals(
+  await readFile("contracts/ConfidentialLaunchpadMigrator.sol", "utf8"),
+)]) {
+  if (!source.includes("SignatureValidation.isValidSignatureNow(")) {
+    throw new Error("Launch authorization paths do not share EOA/ERC-1271 validation");
+  }
+}
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(launchStrategySource)) {
+  throw new Error("Launch initialization strategy contains an unsafe execution primitive");
+}
+for (const fragment of [
+  "commitment.creator == launchAuthority",
+  "_isValidSignature(\n                commitment.creator",
+  "_isValidSignature(\n                launchAuthority",
+  "canonicalFactory.getOrCreatePoolForCommitment(",
+  "activeLaunchForPoolKey[poolKey]",
+  "CompletedPoolCannotBeSuperseded()",
+  "if (msg.sender != factory) revert InitializationUnauthorized()",
+  "migratorCaller.codehash != migratorRuntimeCodehash",
+  "record.status = LaunchStatus.COMPLETED",
+  "IConfidentialCPMM(pool).initialized()",
+  "commitment.chainId != block.chainid",
+  "commitment.initializationStrategy != address(this)",
+]) {
+  if (!launchStrategySource.includes(fragment)) {
+    throw new Error("Launch strategy omits dual authorization or one-shot pool binding");
   }
 }
 
@@ -329,6 +458,12 @@ if (/\bdelegatecall\b|\bselfdestruct\b/.test(bestExecutionRouterSource)) {
   throw new Error("Confidential best-execution router contains an unsafe execution primitive");
 }
 for (const fragment of [
+  "MAX_CANDIDATES = 3",
+  "MAX_POOL_CLASSES = 3",
+  "CANDIDATE_BITMAP_BITS = 9",
+  "DEFAULT_STANDARD_CANDIDATE_BITMAP",
+  "_populationCount(candidateBitmap) > MAX_CANDIDATES",
+  "canonicalFactory.initializationStrategyAt(",
   "_selectIf(replace, candidateOutput, bestOutput)",
   "MpcCore.setPublic256(index),\n                bestIndex",
   "canonicalFactory.poolKey(",
@@ -392,99 +527,246 @@ if (!acceptsExplicitTransactionHash || acceptsGenericHash) {
 }
 const packageManifest = JSON.parse(await readFile("package.json", "utf8"));
 const freshRunnerSource = await readFile("scripts/run-fresh-hardhat.mjs", "utf8");
-const freshHardhatScripts = new Map([
-  ["testnet:harness", "scripts/testnet-harness.ts --network cotiTestnet"],
-  ["testnet:preflight", "scripts/testnet-preflight.ts --network cotiTestnet"],
-  ["testnet:quote-call-probe", "scripts/testnet-quote-call-probe.ts --network cotiTestnet"],
-  ["testnet:best-execution-feasibility", "scripts/testnet-best-execution-feasibility.ts --network cotiTestnet"],
-  ["testnet:best-execution", "scripts/testnet-best-execution.ts --network cotiTestnet"],
-  ["testnet:fee-collection", "scripts/testnet-fee-collection.ts --network cotiTestnet"],
-  ["evidence:finalize", "scripts/finalize-funded-evidence.ts --network cotiTestnet"],
-  ["evidence:verify", "scripts/verify-funded-suite-evidence.ts --network cotiTestnet"],
-  ["testnet:launchpad", "scripts/testnet-launchpad.ts --network cotiTestnet"],
-  ["gas:measure", "scripts/measure-deployment-gas.ts"],
-  ["deploy:testnet", "scripts/deploy-testnet.ts --network cotiTestnet"],
-]);
-for (const [script, target] of freshHardhatScripts) {
-  if (
-    packageManifest.scripts?.[script] !==
-      `node scripts/run-fresh-hardhat.mjs ${target}`
-  ) {
-    throw new Error(`${script} does not enforce process-isolated clean compilation`);
+const operatorLauncherSource = await readFile(
+  "scripts/operator-funded-launcher.mjs",
+  "utf8",
+);
+const prepareFundedRuntimeSource = await readFile(
+  "scripts/prepare-funded-runtime.mjs",
+  "utf8",
+);
+const reviewedBuildReceiptSource = await readFile(
+  "scripts/reviewed-build-receipt.mjs",
+  "utf8",
+);
+const freshRuntimeEnvironmentSource = await readFile(
+  "scripts/fresh-runtime-environment.mjs",
+  "utf8",
+);
+const privateFilesystemSource = await readFile(
+  "scripts/private-filesystem.mjs",
+  "utf8",
+);
+const securePublicationSource = await readFile(
+  "scripts/secure-publication.mjs",
+  "utf8",
+);
+const fundedRpcConfirmationSource = await readFile(
+  "scripts/funded-rpc-confirmation.mjs",
+  "utf8",
+);
+if (!freshRunnerSource.includes('"CIPHERDEX_LAUNCH_AUTHORITY"')) {
+  throw new Error("Fresh deployment runner strips the required launch authority");
+}
+for (const script of [
+  "testnet:harness",
+  "testnet:preflight",
+  "testnet:quote-call-probe",
+  "testnet:best-execution-feasibility",
+  "testnet:best-execution",
+  "testnet:fee-collection",
+  "testnet:launchpad",
+  "evidence:finalize",
+  "evidence:verify",
+  "deploy:testnet",
+  "secure:funded-env",
+]) {
+  if (packageManifest.scripts?.[script] !== undefined) {
+    throw new Error(`${script} exposes a repository-local funded entry point`);
   }
 }
+if (packageManifest.scripts?.["gas:measure"] !== "hardhat run scripts/measure-deployment-gas.ts") {
+  throw new Error("Secretless gas measurement is routed through the funded launcher");
+}
+if (
+  packageManifest.scripts?.["prepare:funded-runtime"] !==
+    "node scripts/prepare-funded-runtime.mjs"
+) {
+  throw new Error("Funded runtime preparation is not an explicit reviewed command");
+}
+if (
+  !prepareFundedRuntimeSource.includes("Repository-local funded runtime preparation is disabled") ||
+  /from\s+["']\.\.?\//.test(prepareFundedRuntimeSource)
+) {
+  throw new Error("Repository-local funded preparation does not fail closed");
+}
 if (/from\s+["']\.\.?\//.test(freshRunnerSource)) {
-  throw new Error("Fresh Hardhat runner imports a local module before compilation");
+  throw new Error("Private Hardhat runner statically imports mutable local code");
 }
 if (/env:\s*process\.env/.test(freshRunnerSource)) {
-  throw new Error("Fresh Hardhat runner forwards the ambient environment into a subprocess");
+  throw new Error("Private Hardhat runner forwards the ambient environment into a subprocess");
 }
-if (/spawnSync\(["']git["']/.test(freshRunnerSource)) {
-  throw new Error("Fresh Hardhat runner resolves Git through an attacker-controlled search path");
+if (/spawnSync\(["']git["']/.test(freshRunnerSource + operatorLauncherSource)) {
+  throw new Error("Funded launch resolves Git through an attacker-controlled search path");
 }
 for (const required of [
   "TRUSTED_GIT_CANDIDATES",
-  "trustedGitExecutable",
-  "trustedGitRealpath",
-  "refuses a repository-controlled Git executable",
+  '"cat-file", "-t", input.commit',
+  '"fetch", "--quiet", "--no-tags"',
+  '"checkout", "--quiet", "--detach", input.commit',
+  '"ci", "--ignore-scripts"',
+  'require.resolve("hardhat/internal/cli/cli.js")',
+  "materializeInternalFileLinks(runtime)",
+  "privateFilesystem.assertPrivateTree(runtime)",
+  'CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE: "1"',
+  "rmSync(runtime, { recursive: true, force: true })",
 ]) {
-  if (!freshRunnerSource.includes(required)) {
-    throw new Error(`Fresh Hardhat runner omits trusted Git control: ${required}`);
+  if (!operatorLauncherSource.includes(required)) {
+    throw new Error(`External funded launcher omits required control: ${required}`);
   }
+}
+if (/^import[\s\S]*?from\s+["'](?!node:)/mu.test(operatorLauncherSource)) {
+  throw new Error("External funded launcher statically imports non-builtin code before source authentication");
 }
 const hardhatConfigSource = await readFile("hardhat.config.ts", "utf8");
 if (/dotenv(?:\/config)?/.test(hardhatConfigSource)) {
   throw new Error("Hardhat configuration eagerly loads a secret-bearing env file");
 }
 const sourceCheckPosition = freshRunnerSource.indexOf(
-  'runGit(["status", "--porcelain=v1", "--untracked-files=all"])',
+  'runGit(git, executionRoot, ["status", "--porcelain=v1", "--untracked-files=all"])',
 );
 const hardhatResolvePosition = freshRunnerSource.indexOf(
-  'require.resolve("hardhat/internal/cli/cli.js")',
+  'createRequire(resolve(executionRoot, "package.json"))',
 );
-const freshCleanPosition = freshRunnerSource.lastIndexOf(
-  'runHardhat(["clean"], systemEnvironment)',
+const repositoryEnvironmentRefusalPosition = freshRunnerSource.indexOf(
+  'existsSync(resolve(executionRoot, ".env"))',
 );
-const freshCompilePosition = freshRunnerSource.lastIndexOf(
-  'runHardhat(["compile"], systemEnvironment)',
+const environmentModulePosition = freshRunnerSource.indexOf(
+  'await import("./fresh-runtime-environment.mjs")',
 );
-const envLoadPosition = freshRunnerSource.indexOf("process.loadEnvFile(");
-const freshRunPosition = freshRunnerSource.lastIndexOf(
-  'runHardhat(["run", "--no-compile", target, ...targetArguments], runtimeEnvironment)',
+const reviewedBuildPosition = freshRunnerSource.indexOf(
+  "verifyReviewedBuild(executionRoot, sourceCommit, { trackedFiles })",
+);
+const environmentReadPosition = freshRunnerSource.indexOf(
+  "readReviewedEnvironment(environmentPath)",
+);
+const freshRunPosition = freshRunnerSource.indexOf(
+  '[hardhatCli, "run", "--no-compile", target, ...targetArguments]',
 );
 if (
   sourceCheckPosition < 0 ||
-  sourceCheckPosition >= hardhatResolvePosition ||
-  hardhatResolvePosition >= freshCleanPosition ||
-  freshCleanPosition >= freshCompilePosition ||
-  freshCompilePosition >= envLoadPosition ||
-  envLoadPosition >= freshRunPosition
+  sourceCheckPosition >= repositoryEnvironmentRefusalPosition ||
+  repositoryEnvironmentRefusalPosition >= reviewedBuildPosition ||
+  reviewedBuildPosition >= environmentModulePosition ||
+  environmentModulePosition >= environmentReadPosition ||
+  environmentReadPosition >= hardhatResolvePosition ||
+  hardhatResolvePosition >= freshRunPosition
 ) {
-  throw new Error("Fresh Hardhat runner does not authenticate source and isolate secretless build execution");
+  throw new Error("Private Hardhat runner does not authenticate source before reading funded configuration");
+}
+if (
+  !freshRunnerSource.includes("funded targets may run only through the externally installed operator-funded launcher") ||
+  !freshRunnerSource.includes("assertPrivateTree(executionRoot)") ||
+  /["'](?:clean|compile)["']/.test(
+    freshRunnerSource.slice(freshRunnerSource.indexOf("async function main()")),
+  )
+) {
+  throw new Error("Private funded targets can compile or bypass the external launcher boundary");
+}
+if (
+  freshRunnerSource.includes("process.loadEnvFile(") ||
+  !freshRunnerSource.includes("buildReviewedRuntimeEnvironment({") ||
+  !freshRunnerSource.includes("readReviewedEnvironment(environmentPath)") ||
+  !freshRunnerSource.includes("allowAmbientConfiguration: false") ||
+  !freshRunnerSource.includes("funded targets require an absolute external environment file") ||
+  !freshRunnerSource.includes("funded environment must remain outside runtime and public repository") ||
+  !freshRuntimeEnvironmentSource.includes("fresh Hardhat environment conflict for") ||
+  !freshRuntimeEnvironmentSource.includes("readPrivateEnvironmentFile(path)") ||
+  !privateFilesystemSource.includes("MAX_SECRET_FILE_BYTES") ||
+  !privateFilesystemSource.includes("constants.O_NOFOLLOW") ||
+  !privateFilesystemSource.includes("stat.nlink !== 1") ||
+  !privateFilesystemSource.includes("assertPrivateDirectory(dirname(configured))") ||
+  !privateFilesystemSource.includes("windowsAcl(configured, \"read\", false)") ||
+  !privateFilesystemSource.includes("FileSystemRights]::ChangePermissions") ||
+  !privateFilesystemSource.includes("FileSystemRights]::TakeOwnership") ||
+  !privateFilesystemSource.includes("assertPrivateTree") ||
+  !privateFilesystemSource.includes("WINDOWS_ICACLS")
+) {
+  throw new Error("Funded runner does not fail closed on secret-bearing environment conflicts");
 }
 for (const required of [
-  "Fresh Hardhat runner requires a clean committed worktree",
+  "packageLockSha256",
+  "sourceTreeSha256",
+  "nodeModulesSha256",
+  "artifactsSha256",
+  "typechainSha256",
+  "cipherdex.reviewed-build-receipt/v2",
+  "assertPrivateTree(repositoryRoot)",
+]) {
+  if (!reviewedBuildReceiptSource.includes(required)) {
+    throw new Error(`Reviewed build receipt omits required measurement: ${required}`);
+  }
+}
+if (/executionSnapshot|requireExecutionSnapshot/u.test(reviewedBuildReceiptSource)) {
+  throw new Error("Reviewed build receipt retains the superseded mutable snapshot model");
+}
+for (const required of [
+  'GIT_CONFIG_NOSYSTEM: "1"',
+  'GIT_CONFIG_GLOBAL:',
+  'GIT_CONFIG_KEY_0: "core.fsmonitor"',
+  'GIT_CONFIG_KEY_1: "core.hooksPath"',
+  'GIT_NO_REPLACE_OBJECTS: "1"',
+  '["--no-replace-objects", "--no-pager", ...arguments_]',
+]) {
+  if (!freshRunnerSource.includes(required) || !operatorLauncherSource.includes(required)) {
+    throw new Error(`Fresh Hardhat source authentication omits Git isolation: ${required}`);
+  }
+}
+for (const required of [
   "SYSTEM_ENVIRONMENT",
   "NETWORK_ENVIRONMENT",
   "FUNDED_NETWORK_ENVIRONMENT",
   "targetPolicy.funded",
   "targetPolicy.environment",
-  "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = trustedGitRealpath",
+  "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git",
+  "inspectFundedTransaction(provider",
+  "publishReviewedJson(",
 ]) {
   if (!freshRunnerSource.includes(required)) {
     throw new Error(`Fresh Hardhat runner omits credential-boundary control: ${required}`);
   }
 }
+for (const required of [
+  "constants.O_NOFOLLOW",
+  "stat.nlink !== 1",
+  "MAX_PUBLIC_JSON_BYTES",
+  "constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL",
+  "fsyncSync(descriptor)",
+  "renameSync(temporary, destination)",
+]) {
+  if (!securePublicationSource.includes(required)) {
+    throw new Error(`Reviewed JSON publication omits required control: ${required}`);
+  }
+}
+if (securePublicationSource.includes("copyFileSync")) {
+  throw new Error("Reviewed JSON publication uses a mutable copy destination");
+}
+for (const required of [
+  "provider.getTransaction(identity.hash)",
+  "provider.getTransactionReceipt(identity.hash)",
+  "provider.getBlock(receiptBlockNumber)",
+  "minimumConfirmations",
+  'state: "confirmed"',
+]) {
+  if (!fundedRpcConfirmationSource.includes(required)) {
+    throw new Error(`Funded RPC confirmation omits required evidence: ${required}`);
+  }
+}
 for (const path of [
   "scripts/deploy-testnet.ts",
-  "scripts/funded-deployment-binding.ts",
   "scripts/funded-suite-evidence.ts",
   "scripts/testnet-deployment-provenance.ts",
   "scripts/testnet-quote-call-probe.ts",
 ]) {
   const source = await readFile(path, "utf8");
-  if (!source.includes("trustedGitExecutable")) {
-    throw new Error(`${path}: deployment Git use is not bound to the trusted executable`);
+  for (const required of [
+    "trustedGitExecutable",
+    "trustedGitEnvironment",
+    "trustedGitArguments",
+  ]) {
+    if (!source.includes(required)) {
+      throw new Error(`${path}: deployment Git use omits ${required}`);
+    }
   }
   if (/(?:execFileAsync|execFileSync|spawnSync)\(\s*["']git["']/.test(source)) {
     throw new Error(`${path}: resolves Git through an attacker-controlled search path`);
@@ -519,13 +801,28 @@ for (const path of [
 if (!hasStringCall(deploymentAst, "getContractFactory", "ConfidentialBestExecutionRouter")) {
   throw new Error("Testnet deployment does not deploy the confidential best-execution router");
 }
+for (const contractName of [
+  "ConfidentialCPMMDeployer",
+  "ConfidentialInitializationStrategyRegistry",
+  "ConfidentialLaunchInitializationStrategy",
+]) {
+  if (!hasStringCall(deploymentAst, "getContractFactory", contractName)) {
+    throw new Error(`Testnet deployment does not deploy ${contractName}`);
+  }
+}
 for (const fragment of [
   "factory.setBestExecutionRouter(",
   "factory.bestExecutionRouter()",
   "journalContracts.bestExecutionRouterBinding =",
+  "poolDeployerDeployment.contract.bindFactory(",
+  "strategyRegistryDeployment.contract.bindFactory(",
+  "launchStrategyDeployment.contract.migrator()",
+  "const launchpadArtifact = await verifyDeployedRuntimeArtifactWithProvenance(",
+  "strategyRegistryDeployment.contract.registerInitializationStrategy(",
+  "strategyRegistryDeployment.contract.finalize(",
 ]) {
   if (!deploymentSource.includes(fragment)) {
-    throw new Error("Testnet deployment omits canonical best-execution router provenance");
+    throw new Error("Testnet deployment omits canonical protocol binding provenance");
   }
 }
 if (!hasStringCall(deploymentAst, "recordDeployment", "confidentialBestExecutionRouter")) {
@@ -555,6 +852,9 @@ for (const fragment of [
   "CONFIDENTIAL_POOL_POLICY_FIELDS",
   "PUBLIC_POOL_POLICY_FIELDS",
   "LAUNCHPAD_MIGRATION_POLICY_FIELDS",
+  "buildConfidentialLaunchCommitment(",
+  "buildConfidentialLaunchCommitCall(",
+  "LAUNCH_COMMITMENT_EIP712_TYPES",
 ]) {
   if (!sdkSource.includes(fragment)) {
     throw new Error("SDK omits canonical best-execution target or result binding");
@@ -590,6 +890,23 @@ for (const fragment of [
 if (!hasStringCall(harnessAst, "requiredAddress", "COTI_FACTORY")) {
   throw new Error("Basic funded harness does not require an independently configured factory");
 }
+for (const fragment of [
+  "openFundedRecoveryJournal(privateKey, {",
+  "recoveryJournal.reconcileTransactions(provider)",
+  "withFundedTransactionEvidence(",
+  "journal().recordTransaction(",
+  "UnresolvedDirectAllowanceError",
+  "!(error instanceof UnknownBroadcastOutcomeError)",
+  "BigInt(factoryVersion) !== 3n",
+  "BigInt(poolVersion) !== 3n",
+]) {
+  if (!harnessSource.includes(fragment)) {
+    throw new Error(`Basic funded harness omits recovery/version control: ${fragment}`);
+  }
+}
+if (!harnessRawSource.includes('"failed-swap allowance recovery"')) {
+  throw new Error("Basic funded harness omits deterministic failed-swap allowance recovery");
+}
 
 const feeCollectionRawSource = await readFile("scripts/testnet-fee-collection.ts", "utf8");
 const feeCollectionSource = maskSourceCommentsAndLiterals(feeCollectionRawSource);
@@ -607,6 +924,26 @@ for (const fragment of [
 ]) {
   if (!feeCollectionSource.includes(fragment)) {
     throw new Error("Fee-collection funded runner omits quote-derived swap or LP-exit protection");
+  }
+}
+for (const contractName of [
+  "ConfidentialCPMMDeployer",
+  "ConfidentialInitializationStrategyRegistry",
+]) {
+  if (!new RegExp(`deployContract\\(\\s*["']${contractName}["']`).test(
+    feeCollectionRawSource,
+  )) {
+    throw new Error(`Fee-collection runner does not deploy disposable ${contractName}`);
+  }
+}
+for (const fragment of [
+  "poolDeployer.contract.bindFactory(factory.address",
+  "strategyRegistry.contract.bindFactory(factory.address",
+  "strategyRegistryRuntimeCodehash",
+  "poolDeployerRuntimeCodehash",
+]) {
+  if (!feeCollectionSource.includes(fragment)) {
+    throw new Error("Fee-collection runner omits complete disposable factory bindings");
   }
 }
 for (const fragment of [
@@ -628,6 +965,9 @@ for (const forbidden of [
 }
 if (
   !feeCollectionSource.includes("requireFeeCollectionMature(") ||
+  !feeCollectionSource.includes("submitExpectedFailure(") ||
+  !feeCollectionRawSource.includes('"premature confidential protocol fee collection"') ||
+  !feeCollectionRawSource.includes("collectionReadyAt: Number(readyAt)") ||
   /confidential fee batch prepared; rerun after readyAt to collect[\s\S]{0,80}?return;/.test(
     feeCollectionSource,
   )
@@ -734,6 +1074,170 @@ for (const file of [
 }
 const fundedEvidenceRawSource = await readFile("scripts/funded-run-evidence.ts", "utf8");
 const fundedEvidenceSource = maskSourceCommentsAndLiterals(fundedEvidenceRawSource);
+const fundedRecoveryRawSource = await readFile(
+  "scripts/funded-recovery-journal.ts",
+  "utf8",
+);
+const fundedRecoverySource = maskSourceCommentsAndLiterals(
+  fundedRecoveryRawSource,
+);
+const durableAppendLogRawSource = await readFile(
+  "scripts/durable-append-log.mjs",
+  "utf8",
+);
+const durableAppendLogSource = maskSourceCommentsAndLiterals(
+  durableAppendLogRawSource,
+);
+const deploymentProvenanceRawSource = await readFile(
+  "scripts/testnet-deployment-provenance.ts",
+  "utf8",
+);
+const fundedTransactionRawSource = await readFile(
+  "scripts/funded-transaction-wallet.ts",
+  "utf8",
+);
+const fundedTransactionSource = maskSourceCommentsAndLiterals(
+  fundedTransactionRawSource,
+);
+const fundedCoordinatorRawSource = await readFile(
+  "scripts/funded-process-coordinator.mjs",
+  "utf8",
+);
+if (fundedCoordinatorRawSource.includes("signedTransaction")) {
+  throw new Error("Signer coordinator persists replayable signed transaction bytes");
+}
+for (const [source, required, label] of [
+  [fundedCoordinatorRawSource, "restrictPrivateDirectory(root)", "signer coordinator"],
+  [reviewedBuildReceiptSource, "restrictPrivateDirectory(directory)", "build receipt"],
+]) {
+  if (!source.includes(required)) {
+    throw new Error(`${label} storage is not protected by the private filesystem boundary`);
+  }
+}
+const fundedAllowanceRawSource = await readFile(
+  "scripts/funded-private-allowance.ts",
+  "utf8",
+);
+for (const required of [
+  "AsyncLocalStorage",
+  "keccak256(signedTransaction)",
+  "recordPreparedSignerTransaction(",
+  "recordPreparedTransaction(",
+  "provider.broadcastTransaction(signedTransaction)",
+  "recordBroadcast(",
+  "recordTransaction(localHash",
+  "FundedWallet extends EthersWallet",
+  "FundedCotiWallet extends CotiWallet",
+  "validateFundedTransactionFeePolicy(populated)",
+]) {
+  if (!fundedTransactionSource.includes(required)) {
+    throw new Error(`Funded transaction boundary omits required control: ${required}`);
+  }
+}
+if (!fundedTransactionRawSource.includes("maximum network fee exceeds the reviewed cap")) {
+  throw new Error("Funded transaction boundary omits the worst-case total fee cap");
+}
+if (!fundedTransactionRawSource.includes('recordTransaction(localHash, "outcome-unknown")')) {
+  throw new Error("Funded transaction boundary does not retain uncertain broadcast state");
+}
+const preparedPosition = fundedTransactionSource.indexOf("recordPreparedTransaction(");
+const signerPreparedPosition = fundedTransactionSource.indexOf(
+  "recordPreparedSignerTransaction(",
+);
+const broadcastPosition = fundedTransactionSource.indexOf(
+  "provider.broadcastTransaction(signedTransaction)",
+);
+const broadcastRecordPosition = fundedTransactionSource.indexOf("recordBroadcast(");
+if (
+  preparedPosition < 0 ||
+  signerPreparedPosition < 0 ||
+  broadcastPosition < 0 ||
+  broadcastRecordPosition < 0 ||
+  signerPreparedPosition >= preparedPosition ||
+  preparedPosition >= broadcastPosition ||
+  broadcastPosition >= broadcastRecordPosition
+) {
+  throw new Error("Funded transaction boundary does not journal before RPC broadcast");
+}
+for (const required of [
+  "acquireRepositoryExecutionLease",
+  "acquireSignerExecutionLeases",
+  "reconcileSignerExecutionLeases",
+  "recordPreparedSignerTransaction",
+  "funded signer nonce is already reserved by another transaction",
+  "reconcile or identically rebroadcast it before another funded run",
+]) {
+  if (!fundedCoordinatorRawSource.includes(required)) {
+    throw new Error(`Funded process coordinator omits required control: ${required}`);
+  }
+}
+for (const required of [
+  "recordAllowanceObligation",
+  "markAllowanceCleared",
+  "recoverPrivateAllowanceObligations",
+  "verified !== input.amount",
+]) {
+  if (!fundedAllowanceRawSource.includes(required)) {
+    throw new Error(`Funded allowance recovery omits required control: ${required}`);
+  }
+}
+for (const forbidden of ["console.", "process.env", "safeTestnetErrorSummary"]){
+  if (fundedTransactionSource.includes(forbidden)) {
+    throw new Error(`Funded transaction boundary exposes forbidden data path: ${forbidden}`);
+  }
+}
+for (const file of [
+  "scripts/testnet-best-execution-feasibility.ts",
+  "scripts/testnet-best-execution.ts",
+  "scripts/testnet-fee-collection.ts",
+  "scripts/testnet-harness.ts",
+  "scripts/testnet-launchpad.ts",
+]) {
+  const source = await readFile(file, "utf8");
+  if (
+    !source.includes("FundedCotiWallet as CotiWallet") ||
+    !source.includes("withFundedTransactionEvidence")
+  ) {
+    throw new Error(`${file}: funded writes can bypass deterministic local signing evidence`);
+  }
+}
+for (const file of [
+  "scripts/testnet-best-execution.ts",
+  "scripts/testnet-fee-collection.ts",
+  "scripts/testnet-harness.ts",
+  "scripts/testnet-launchpad.ts",
+]) {
+  const source = await readFile(file, "utf8");
+  if (
+    !source.includes("recoverPrivateAllowanceObligations") ||
+    !source.includes("setRecoverablePrivateAllowance") ||
+    /\.approve\s*\(/.test(maskSourceCommentsAndLiterals(source))
+  ) {
+    throw new Error(`${file}: private allowances bypass durable recovery obligations`);
+  }
+}
+for (const required of [
+  "FundedWallet",
+  "openFundedRecoveryJournal",
+  "submitDeploymentTransaction(",
+  "withFundedTransactionEvidence(",
+]) {
+  if (!deploymentRawSource.includes(required)) {
+    throw new Error(`Testnet deployment bypasses funded signing boundary: ${required}`);
+  }
+}
+const feasibilityRunnerSource = await readFile(
+  "scripts/testnet-best-execution-feasibility.ts",
+  "utf8",
+);
+for (const required of [
+  '"pool probe 0 output funding"',
+  '"pool probe 1 output funding"',
+]) {
+  if (!feasibilityRunnerSource.includes(required)) {
+    throw new Error(`Best-execution feasibility runner omits unique funded label: ${required}`);
+  }
+}
 for (const required of [
   "verifyDeployedRuntimeArtifactWithProvenance(",
   "provider.getTransactionReceipt(",
@@ -747,22 +1251,106 @@ for (const required of [
   "targetArtifactLabel",
   "requirement.selectors.includes(transaction.selector.toLowerCase())",
   "creationTransactionHash",
+  "recoveryTransactionHashes",
   "verifyRecoveryResourceCreation(",
-  "journal.pendingSubmissions.length !== 0",
+  "verifyRecoveryResourceTerminalState(",
+  "LAUNCHPAD_MIGRATE_SELECTOR",
+  "LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR",
+  "CONFIDENTIAL_CPMM_ABI",
+  "requireSelector(",
+  "SELECTOR.addLiquidity",
+  "BEST_EXECUTION_FUNDED_ASSERTIONS",
+  "attestationDigest(",
+  "verifyMessage(",
+  "requireOnchainSemanticBindings(",
+  "writePreparedFundedRunEvidence(",
+  "requireDirectCreationBindings(",
+  "Interface(compiled.abi).encodeDeploy(",
+  "transaction.contractAddress",
+  "requireFactoryChildBindings(",
+  "requireMigratorConstructorChildBinding(",
+  "requireBestExecutionFeasibilityBindings(",
+  "requireFeeCollectionBindings(",
+  "requireProtectedPoolLifecycleOrder(",
+  "transactionIndex",
+  "isStrictlyAfter(",
+  "immutableReferenceCount",
 ]) {
   if (!fundedEvidenceSource.includes(required)) {
     throw new Error(`Funded evidence omits required provenance control: ${required}`);
   }
 }
 for (const required of [
-  "cipherdex.funded-run-evidence/v3",
+  "cipherdex.funded-run-evidence/v6",
   "funded run cannot produce evidence with unresolved transactions",
-  "funded run cannot produce evidence with pending submissions",
   "funded evidence lacks a selector-bound semantic transaction",
+  "funded artifact constructor calldata is invalid",
+  "funded confidential pools and LP tokens are not one-to-one",
+  "funded launchpad migrator lacks constructor-child provenance",
+  "funded feasibility requests are not independently replay-bound",
+  "funded vault epoch does not match the correlated aggregate deposits",
+  "funded launch commitment lacks independent creator and authority signatures",
+  "funded protected-pool lifecycle is not strictly commit/reject/migrate/replay/exit/reseed/exit ordered",
+  "premature confidential protocol fee collection",
+  "collectionReadyAt",
+  "confidentialSwapCountByEpoch",
 ]) {
   if (!fundedEvidenceRawSource.includes(required)) {
     throw new Error(`Funded evidence omits required literal control: ${required}`);
   }
+}
+for (const required of [
+  "createCipheriv(\"aes-256-gcm\"",
+  "createDecipheriv(\"aes-256-gcm\"",
+  "cipherdex.funded-recovery-envelope/v1",
+  "appendUtf8RecordIfUnchanged(",
+  "persistedEnvelope",
+  "allowanceObligations",
+  "funded operation label is already journaled and cannot be re-signed",
+  "signedTransaction: undefined",
+]) {
+  if (!fundedRecoveryRawSource.includes(required)) {
+    throw new Error(`Funded recovery journal omits required control: ${required}`);
+  }
+}
+for (const required of [
+  "constants.O_EXCL",
+  "constants.O_NOFOLLOW",
+  "fsyncSync(descriptor)",
+  "payloadSha256",
+  "previousDigest",
+  "acquireProcessLease",
+  "processIsAlive",
+  "restrictPrivateDirectory(canonical)",
+  "restrictAndAssertPrivateRegularFile",
+  "restrictPrivateFile(path)",
+  "assertDescriptorMatchesPrivatePath",
+]) {
+  if (!durableAppendLogSource.includes(required)) {
+    throw new Error(`Durable append log omits required control: ${required}`);
+  }
+}
+if (
+  !durableAppendLogRawSource.includes("cipherdex.durable-append-log/v1") ||
+  !durableAppendLogRawSource.includes("durable append log changed since it was read")
+) {
+  throw new Error("Durable append log omits the stale-writer rejection diagnostic");
+}
+for (const required of [
+  "trustedGitExecutable(",
+  "trustedGitArguments(",
+  "createHash(\"sha256\").update(immutableRecord",
+  "recordPath: resolved.relativePath",
+  '"log"',
+  '"--format=%H"',
+  "manifestCommit: sourceState.recordCommit.toLowerCase()",
+]) {
+  if (!deploymentProvenanceRawSource.includes(required)) {
+    throw new Error(`Funded deployment provenance omits immutable Git binding: ${required}`);
+  }
+}
+if (!deploymentProvenanceRawSource.includes('"show"')) {
+  throw new Error("Funded deployment provenance does not read an immutable Git object");
 }
 for (const forbidden of [
   "process.env",
@@ -781,15 +1369,15 @@ for (const file of [
   "scripts/testnet-launchpad.ts",
 ]) {
   const source = await readFile(file, "utf8");
-  const evidencePosition = source.lastIndexOf("writeFundedRunEvidence({");
-  const passPosition = source.lastIndexOf('markRun("passed")');
+  const evidencePosition = source.lastIndexOf("writePreparedFundedRunEvidence({");
+  const planPosition = source.lastIndexOf("prepareEvidence({");
   const recoveryPosition = source.lastIndexOf("markRecovered(");
   if (
     evidencePosition < 0 ||
-    passPosition < 0 ||
+    planPosition < 0 ||
     recoveryPosition < 0 ||
-    recoveryPosition >= passPosition ||
-    passPosition >= evidencePosition
+    recoveryPosition >= planPosition ||
+    planPosition >= evidencePosition
   ) {
     throw new Error(`${file}: passing funded evidence is not gated by completed recovery`);
   }
@@ -802,12 +1390,33 @@ for (const fragment of [
   "verifyConfiguredTestnetDeployment(",
   "assertReviewedPrivateTokens(deploymentRecord",
   "verifyDeployedRuntimeArtifact(",
-  "FundedRecoveryJournal.open({",
+  "openFundedRecoveryJournal(privateKey, {",
   "recoverLaunchpadResources()",
-  "writeFundedRunEvidence({",
+  "writePreparedFundedRunEvidence({",
 ]) {
   if (!launchpadMainBody.includes(fragment)) {
     throw new Error("Launchpad funded runner bypasses reviewed source or token provenance");
+  }
+}
+for (const contractName of [
+  "ConfidentialCPMMDeployer",
+  "ConfidentialInitializationStrategyRegistry",
+  "ConfidentialLaunchInitializationStrategy",
+]) {
+  if (!hasStringCall(parseTypeScript(launchpadRawSource, "scripts/testnet-launchpad.ts"), "getContractFactory", contractName)) {
+    throw new Error(`Launchpad funded runner does not deploy disposable ${contractName}`);
+  }
+}
+for (const fragment of [
+  "poolDeployer.bindFactory(",
+  "strategyRegistry.bindFactory(",
+  "strategy.migrator()",
+  "await verifyDeployedRuntimeArtifact(",
+  "strategyRegistry.registerInitializationStrategy(",
+  "strategyRegistry.finalize(",
+]) {
+  if (!launchpadSource.includes(fragment)) {
+    throw new Error("Launchpad funded runner omits one-time strategy-stack bindings");
   }
 }
 if (!launchpadSource.includes("verifyRecoveryResourceCreation(")) {
@@ -815,12 +1424,14 @@ if (!launchpadSource.includes("verifyRecoveryResourceCreation(")) {
 }
 for (const literal of [
   "full disposable launchpad-pool exit",
-  "successful launchpad migration has no canonical pool to recover",
+  "successful launch commitment has no canonical pool to recover",
   "launchpad pool recovery canonical provenance changed",
   "launchpad recovery cannot uniquely prove canonical pool creation",
   "factory.filters.PoolCreated(token0Address, token1Address)",
   "atomic launchpad migration recovery",
-  'markRun("passed")',
+  "protected pool ordinary re-seed",
+  "completed protected pool remained permissionless after a full exit and ordinary re-seed",
+  "prepareEvidence({",
 ]) {
   if (!launchpadRawSource.includes(literal)) {
     throw new Error("Launchpad funded runner omits required recovery evidence");
@@ -835,6 +1446,9 @@ for (const fragment of [
   "tokenBRead.decimals()",
   "onchainDecimalsA !== decimalsA",
   "onchainDecimalsB !== decimalsB",
+  "exitAllLaunchpadShares(",
+  "pool.protectedInitializationCompleted()",
+  "pool.addLiquidity(",
 ]) {
   if (!launchpadMainBody.includes(fragment)) {
     throw new Error("Launchpad funded runner does not bind CREATE2 inputs to onchain decimals");
@@ -912,13 +1526,30 @@ if (!bestExecutionProductionSource.includes("assertReviewedPrivateTokens(deploym
 for (const contractName of [
   "CipherDEXFeeVault",
   "PrivateLPTokenFactory",
+  "ConfidentialCPMMDeployer",
+  "ConfidentialInitializationStrategyRegistry",
   "ConfidentialCPMMFactory",
+  "ConfidentialLaunchInitializationStrategy",
   "ConfidentialBestExecutionRouter",
 ]) {
   if (!new RegExp(`deployContract\\(\\s*[\"']${contractName}[\"']`).test(
     bestExecutionProductionRawSource,
   )) {
     throw new Error(`Best-execution funded runner does not deploy disposable ${contractName}`);
+  }
+}
+for (const fragment of [
+  "poolDeployerDeployment.contract.bindFactory(",
+  "strategyRegistryDeployment.contract.bindFactory(",
+  "strategyDeployment.contract.migrator()",
+  "await verifyDeployedRuntimeArtifact(",
+  "strategyRegistryDeployment.contract.registerInitializationStrategy(",
+  "strategyRegistryDeployment.contract.finalize(",
+  "BigInt(configuredRouterVersion) !== 2n",
+  "!Boolean(registryFinalized)",
+]) {
+  if (!bestExecutionProductionSource.includes(fragment)) {
+    throw new Error("Best-execution funded runner omits current strategy-stack verification");
   }
 }
 if (
@@ -995,6 +1626,54 @@ for (const required of [
   }
 }
 
+const bestExecutionRunnerRaw = await readFile("scripts/testnet-best-execution.ts", "utf8");
+const bestExecutionRunner = maskSourceCommentsAndLiterals(bestExecutionRunnerRaw);
+for (const required of [
+  "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN0",
+  "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN1",
+  "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN0",
+  "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN1",
+  "optionalBoundedAmount(",
+  "reviewedFeeVault.beneficiary()",
+]) {
+  if (!bestExecutionRunnerRaw.includes(required)) {
+    throw new Error(`Best-execution funded runner omits reviewed input control: ${required}`);
+  }
+}
+if (bestExecutionRunnerRaw.includes("CIPHERDEX_FEE_BENEFICIARY")) {
+  throw new Error("Best-execution funded runner accepts an unreviewed fee beneficiary");
+}
+for (const required of [
+  "buildConfidentialLaunchCommitment({",
+  "buildConfidentialLaunchCommitCall(",
+  "initializationStrategy.commitLaunch(",
+  "migrator.migrate(",
+  "requestBestQuoteExactInputWithCandidates(",
+  "swapBestExactInputWithCandidates(",
+  "MIXED_TWO_CANDIDATE_BITMAP",
+  "MIXED_THREE_CANDIDATE_BITMAP",
+  "pool30.initializationStrategy !== strategyDeployment.address",
+]) {
+  if (!bestExecutionRunner.includes(required)) {
+    throw new Error(`Best-execution funded runner omits mixed-class proof: ${required}`);
+  }
+}
+if (!bestExecutionRunnerRaw.includes('candidateStrategyClasses: "standard,launch-protected"')) {
+  throw new Error("Best-execution funded evidence omits mixed-class configuration");
+}
+if (!bestExecutionRunner.includes("BEST_EXECUTION_FUNDED_ASSERTIONS")) {
+  throw new Error("Best-execution runner does not consume the canonical funded assertion list");
+}
+for (const required of [
+  '"signed launch commitment initialized the protected 30 bps candidate"',
+  '"bounded mixed standard and launch-protected candidate bitmap exercised"',
+  '"protected candidate selected and settled through the shared router"',
+]) {
+  if (!fundedEvidenceRawSource.includes(required)) {
+    throw new Error(`Canonical funded evidence omits mixed-class assertion: ${required}`);
+  }
+}
+
 const quoteCallProbeRunnerRaw = await readFile(
   "scripts/testnet-quote-call-probe.ts",
   "utf8",
@@ -1006,6 +1685,8 @@ for (const required of [
   "verifyDeployedRuntimeArtifactWithProvenance",
   "serializeMinedEvidence(deploymentEvidence)",
   "serializeMinedEvidence(controlEvidence)",
+  "openFundedRecoveryJournal(quoteKey, {",
+  "withFundedTransactionEvidence(",
 ]) {
   if (!quoteCallProbeRunner.includes(required)) {
     throw new Error(`Quote-call feasibility runner lacks provenance evidence: ${required}`);
@@ -1015,7 +1696,7 @@ for (const required of [
   '"status", "--porcelain=v1", "--untracked-files=all"',
   '"ls-files",',
   '"cipherdex.testnet-quote-call-probe/v1"',
-  "paidPerPoolQuoteRemainsPrimary: true",
+  "paidPerPoolQuoteIsOnlyProvenExactPath: true",
 ]) {
   if (!quoteCallProbeRunnerRaw.includes(required)) {
     throw new Error(`Quote-call feasibility runner lacks committed evidence output: ${required}`);
@@ -1064,7 +1745,10 @@ if (
   !deploymentTransactionProvenance.includes("provider.getTransaction(hash)") ||
   !deploymentTransactionProvenance.includes("provider.getTransactionReceipt(hash)") ||
   !deploymentTransactionProvenance.includes("encodeDeploy(args)") ||
-  !deploymentTransactionProvenance.includes("encodeFunctionData(binding.functionName, args)") ||
+  !deploymentTransactionProvenance.includes("const canonicalTarget = addressOf(binding.targetKey)") ||
+  !deploymentTransactionProvenance.includes("const canonicalArguments = binding.argumentKeys.map(addressOf)") ||
+  !deploymentTransactionProvenance.includes("deploymentAuthority") ||
+  !deploymentTransactionProvenance.includes("canonicalArguments") ||
   !deploymentTransactionProvenance.includes("transaction hashes must be unique")
 ) {
   throw new Error("Deployment records are not protected by review-before-publication controls");

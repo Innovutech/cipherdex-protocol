@@ -1,5 +1,5 @@
 import { BaseContract, ContractFactory } from "ethers";
-import { ethers } from "hardhat";
+import { artifacts, ethers } from "../hardhat/runtime.js";
 import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 
 async function deployAndMeasure(
@@ -14,6 +14,15 @@ async function deployAndMeasure(
   if (!receipt) throw new Error(`${label} deployment receipt missing`);
   console.log(`${label}: gas=${receipt.gasUsed}`);
   return contract;
+}
+
+async function sendAndMeasure(
+  label: string,
+  operation: () => Promise<{ wait(): Promise<{ gasUsed: bigint } | null> }>,
+): Promise<void> {
+  const receipt = await (await operation()).wait();
+  if (!receipt) throw new Error(`${label} receipt missing`);
+  console.log(`${label}: gas=${receipt.gasUsed}`);
 }
 
 async function main(): Promise<void> {
@@ -41,12 +50,34 @@ async function main(): Promise<void> {
     ethers.provider,
     [await tokenA.getAddress(), await tokenB.getAddress()],
   );
+  const strategyArtifact = await artifacts.readArtifact(
+    "ConfidentialLaunchInitializationStrategy",
+  );
+  const strategyRegistry = await deployAndMeasure(
+    "ConfidentialInitializationStrategyRegistry",
+    await ethers.getContractFactory("ConfidentialInitializationStrategyRegistry"),
+    [ethers.keccak256(strategyArtifact.deployedBytecode)],
+  );
+  const poolDeployer = await deployAndMeasure(
+    "ConfidentialCPMMDeployer",
+    await ethers.getContractFactory("ConfidentialCPMMDeployer"),
+  );
+  const poolDeployerCodehash = ethers.keccak256(
+    await ethers.provider.getCode(await poolDeployer.getAddress()),
+  );
+  const strategyRegistryCodehash = ethers.keccak256(
+    await ethers.provider.getCode(await strategyRegistry.getAddress()),
+  );
   const confidentialFactory = await deployAndMeasure(
     "ConfidentialCPMMFactory",
     await ethers.getContractFactory("ConfidentialCPMMFactory"),
     await feeVault.getAddress(),
     await privateLpTokenFactory.getAddress(),
+    await poolDeployer.getAddress(),
+    poolDeployerCodehash,
     privateTokenCodehashes,
+    await strategyRegistry.getAddress(),
+    strategyRegistryCodehash,
   );
   const bindVaultTransaction = await (
     feeVault as BaseContract & {
@@ -60,6 +91,34 @@ async function main(): Promise<void> {
     throw new Error("CipherDEXFeeVault.setConfidentialFactory receipt missing");
   }
   console.log(`CipherDEXFeeVault.setConfidentialFactory: gas=${bindVaultReceipt.gasUsed}`);
+  await sendAndMeasure(
+    "ConfidentialCPMMDeployer.bindFactory",
+    async () => (poolDeployer as any).bindFactory(await confidentialFactory.getAddress()),
+  );
+  await sendAndMeasure(
+    "ConfidentialInitializationStrategyRegistry.bindFactory",
+    async () => (strategyRegistry as any).bindFactory(await confidentialFactory.getAddress()),
+  );
+  const launchStrategy = await deployAndMeasure(
+    "ConfidentialLaunchInitializationStrategy",
+    await ethers.getContractFactory("ConfidentialLaunchInitializationStrategy"),
+    await confidentialFactory.getAddress(),
+    await strategyRegistry.getAddress(),
+    beneficiary.address,
+  );
+  console.log(
+    `ConfidentialLaunchpadMigrator: constructor-child=${await (launchStrategy as any).migrator()}`,
+  );
+  await sendAndMeasure(
+    "ConfidentialInitializationStrategyRegistry.registerInitializationStrategy",
+    async () => (strategyRegistry as any).registerInitializationStrategy(
+      await launchStrategy.getAddress(),
+    ),
+  );
+  await sendAndMeasure(
+    "ConfidentialInitializationStrategyRegistry.finalize",
+    () => (strategyRegistry as any).finalize(),
+  );
   const confidentialBestExecutionRouter = await deployAndMeasure(
     "ConfidentialBestExecutionRouter",
     await ethers.getContractFactory("ConfidentialBestExecutionRouter"),
@@ -99,12 +158,6 @@ async function main(): Promise<void> {
   const createPoolReceipt = await createPoolTransaction.wait();
   if (!createPoolReceipt) throw new Error("ConfidentialCPMMFactory.createPool receipt missing");
   console.log(`ConfidentialCPMMFactory.createPool: gas=${createPoolReceipt.gasUsed}`);
-  await deployAndMeasure(
-    "ConfidentialLaunchpadMigrator",
-    await ethers.getContractFactory("ConfidentialLaunchpadMigrator"),
-    await confidentialFactory.getAddress(),
-  );
-
   const publicFactory = await deployAndMeasure(
     "PublicCPMMFactory",
     await ethers.getContractFactory("PublicCPMMFactory"),

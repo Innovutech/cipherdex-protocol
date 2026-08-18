@@ -1,49 +1,95 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
-import { deployConfidentialFactory } from "../helpers/deployConfidentialFactory";
+import { ethers } from "../../hardhat/runtime.js";
+import { signLaunchCommitment } from "../helpers/confidentialLaunch";
+import {
+  configureConfidentialLaunch,
+  deployConfidentialFactory,
+} from "../helpers/deployConfidentialFactory";
 
 describe("ConfidentialCPMMFactory", function () {
-  it("requires a deployed LP-token factory", async function () {
+  it("requires reviewed immutable deployment dependencies", async function () {
     const [, outsider] = await ethers.getSigners();
-    const { approvedCodehash, vault } = await deployConfidentialFactory();
-    const factory = await ethers.getContractFactory("ConfidentialCPMMFactory");
-
-    await expect(factory.deploy(await vault.getAddress(), ethers.ZeroAddress, [approvedCodehash]))
-      .to.be.revertedWithCustomError(factory, "InvalidLPTokenFactory");
-    await expect(factory.deploy(await vault.getAddress(), outsider.address, [approvedCodehash]))
-      .to.be.revertedWithCustomError(factory, "InvalidLPTokenFactory");
-    const lpTokenFactory = await (
-      await ethers.getContractFactory("PrivateLPTokenFactory")
-    ).deploy();
-    await lpTokenFactory.waitForDeployment();
-    const wrongHelper = await (
+    const deployment = await deployConfidentialFactory();
+    const factoryFactory = await ethers.getContractFactory(
+      "ConfidentialCPMMFactory",
+    );
+    const vault = await deployment.vault.getAddress();
+    const lpTokenFactory = await deployment.lpTokenFactory.getAddress();
+    const poolDeployer = await deployment.poolDeployer.getAddress();
+    const registry = await deployment.strategyRegistry.getAddress();
+    const unreviewedStrategy = await (
       await ethers.getContractFactory("MockBootstrapAdapter")
     ).deploy();
-    await wrongHelper.waitForDeployment();
-    await expect(factory.deploy(
-      await vault.getAddress(),
-      await wrongHelper.getAddress(),
-      [approvedCodehash],
-    )).to.be.revertedWithCustomError(factory, "InvalidLPTokenFactory");
-    await expect(factory.deploy(
-      await vault.getAddress(),
-      await lpTokenFactory.getAddress(),
+    await unreviewedStrategy.waitForDeployment();
+
+    await expect(factoryFactory.deploy(
+      vault,
+      ethers.ZeroAddress,
+      poolDeployer,
+      deployment.poolDeployerRuntimeCodehash,
+      deployment.approvedCodehashes,
+      registry,
+      deployment.strategyRegistryRuntimeCodehash,
+    ))
+      .to.be.revertedWithCustomError(factoryFactory, "InvalidLPTokenFactory");
+    await expect(factoryFactory.deploy(
+      vault,
+      lpTokenFactory,
+      outsider.address,
+      deployment.poolDeployerRuntimeCodehash,
+      deployment.approvedCodehashes,
+      registry,
+      deployment.strategyRegistryRuntimeCodehash,
+    ))
+      .to.be.revertedWithCustomError(factoryFactory, "InvalidPoolDeployer");
+    await expect(factoryFactory.deploy(
+      vault,
+      lpTokenFactory,
+      poolDeployer,
+      deployment.poolDeployerRuntimeCodehash,
       [],
-    )).to.be.revertedWithCustomError(factory, "InvalidPrivateTokenCodehash");
+      registry,
+      deployment.strategyRegistryRuntimeCodehash,
+    ))
+      .to.be.revertedWithCustomError(factoryFactory, "InvalidPrivateTokenCodehash");
+    await expect(factoryFactory.deploy(
+      vault,
+      lpTokenFactory,
+      poolDeployer,
+      deployment.poolDeployerRuntimeCodehash,
+      deployment.approvedCodehashes,
+      outsider.address,
+      deployment.strategyRegistryRuntimeCodehash,
+    ))
+      .to.be.revertedWithCustomError(
+        factoryFactory,
+        "InvalidInitializationStrategyRegistry",
+      );
+    await expect(
+      deployment.strategyRegistry.registerInitializationStrategy(
+        await unreviewedStrategy.getAddress(),
+      ),
+    ).to.be.revertedWithCustomError(
+      deployment.strategyRegistry,
+      "InvalidInitializationStrategy",
+    );
   });
 
-  it("creates one canonical permissionless pool and rejects duplicates", async function () {
-    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
-    const tokenA = await metadataFactory.deploy(18);
-    const tokenB = await metadataFactory.deploy(6);
-    await tokenA.waitForDeployment();
-    await tokenB.waitForDeployment();
-    const { approvedCodehash, approvedCodehashes, factory, lpTokenFactory, vault } =
-      await deployConfidentialFactory();
+  it("creates one canonical standard pool and preserves pool security metadata", async function () {
+    const [, outsider] = await ethers.getSigners();
+    const deployment = await deployConfidentialFactory();
+    const { factory, lpTokenFactory, representativeTokens, vault } = deployment;
+    const launch = await configureConfidentialLaunch(deployment);
+    const tokenAAddress = await representativeTokens[0].getAddress();
+    const tokenBAddress = await representativeTokens[1].getAddress();
 
-    const tokenAAddress = await tokenA.getAddress();
-    const tokenBAddress = await tokenB.getAddress();
-    const tx = await factory.createPool(tokenBAddress, tokenAAddress, 6, 18, 30);
+    const tx = await factory.createPool(
+      tokenBAddress,
+      tokenAAddress,
+      6,
+      18,
+      30,
+    );
     const receipt = await tx.wait();
     const created = receipt?.logs
       .map((log) => {
@@ -54,80 +100,60 @@ describe("ConfidentialCPMMFactory", function () {
         }
       })
       .find((log) => log?.name === "PoolCreated");
-
     expect(created).to.not.equal(undefined);
     const pool = created?.args.pool as string;
+    const poolContract = await ethers.getContractAt("ConfidentialCPMM", pool);
+
+    expect(await factory.PROTOCOL_VERSION()).to.equal(3n);
+    expect(await factory.PRIVACY_MODE()).to.equal(1n);
     expect(await factory.isPool(pool)).to.equal(true);
+    expect(await factory.allPoolsLength()).to.equal(1n);
+    expect(await factory.allPools(0)).to.equal(pool);
     expect(await factory.feeVault()).to.equal(await vault.getAddress());
     expect(await vault.confidentialFactory()).to.equal(await factory.getAddress());
     expect(await factory.isApprovedFeeTier(5)).to.equal(true);
     expect(await factory.isApprovedFeeTier(30)).to.equal(true);
     expect(await factory.isApprovedFeeTier(100)).to.equal(true);
     expect(await factory.isApprovedFeeTier(25)).to.equal(false);
-    expect(await factory.isApprovedPrivateTokenCodehash(approvedCodehash)).to.equal(true);
     expect(await factory.isApprovedPrivateToken(tokenAAddress)).to.equal(true);
     expect(await factory.isApprovedPrivateToken(tokenBAddress)).to.equal(true);
-    expect(await factory.isApprovedPrivateToken(ethers.ZeroAddress)).to.equal(false);
-    expect(await factory.approvedPrivateTokenCodehashesLength())
-      .to.equal(BigInt(approvedCodehashes.length));
-    for (let index = 0; index < approvedCodehashes.length; index++) {
-      expect(await factory.approvedPrivateTokenCodehash(index))
-        .to.equal(approvedCodehashes[index]);
-    }
-    const [deployer] = await ethers.getSigners();
-    const lpTokenFactoryAddress = await factory.lpTokenFactory();
-    expect(lpTokenFactoryAddress).to.equal(await lpTokenFactory.getAddress());
-    expect(await factory.PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH()).to.equal(
-      ethers.keccak256(await ethers.provider.getCode(lpTokenFactoryAddress)),
+    expect(await factory.initializationStrategyRegistryFinalized()).to.equal(true);
+    expect(await factory.initializationStrategiesLength()).to.equal(1n);
+    expect(await factory.initializationStrategyAt(0)).to.equal(ethers.ZeroAddress);
+    expect(await factory.initializationStrategyAt(1)).to.equal(
+      await launch.strategy.getAddress(),
     );
-    expect(await factory.bootstrapAdapter()).to.equal(ethers.ZeroAddress);
-    expect(await factory.bestExecutionRouter()).to.equal(ethers.ZeroAddress);
-    const [, outsider] = await ethers.getSigners();
-    expect(await factory.bootstrapConfigurator()).to.equal(deployer.address);
-    const decoyAddress = await lpTokenFactory.connect(outsider).create.staticCall(pool);
-    await lpTokenFactory.connect(outsider).create(pool);
-    const decoy = await ethers.getContractAt("PrivateLPToken", decoyAddress);
-    expect(await decoy.pool()).to.equal(pool);
-    expect(await lpTokenFactory.isIssuedToken(pool, decoyAddress, outsider.address))
-      .to.equal(true);
-    expect(await lpTokenFactory.isIssuedToken(pool, decoyAddress, await factory.getAddress()))
-      .to.equal(false);
+    expect(
+      await factory.initializationStrategyClass(await launch.strategy.getAddress()),
+    ).to.equal(1n);
+    expect(await poolContract.initializationStrategy()).to.equal(ethers.ZeroAddress);
+    expect(await poolContract.bootstrapper()).to.equal(await factory.getAddress());
+    expect(await poolContract.feeBps()).to.equal(30n);
+    expect(await poolContract.feeVault()).to.equal(await vault.getAddress());
 
-    const migratorFactory = await ethers.getContractFactory("ConfidentialLaunchpadMigrator");
-    const migrator = await migratorFactory.deploy(await factory.getAddress());
-    await migrator.waitForDeployment();
-    await expect(
-      factory.connect(outsider).setBootstrapAdapter(await migrator.getAddress()),
-    ).to.be.revertedWithCustomError(factory, "BootstrapAdapterUnauthorized");
-    await factory.setBootstrapAdapter(await migrator.getAddress());
-    expect(await factory.bootstrapAdapter()).to.equal(await migrator.getAddress());
-    await expect(
-      factory.setBootstrapAdapter(await migrator.getAddress()),
-    ).to.be.revertedWithCustomError(factory, "BootstrapAdapterAlreadyConfigured");
-
-    await expect(
-      factory.setBestExecutionRouter(await migrator.getAddress()),
-    ).to.be.revertedWithCustomError(factory, "InvalidBestExecutionRouter");
-    const bestExecutionRouter = await (
-      await ethers.getContractFactory("ConfidentialBestExecutionRouter")
-    ).deploy(await factory.getAddress());
-    await bestExecutionRouter.waitForDeployment();
-    await expect(
-      factory.connect(outsider).setBestExecutionRouter(
-        await bestExecutionRouter.getAddress(),
+    const shareTokenAddress = await poolContract.lpToken();
+    const shareToken = await ethers.getContractAt("PrivateLPToken", shareTokenAddress);
+    expect(await shareToken.pool()).to.equal(pool);
+    expect(
+      await lpTokenFactory.isIssuedToken(
+        pool,
+        shareTokenAddress,
+        await factory.getAddress(),
       ),
-    ).to.be.revertedWithCustomError(factory, "BestExecutionRouterUnauthorized");
+    ).to.equal(true);
+    expect(await shareToken.publicAmountsEnabled()).to.equal(false);
+
     await expect(
-      factory.setBestExecutionRouter(await bestExecutionRouter.getAddress()),
-    ).to.emit(factory, "BestExecutionRouterConfigured")
-      .withArgs(await bestExecutionRouter.getAddress());
-    expect(await factory.bestExecutionRouter())
-      .to.equal(await bestExecutionRouter.getAddress());
+      factory.createPool(tokenAAddress, tokenBAddress, 18, 6, 30),
+    ).to.be.revertedWithCustomError(factory, "PoolAlreadyExists");
     await expect(
-      factory.setBestExecutionRouter(await bestExecutionRouter.getAddress()),
-    ).to.be.revertedWithCustomError(factory, "BestExecutionRouterAlreadyConfigured");
+      factory.createPool(tokenAAddress, tokenBAddress, 18, 6, 25),
+    ).to.be.revertedWithCustomError(factory, "InvalidFee");
     await expect(
       factory.connect(outsider).bootstrapPool(
+        await launch.strategy.getAddress(),
+        ethers.id("unauthorized-launch"),
+        ethers.id("unauthorized-commitment"),
         pool,
         outsider.address,
         1n,
@@ -136,159 +162,394 @@ describe("ConfidentialCPMMFactory", function () {
         0n,
         2n,
       ),
-    ).to.be.revertedWithCustomError(factory, "BootstrapAdapterUnauthorized");
-    expect(await factory.allPoolsLength()).to.equal(1n);
-    expect(await factory.allPools(0)).to.equal(pool);
-
-    const poolContract = await ethers.getContractAt("ConfidentialCPMM", pool);
-    await expect(
-      poolContract.connect(outsider).quoteExactInputForRouter(0n, true),
-    ).to.be.revertedWithCustomError(poolContract, "BestExecutionRouterUnauthorized");
-    await expect(
-      poolContract.connect(outsider).initializeLPToken(decoyAddress),
-    ).to.be.revertedWithCustomError(poolContract, "BootstrapUnauthorized");
-    expect(await poolContract.bootstrapper()).to.equal(await factory.getAddress());
-    expect(await poolContract.feeBps()).to.equal(30n);
-    expect(await poolContract.feeVault()).to.equal(await vault.getAddress());
-    expect(await poolContract.PROTOCOL_FEE_SHARE_NUMERATOR()).to.equal(1n);
-    expect(await poolContract.PROTOCOL_FEE_SHARE_DENOMINATOR()).to.equal(6n);
-    const shareTokenAddress = await poolContract.lpToken();
-    expect(shareTokenAddress).to.not.equal(ethers.ZeroAddress);
-    const shareToken = await ethers.getContractAt("PrivateLPToken", shareTokenAddress);
-    expect(await shareToken.pool()).to.equal(pool);
-    expect(await lpTokenFactory.isIssuedToken(
-      pool,
-      shareTokenAddress,
-      await factory.getAddress(),
-    )).to.equal(true);
-    expect(await shareToken.publicAmountsEnabled()).to.equal(false);
-    await expect(shareToken["burn(uint256)"](1n))
-      .to.be.revertedWithCustomError(shareToken, "HolderBurnDisabled");
-    await expect(shareToken.burnGt(1n))
-      .to.be.revertedWithCustomError(shareToken, "HolderBurnDisabled");
-    await expect(shareToken["burn(((uint256,uint256),bytes))"]({
-      ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n },
-      signature: "0x1234",
-    })).to.be.revertedWithCustomError(shareToken, "HolderBurnDisabled");
-    await expect(
-      poolContract.bootstrapLiquidity(
-        await (await ethers.getSigners())[0].getAddress(),
-        outsider.address,
-        1n,
-        1n,
-        1n,
-        0n,
-        2n,
-      ),
-    ).to.be.revertedWithCustomError(poolContract, "BootstrapUnauthorized");
-
-    await expect(
-      factory.createPool(tokenAAddress, tokenBAddress, 18, 6, 30),
-    ).to.be.revertedWithCustomError(factory, "PoolAlreadyExists");
-    await expect(
-      factory.createPool(tokenAAddress, tokenBAddress, 18, 6, 25),
-    ).to.be.revertedWithCustomError(factory, "InvalidFee");
-
-    const unapprovedPrivateToken = await (
-      await ethers.getContractFactory("PrivateLPToken")
-    ).deploy(outsider.address);
-    await unapprovedPrivateToken.waitForDeployment();
-    expect(await factory.isApprovedPrivateToken(await unapprovedPrivateToken.getAddress()))
-      .to.equal(false);
-    await expect(
-      factory.createPool(
-        tokenAAddress,
-        await unapprovedPrivateToken.getAddress(),
-        18,
-        18,
-        30,
-      ),
-    ).to.be.revertedWithCustomError(factory, "UnsupportedPrivateTokenImplementation");
+    ).to.be.revertedWithCustomError(factory, "InitializationStrategyUnauthorized");
   });
 
-  it("binds canonical identity to pair, fee, privacy mode and protocol version", async function () {
-    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
-    const tokenA = await metadataFactory.deploy(18);
-    const tokenB = await metadataFactory.deploy(6);
-    await tokenA.waitForDeployment();
-    await tokenB.waitForDeployment();
-
-    const { factory } = await deployConfidentialFactory();
-    expect(await factory.PRIVACY_MODE()).to.equal(1n);
-    expect(await factory.PROTOCOL_VERSION()).to.equal(2n);
-
-    const a = await tokenA.getAddress();
-    const b = await tokenB.getAddress();
-    const [token0, token1] = a.toLowerCase() < b.toLowerCase() ? [a, b] : [b, a];
-    const key = await factory.poolKey(a, b, 18, 6, 30);
-    const reverseKey = await factory.poolKey(b, a, 6, 18, 30);
-    const expected = ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address", "uint256", "uint8", "uint256"],
-        [token0, token1, 30, 1, 2],
-      ),
-    );
-    expect(key).to.equal(reverseKey);
-    expect(key).to.equal(expected);
-    expect(await factory.poolKey(a, b, 0, 0, 30)).to.equal(key);
-    expect(await factory.poolKey(a, b, 18, 6, 100)).to.not.equal(key);
-  });
-
-  it("reuses the canonical pool for launchpad bootstrap without a parallel namespace", async function () {
-    const [deployer, outsider] = await ethers.getSigners();
-    const metadataFactory = await ethers.getContractFactory("MockTokenMetadata");
-    const tokenA = await metadataFactory.deploy(18);
-    const tokenB = await metadataFactory.deploy(6);
-    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
-
-    const { factory } = await deployConfidentialFactory();
-    const adapter = await (await ethers.getContractFactory("MockBootstrapAdapter")).deploy();
-    await adapter.waitForDeployment();
-    await factory.connect(deployer).setBootstrapAdapter(await adapter.getAddress());
-
-    const a = await tokenA.getAddress();
-    const b = await tokenB.getAddress();
-    await factory.connect(outsider).createPool(a, b, 18, 6, 30);
-    const manualKey = await factory.poolKey(a, b, 18, 6, 30);
-    const manualPool = await factory.getPool(manualKey);
-
-    await expect(
-      factory.connect(outsider).getOrCreatePoolForBootstrap(a, b, 18, 6, 30),
-    ).to.be.revertedWithCustomError(factory, "BootstrapAdapterUnauthorized");
-
-    expect(
-      await adapter.getOrCreatePoolForBootstrap.staticCall(
-        await factory.getAddress(),
-        a,
-        b,
-        18,
-        6,
-        30,
-      ),
-    ).to.equal(manualPool);
-    await adapter.getOrCreatePoolForBootstrap(
-      await factory.getAddress(),
+  it("binds canonical identity to the complete pool key", async function () {
+    const deployment = await deployConfidentialFactory();
+    const launch = await configureConfidentialLaunch(deployment);
+    const { factory, representativeTokens } = deployment;
+    const a = await representativeTokens[0].getAddress();
+    const b = await representativeTokens[1].getAddress();
+    const [token0, token1] =
+      a.toLowerCase() < b.toLowerCase() ? [a, b] : [b, a];
+    const standardKey = await factory.poolKey(a, b, 18, 6, 30, ethers.ZeroAddress);
+    const reverseKey = await factory.poolKey(b, a, 6, 18, 30, ethers.ZeroAddress);
+    const protectedKey = await factory.poolKey(
       a,
       b,
       18,
       6,
       30,
+      await launch.strategy.getAddress(),
     );
-    expect(await factory.getPool(manualKey)).to.equal(manualPool);
-    expect(await factory.allPoolsLength()).to.equal(1n);
+    const expected = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address", "address", "uint256", "uint8", "uint256", "address"],
+        [token0, token1, 30, 1, 3, ethers.ZeroAddress],
+      ),
+    );
 
-    await adapter.getOrCreatePoolForBootstrap(
-      await factory.getAddress(),
-      a,
-      b,
+    expect(standardKey).to.equal(reverseKey);
+    expect(standardKey).to.equal(expected);
+    expect(await factory.poolKey(a, b, 0, 0, 30, ethers.ZeroAddress)).to.equal(
+      standardKey,
+    );
+    expect(protectedKey).to.not.equal(standardKey);
+    expect(await factory.poolKey(a, b, 18, 6, 100, ethers.ZeroAddress)).to.not.equal(
+      standardKey,
+    );
+  });
+
+  it("commits a protected pool without blocking the standard market", async function () {
+    const [authority, creator, outsider] = await ethers.getSigners();
+    const deployment = await deployConfidentialFactory();
+    const launch = await configureConfidentialLaunch(
+      deployment,
+      authority.address,
+    );
+    const { factory, representativeTokens } = deployment;
+    const tokenA = await representativeTokens[0].getAddress();
+    const tokenB = await representativeTokens[1].getAddress();
+    await factory.createPool(tokenA, tokenB, 18, 6, 30);
+    const standardKey = await factory.poolKey(
+      tokenA,
+      tokenB,
       18,
       6,
-      100,
+      30,
+      ethers.ZeroAddress,
     );
-    const secondKey = await factory.poolKey(a, b, 18, 6, 100);
-    const secondPool = await factory.getPool(secondKey);
-    expect(secondPool).to.not.equal(ethers.ZeroAddress);
-    expect(await factory.isPool(secondPool)).to.equal(true);
+    const standardPool = await factory.getPool(standardKey);
+    const signed = await signLaunchCommitment({
+      authority,
+      creator,
+      factory,
+      migrator: launch.migrator,
+      strategy: launch.strategy,
+      tokenA,
+      tokenB,
+      decimalsA: 18,
+      decimalsB: 6,
+    });
+
+    const [expectedProtectedPool, commitmentHash] =
+      await launch.strategy.connect(outsider).commitLaunch.staticCall(
+        signed.commitment,
+        signed.creatorAuthorization,
+        signed.authorityAuthorization,
+      );
+    await expect(
+      launch.strategy.connect(outsider).commitLaunch(
+        signed.commitment,
+        signed.creatorAuthorization,
+        signed.authorityAuthorization,
+      ),
+    ).to.emit(launch.strategy, "LaunchCommitted");
+
+    const protectedKey = await factory.poolKey(
+      tokenA,
+      tokenB,
+      18,
+      6,
+      30,
+      await launch.strategy.getAddress(),
+    );
+    const protectedPool = await factory.getPool(protectedKey);
+    const protectedContract = await ethers.getContractAt(
+      "ConfidentialCPMM",
+      protectedPool,
+    );
+    expect(protectedPool).to.equal(expectedProtectedPool);
+    expect(protectedPool).to.not.equal(standardPool);
     expect(await factory.allPoolsLength()).to.equal(2n);
+    expect(await protectedContract.initializationStrategy()).to.equal(
+      await launch.strategy.getAddress(),
+    );
+    expect(await protectedContract.initialized()).to.equal(false);
+    const record = await launch.strategy.getLaunch(signed.commitment.launchId);
+    expect(record.pool).to.equal(protectedPool);
+    expect(record.commitmentHash).to.equal(commitmentHash);
+    expect(record.status).to.equal(1n);
+
+    const emptyInput = {
+      ciphertext: { ciphertextHigh: 0n, ciphertextLow: 0n },
+      signature: "0x",
+    };
+    await expect(
+      protectedContract.connect(outsider).addLiquidity(
+        emptyInput,
+        emptyInput,
+        emptyInput,
+        emptyInput,
+        emptyInput,
+        false,
+        2n ** 63n,
+      ),
+    ).to.be.revertedWithCustomError(
+      protectedContract,
+      "ProtectedInitializationRequired",
+    );
+    await expect(
+      launch.strategy.connect(outsider).authorizeInitialization(
+        signed.commitment.launchId,
+        await launch.migrator.getAddress(),
+        protectedPool,
+        creator.address,
+        commitmentHash,
+      ),
+    ).to.be.revertedWithCustomError(
+      launch.strategy,
+      "InitializationUnauthorized",
+    );
+    await expect(
+      launch.strategy.commitLaunch(
+        signed.commitment,
+        signed.creatorAuthorization,
+        signed.authorityAuthorization,
+      ),
+    ).to.be.revertedWithCustomError(launch.strategy, "LaunchAlreadyExists");
+
+    const replacement = await signLaunchCommitment({
+      authority,
+      creator,
+      factory,
+      migrator: launch.migrator,
+      strategy: launch.strategy,
+      tokenA,
+      tokenB,
+      decimalsA: 18,
+      decimalsB: 6,
+      launchId: ethers.id("replacement-launch"),
+    });
+    await expect(
+      launch.strategy.commitLaunch(
+        replacement.commitment,
+        replacement.creatorAuthorization,
+        replacement.authorityAuthorization,
+      ),
+    ).to.be.revertedWithCustomError(launch.strategy, "ActiveLaunchExists");
+
+    await launch.strategy.connect(creator).cancelLaunch(signed.commitment.launchId);
+    const mismatchedMetadata = await signLaunchCommitment({
+      authority,
+      creator,
+      factory,
+      migrator: launch.migrator,
+      strategy: launch.strategy,
+      tokenA,
+      tokenB,
+      decimalsA: 17,
+      decimalsB: 6,
+      launchId: ethers.id("mismatched-metadata-launch"),
+    });
+    await expect(
+      launch.strategy.commitLaunch(
+        mismatchedMetadata.commitment,
+        mismatchedMetadata.creatorAuthorization,
+        mismatchedMetadata.authorityAuthorization,
+      ),
+    ).to.be.revertedWithCustomError(factory, "InvalidCanonicalPool");
+    await launch.strategy.commitLaunch(
+      replacement.commitment,
+      replacement.creatorAuthorization,
+      replacement.authorityAuthorization,
+    );
+    expect((await launch.strategy.getLaunch(replacement.commitment.launchId)).pool)
+      .to.equal(protectedPool);
+    expect(await factory.allPoolsLength()).to.equal(2n);
+  });
+
+  it("registers two reviewed strategies with independent pinned migrators", async function () {
+    const [authority, secondAuthority] = await ethers.getSigners();
+    const deployment = await deployConfidentialFactory();
+    const strategyFactory = await ethers.getContractFactory(
+      "ConfidentialLaunchInitializationStrategy",
+    );
+    const strategyAddresses: string[] = [];
+    const migratorAddresses: string[] = [];
+
+    for (const launchAuthority of [authority.address, secondAuthority.address]) {
+      const strategy = await strategyFactory.deploy(
+        await deployment.factory.getAddress(),
+        await deployment.strategyRegistry.getAddress(),
+        launchAuthority,
+      );
+      await strategy.waitForDeployment();
+      strategyAddresses.push(await strategy.getAddress());
+      migratorAddresses.push(await strategy.migrator());
+    }
+
+    for (const strategy of strategyAddresses) {
+      await deployment.strategyRegistry.registerInitializationStrategy(strategy);
+    }
+    await deployment.strategyRegistry.finalize();
+
+    expect(await deployment.factory.initializationStrategiesLength()).to.equal(2n);
+    expect(await deployment.factory.initializationStrategyAt(1)).to.equal(
+      strategyAddresses[0],
+    );
+    expect(await deployment.factory.initializationStrategyAt(2)).to.equal(
+      strategyAddresses[1],
+    );
+    expect(await deployment.factory.initializationStrategyClass(strategyAddresses[0]))
+      .to.equal(1n);
+    expect(await deployment.factory.initializationStrategyClass(strategyAddresses[1]))
+      .to.equal(2n);
+    expect(migratorAddresses[0]).to.not.equal(migratorAddresses[1]);
+  });
+
+  it("requires genuinely independent creator and launch-authority approvals", async function () {
+    const [, creator] = await ethers.getSigners();
+    const deployment = await deployConfidentialFactory();
+    const launch = await configureConfidentialLaunch(
+      deployment,
+      creator.address,
+    );
+    const signed = await signLaunchCommitment({
+      authority: creator,
+      creator,
+      factory: deployment.factory,
+      migrator: launch.migrator,
+      strategy: launch.strategy,
+      tokenA: await deployment.representativeTokens[0].getAddress(),
+      tokenB: await deployment.representativeTokens[1].getAddress(),
+      decimalsA: 18,
+      decimalsB: 6,
+    });
+
+    await expect(
+      launch.strategy.commitLaunch(
+        signed.commitment,
+        signed.creatorAuthorization,
+        signed.authorityAuthorization,
+      ),
+    ).to.be.revertedWithCustomError(launch.strategy, "InvalidCommitment");
+  });
+
+  it("expires, supersedes, and consumes a protected launch exactly once", async function () {
+    const [authority, creator, outsider] = await ethers.getSigners();
+    const deployment = await deployConfidentialFactory();
+    const launch = await configureConfidentialLaunch(
+      deployment,
+      authority.address,
+    );
+    const tokenA = await deployment.representativeTokens[0].getAddress();
+    const tokenB = await deployment.representativeTokens[1].getAddress();
+    const latest = await ethers.provider.getBlock("latest");
+    if (!latest) throw new Error("Latest block unavailable");
+    const expired = await signLaunchCommitment({
+      authority,
+      creator,
+      factory: deployment.factory,
+      migrator: launch.migrator,
+      strategy: launch.strategy,
+      tokenA,
+      tokenB,
+      decimalsA: 18,
+      decimalsB: 6,
+      launchId: ethers.id("expiring-launch"),
+      authorizationDeadline: BigInt(latest.timestamp + 1),
+      migrationDeadline: BigInt(latest.timestamp + 2),
+    });
+    await launch.strategy.connect(outsider).commitLaunch(
+      expired.commitment,
+      expired.creatorAuthorization,
+      expired.authorityAuthorization,
+    );
+    await ethers.provider.send("evm_increaseTime", [3]);
+    await ethers.provider.send("evm_mine", []);
+    await expect(launch.strategy.expireLaunch(expired.commitment.launchId))
+      .to.emit(launch.strategy, "LaunchExpired");
+
+    const replacement = await signLaunchCommitment({
+      authority,
+      creator,
+      factory: deployment.factory,
+      migrator: launch.migrator,
+      strategy: launch.strategy,
+      tokenA,
+      tokenB,
+      decimalsA: 18,
+      decimalsB: 6,
+      launchId: ethers.id("replacement-after-expiry"),
+    });
+    const [, commitmentHash] = await launch.strategy.commitLaunch.staticCall(
+      replacement.commitment,
+      replacement.creatorAuthorization,
+      replacement.authorityAuthorization,
+    );
+    await launch.strategy.commitLaunch(
+      replacement.commitment,
+      replacement.creatorAuthorization,
+      replacement.authorityAuthorization,
+    );
+    const record = await launch.strategy.getLaunch(replacement.commitment.launchId);
+    const factoryAddress = await deployment.factory.getAddress();
+    await ethers.provider.send("hardhat_setBalance", [
+      factoryAddress,
+      "0x1000000000000000000",
+    ]);
+    await ethers.provider.send("hardhat_impersonateAccount", [factoryAddress]);
+    const factorySigner = await ethers.getSigner(factoryAddress);
+    try {
+      await expect(
+        launch.strategy.connect(factorySigner).authorizeInitialization(
+          replacement.commitment.launchId,
+          await launch.migrator.getAddress(),
+          record.pool,
+          creator.address,
+          ethers.id("wrong-commitment"),
+        ),
+      ).to.be.revertedWithCustomError(
+        launch.strategy,
+        "InitializationUnauthorized",
+      );
+      await expect(
+        launch.strategy.connect(factorySigner).authorizeInitialization(
+          replacement.commitment.launchId,
+          await launch.migrator.getAddress(),
+          record.pool,
+          creator.address,
+          commitmentHash,
+        ),
+      ).to.emit(launch.strategy, "LaunchInitializationAuthorized");
+      await expect(
+        launch.strategy.connect(factorySigner).authorizeInitialization(
+          replacement.commitment.launchId,
+          await launch.migrator.getAddress(),
+          record.pool,
+          creator.address,
+          commitmentHash,
+        ),
+      ).to.be.revertedWithCustomError(launch.strategy, "LaunchNotActive");
+    } finally {
+      await ethers.provider.send("hardhat_stopImpersonatingAccount", [
+        factoryAddress,
+      ]);
+    }
+
+    const forbiddenReplacement = await signLaunchCommitment({
+      authority,
+      creator,
+      factory: deployment.factory,
+      migrator: launch.migrator,
+      strategy: launch.strategy,
+      tokenA,
+      tokenB,
+      decimalsA: 18,
+      decimalsB: 6,
+      launchId: ethers.id("replacement-after-completion"),
+    });
+    await expect(
+      launch.strategy.commitLaunch(
+        forbiddenReplacement.commitment,
+        forbiddenReplacement.creatorAuthorization,
+        forbiddenReplacement.authorityAuthorization,
+      ),
+    ).to.be.revertedWithCustomError(
+      launch.strategy,
+      "CompletedPoolCannotBeSuperseded",
+    );
   });
 });

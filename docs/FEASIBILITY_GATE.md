@@ -19,13 +19,14 @@ persisted.
 
 - arbitrary-ratio confidential initialization;
 - a second proportional LP join without surplus donation;
-- two canonical fee-tier candidates for the same pair;
+- multiple complete-key fee/strategy candidates for the same pair;
 - canonical confidential discovery and encrypted transaction quote selection
   across two fee tiers;
 - transaction-scoped GT validation and reuse across multiple pool calls;
 - private best-output selection with only the winning result offboarded;
-- factory-derived 5/30/100 bps candidates with absent/uninitialized/invalid
-  candidate isolation and deterministic lower-tier ties;
+- factory-derived 5/30/100 bps and reviewed strategy-class candidates selected
+  through a bounded nine-bit bitmap, with absent/uninitialized/invalid candidate
+  isolation and deterministic fee/class ties;
 - atomic best execution with exact router escrow, selected-pool allowance,
   settlement parity, encrypted slippage rollback and no balance/allowance residue;
 - direct encrypted swaps in both directions;
@@ -36,22 +37,22 @@ persisted.
   a true full LP exit and with both public batch counters cleared;
 - second-LP exit, timed lock/unlock, permanent lock and true full exit;
 - atomic launchpad rollback for an impossible encrypted price interval;
-- successful launchpad migration through the same canonical factory fee policy;
+- successful launchpad migration into its committed protected complete key while
+  retaining the same canonical factory fee policy;
 - launchpad replay rejection without additional token movement;
 - recoverable creator-held launchpad full exit and zero disposable pool residue.
 
 The staged probe proves ciphertext-only user reads work under `eth_call`, while
 raw stored-ciphertext `OnBoard`, authenticated validation, arithmetic,
 comparison/mux and both full quote forms fail. A real transaction executes the
-same MPC operations. A separate funded production gate then proved one paid
-router transaction can reuse one validated GT input across canonical pools,
-privately select, and either offboard only the winner or settle atomically. The
-stable SDK therefore exposes the paid canonical best-quote/best-swap transport
-and labels it explicitly. The paid per-pool transaction remains the primary
-proven quote on deployments without the finalized router, and remains a direct
-compatibility path after that router is deployed. This enables testnet routing
-without publishing reserves, but gas, latency and public winning-route metadata
-remain product limitations rather than normal gasless quote UX.
+same MPC operations. The lower-level funded probe proved that one paid router
+transaction can reuse one validated GT input across pools. The final production
+router still requires fresh funded mixed standard/protected evidence before it
+is promoted. The stable SDK exposes that paid canonical best-quote/best-swap
+transport explicitly, while paid per-pool transactions remain the currently
+proven primary quote operation. This enables a testnet routing path without
+publishing reserves, but gas, latency and public winning-route metadata remain
+product limitations rather than normal gasless quote UX.
 
 ## Accounting model
 

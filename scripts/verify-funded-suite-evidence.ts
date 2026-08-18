@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 
-import { ethers } from "hardhat";
+import { ethers } from "../hardhat/runtime.js";
 
 import {
   readFundedSuiteEvidence,

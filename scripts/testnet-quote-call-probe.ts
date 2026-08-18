@@ -1,18 +1,34 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
-import type { TransactionReceipt } from "ethers";
-import { ethers } from "hardhat";
+import { Contract, type TransactionReceipt } from "ethers";
+import { ethers } from "../hardhat/runtime.js";
 import {
   verifyDeployedRuntimeArtifactWithProvenance,
   type RuntimeArtifactProvenance,
 } from "./runtime-artifact";
 import {
+  MinedTransactionStatusError,
   requireMinedSuccess,
   safeTestnetErrorSummary,
+  transactionHashFromError,
 } from "./testnet-transaction-evidence";
-import { trustedGitExecutable } from "./trusted-git";
+import type { FundedRecoveryJournal } from "./funded-recovery-journal";
+import {
+  FundedCotiWallet,
+  openFundedRecoveryJournal,
+  withFundedTransactionEvidence,
+} from "./funded-transaction-wallet";
+import { createFundedDeploymentBinding } from "./funded-deployment-binding";
+import {
+  requiredTestnetDeploymentRecordPath,
+  verifyConfiguredTestnetDeployment,
+} from "./testnet-deployment-provenance";
+import {
+  trustedGitArguments,
+  trustedGitEnvironment,
+  trustedGitExecutable,
+} from "./trusted-git";
 
 const execFileAsync = promisify(execFile);
 const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
@@ -23,6 +39,7 @@ const INPUT = 10_000n;
 const FEE_BPS = 30n;
 const CALL_GAS_LIMIT = 30_000_000n;
 let stage = "configuration";
+let recoveryJournal: FundedRecoveryJournal | undefined;
 
 type ProbeResult = {
   name: string;
@@ -38,15 +55,17 @@ type MinedEvidence = Readonly<{
 async function assertCleanCommittedSource(): Promise<string> {
   const cwd = process.cwd();
   const git = trustedGitExecutable(process.env, cwd);
+  const gitOptions = { cwd, env: trustedGitEnvironment(), encoding: "utf8" } as const;
   const [head, status] = await Promise.all([
-    execFileAsync(git, ["rev-parse", "--verify", "HEAD"], {
-      cwd,
-      encoding: "utf8",
-    }),
     execFileAsync(
       git,
-      ["status", "--porcelain=v1", "--untracked-files=all", "--", "."],
-      { cwd, encoding: "utf8" },
+      trustedGitArguments(["rev-parse", "--verify", "HEAD"]),
+      gitOptions,
+    ),
+    execFileAsync(
+      git,
+      trustedGitArguments(["status", "--porcelain=v1", "--untracked-files=all", "--", "."]),
+      gitOptions,
     ),
   ]);
   const sourceCommit = head.stdout.trim();
@@ -58,7 +77,7 @@ async function assertCleanCommittedSource(): Promise<string> {
   }
   await execFileAsync(
     git,
-    [
+    trustedGitArguments([
       "ls-files",
       "--error-unmatch",
       "--",
@@ -67,8 +86,8 @@ async function assertCleanCommittedSource(): Promise<string> {
       "scripts/runtime-artifact.ts",
       "hardhat.config.ts",
       "package-lock.json",
-    ],
-    { cwd, encoding: "utf8" },
+    ]),
+    gitOptions,
   );
   return sourceCommit.toLowerCase();
 }
@@ -97,11 +116,38 @@ async function submit(
   }>,
 ): Promise<Readonly<{ transactionHash: string; receipt: TransactionReceipt }>> {
   stage = label;
-  return requireMinedSuccess(
-    label,
-    operation,
-    (hash) => ethers.provider.getTransactionReceipt(hash),
-  );
+  if (!recoveryJournal) throw new Error("quote-call probe journal is not initialized");
+  try {
+    const evidence = await withFundedTransactionEvidence(
+      label,
+      recoveryJournal,
+      () => requireMinedSuccess(
+        label,
+        operation,
+        (hash) => ethers.provider.getTransactionReceipt(hash),
+      ),
+    );
+    recoveryJournal.recordTransaction(
+      evidence.transactionHash,
+      "mined-success",
+      evidence.receipt.blockNumber,
+    );
+    return evidence;
+  } catch (error) {
+    const hash = transactionHashFromError(error);
+    if (hash) {
+      if (!recoveryJournal.transactions.some((transaction) =>
+        transaction.hash.toLowerCase() === hash.toLowerCase()
+      )) throw new Error("quote probe transaction was not locally signed and journaled", {
+        cause: error,
+      });
+      recoveryJournal.recordTransaction(
+        hash,
+        error instanceof MinedTransactionStatusError ? "mined-failure" : "outcome-unknown",
+      );
+    }
+    throw error;
+  }
 }
 
 async function main(): Promise<void> {
@@ -119,12 +165,43 @@ async function main(): Promise<void> {
   stage = "quote identity initialization";
   const quoteKey = requiredPrivateKey("COTI_QUOTE_PRIVATE_KEY");
   const quoteAesKey = requiredAesKey("COTI_QUOTE_AES_KEY");
-  const quoteWallet = new CotiWallet(quoteKey, ethers.provider, { aesKey: quoteAesKey });
+  const quoteWallet = new FundedCotiWallet(quoteKey, ethers.provider, { aesKey: quoteAesKey });
   quoteWallet.setAesKey(quoteAesKey);
   const quoteAddress = await quoteWallet.getAddress();
+  const factoryAddress = ethers.getAddress(process.env.COTI_FACTORY ?? "");
+  const deploymentRecord = await verifyConfiguredTestnetDeployment(
+    requiredTestnetDeploymentRecordPath(),
+    ethers.provider,
+    [{
+      recordKey: "confidentialFactory",
+      contractName: "ConfidentialCPMMFactory",
+      address: factoryAddress,
+    }],
+  );
+  if (deploymentRecord.sourceCommit !== sourceCommit) {
+    throw new Error("quote-call probe source does not match the reviewed deployment source");
+  }
+  recoveryJournal = openFundedRecoveryJournal(quoteKey, {
+    runner: "quote-call-probe",
+    sourceCommit,
+    chainId: Number(network.chainId),
+    owner: quoteAddress,
+    deployment: await createFundedDeploymentBinding(deploymentRecord),
+  });
+  const unresolved = await recoveryJournal.reconcileTransactions(ethers.provider);
+  if (unresolved.length > 0) {
+    throw new Error("quote-call probe has an unresolved transaction; do not retry");
+  }
+  if (recoveryJournal.runStatus === "passed") {
+    console.log("COTI testnet MPC eth_call quote probe was already completed for this source.");
+    return;
+  }
+  if (recoveryJournal.transactions.length > 0 || recoveryJournal.resources.length > 0) {
+    throw new Error("quote-call probe journal is incomplete; inspect it before any rerun");
+  }
 
   stage = "probe deployment";
-  const factory = await ethers.getContractFactory("MpcQuoteCallProbe");
+  const factory = await ethers.getContractFactory("MpcQuoteCallProbe", quoteWallet);
   let probe: any;
   const deploymentEvidence = await submit("probe deployment", async () => {
     probe = await factory.deploy(RESERVE0, RESERVE1, quoteAddress, {
@@ -138,19 +215,26 @@ async function main(): Promise<void> {
     throw new Error("probe deployment mined without a contract handle; do not retry automatically");
   }
   const probeAddress = await probe.getAddress();
+  recoveryJournal.recordResource({
+    id: "mpc-quote-call-probe",
+    kind: "disposable-contract",
+    address: probeAddress,
+    creationTransactionHash: deploymentEvidence.transactionHash,
+    metadata: { contractName: "MpcQuoteCallProbe" },
+  });
   stage = "probe runtime provenance";
   const runtimeProvenance = await verifyDeployedRuntimeArtifactWithProvenance(
     "MpcQuoteCallProbe",
     probeAddress,
     ethers.provider,
   );
-  const quoteProbe = probe.connect(quoteWallet);
+  const quoteProbe = new Contract(probeAddress, probe.interface, quoteWallet);
   console.log(`MPC quote-call probe deployed: ${probeAddress}`);
 
   stage = "transactional MPC control";
   const controlEvidence = await submit(
     "transactional MPC control",
-    () => probe.publicDecryptRoundTrip(7n, { gasLimit: CALL_GAS_LIMIT }),
+    () => quoteProbe.publicDecryptRoundTrip(7n, { gasLimit: CALL_GAS_LIMIT }),
   );
   console.log(
     `SetPublic + Decrypt transaction control: supported tx=${controlEvidence.transactionHash} ` +
@@ -315,11 +399,16 @@ async function main(): Promise<void> {
     throw new Error("ciphertext-only storage reads unexpectedly failed");
   }
 
-  const gaslessQuoteSupported =
-    publicQuoteSupported || storedConstantQuoteSupported || encryptedQuoteSupported;
-  if (gaslessQuoteSupported) {
+  const gaslessPublicInputQuoteSupported =
+    publicQuoteSupported || storedConstantQuoteSupported;
+  const gaslessEncryptedInputQuoteSupported = encryptedQuoteSupported;
+  if (gaslessEncryptedInputQuoteSupported) {
     console.log(
-      "COTI testnet probe passed: at least one gasless confidential quote path is viable",
+      "COTI testnet probe passed: authenticated encrypted-input gasless quoting is viable",
+    );
+  } else if (gaslessPublicInputQuoteSupported) {
+    console.log(
+      "COTI testnet probe passed: only a plaintext-input quote path is viable; confidential gasless quoting remains unsupported",
     );
   } else {
     console.log(
@@ -345,10 +434,14 @@ async function main(): Promise<void> {
     calls: Object.freeze(results.map((result) => Object.freeze({ ...result }))),
     conclusion: Object.freeze({
       ciphertextStorageReadSupported: ciphertextReadSupported === true,
-      gaslessQuoteSupported,
-      paidPerPoolQuoteRemainsPrimary: true,
+      gaslessPublicInputQuoteSupported,
+      gaslessEncryptedInputQuoteSupported,
+      gaslessConfidentialQuoteSupported: gaslessEncryptedInputQuoteSupported,
+      paidPerPoolQuoteIsOnlyProvenExactPath: true,
     }),
   }), null, 2));
+  recoveryJournal.markRecovered("mpc-quote-call-probe", [deploymentEvidence.transactionHash]);
+  recoveryJournal.markRun("passed");
 }
 
 void main().catch((error: unknown) => {

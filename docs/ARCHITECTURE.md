@@ -4,9 +4,18 @@
 
 - `contracts/ConfidentialCPMM.sol`: immutable pair, fee policy, private reserve
   math, swap execution and private LP share accounting.
-- `contracts/ConfidentialCPMMFactory.sol`: one permissionless deterministic
-  canonical registry plus an adapter-only atomic bootstrap hook over that same
-  registry.
+- `contracts/ConfidentialCPMMFactory.sol`: deterministic complete-key registry
+  for standard and reviewed launch-protected confidential pools, plus the
+  adapter-only atomic bootstrap boundary.
+- `contracts/ConfidentialCPMMDeployer.sol`: one-time factory-bound CREATE2
+  deployer that keeps pool creation bytecode outside the factory runtime.
+- `contracts/ConfidentialInitializationStrategyRegistry.sol`: bounded,
+  finalizable registry of exact reviewed strategy runtime codehashes. Class zero
+  is the standard `address(0)` strategy and at most two nonzero classes may be
+  registered.
+- `contracts/ConfidentialLaunchInitializationStrategy.sol`: initialization-only
+  launch commitment policy requiring creator and launch-authority signatures.
+  It never receives tokens or participates in swaps.
 - `contracts/PrivateLPToken.sol`: pool-bound encrypted LP-share token using the
   official COTI `PrivateERC20` implementation.
 - `contracts/PrivateLPTokenFactory.sol`: permissionless deployer that keeps COTI
@@ -28,10 +37,12 @@
 - `contracts/PublicCPMMRouter.sol`: factory-gated exact-input routing for
   public pools only.
 - `contracts/ConfidentialBestExecutionRouter.sol`: factory-bound, single-hop
-  encrypted best quote and atomic best execution across the canonical v1 fee
-  tiers. Callers cannot provide candidate pools.
-- `contracts/ConfidentialLaunchpadMigrator.sol`: atomic creator-signed pool
-  creation/selection, encrypted allowance pulls and price-bounded bootstrap.
+  encrypted best quote and atomic best execution over a bounded nine-bit
+  fee-tier/strategy-class namespace. Callers choose at most three bits, never
+  candidate addresses.
+- `contracts/ConfidentialLaunchpadMigrator.sol`: atomic creator-signed encrypted
+  allowance pulls and price-bounded bootstrap of a previously committed
+  launch-protected pool.
 - `contracts/interfaces/`: stable ABI surface for clients and future factory/router
   work.
 - `periphery/`: documented boundary for routing, quoter and future adapters;
@@ -102,12 +113,12 @@ paths leave effective reserves and price unchanged. See `FEE_ECONOMICS.md`.
 The core pool exposes no public reserve, TVL, spot-price or TWAP getter. Current
 COTI testnet nodes allow ciphertext-only state reads but reject fresh MPC
 precompile work in `eth_call`, including stored ciphertext onboarding. The
-factory-bound router in this version therefore performs exact best quoting in one paid
+factory-bound router can therefore perform exact best quoting only in a paid
 transaction. It validates one caller-bound encrypted input, reuses its GT value
-across initialized canonical pools, selects the largest valid output in MPC and
-offboards only the winner. The recorded pre-router deployment still relies on
-the paid per-pool quote as its primary working path; that path becomes a
-compatibility fallback only after the router is finalized and freshly deployed.
+across initialized complete-key pools, selects the largest valid output in MPC
+and offboards only the winner. Paid per-pool quotes remain the only proven
+primary quote transport until the final router has fresh funded evidence. The
+router is also paid and is not a gasless main quote path.
 Public market data would be an intentional disclosure and belongs, if
 ever added, in a separately reviewed oracle or batch design rather than being
 inferred from settlement state.
@@ -177,12 +188,16 @@ transaction-scoped GT values only from the one router configured by their
 canonical factory. This preserves COTI authentication while permitting safe
 cross-contract GT reuse.
 
-Candidate identity is not caller controlled. The router derives the ordered
-pair, decimals and 5/30/100 bps keys from its immutable factory, verifies every
-present pool against the canonical mapping and immutable pool metadata, skips
-absent or uninitialized tiers, and resolves equal outputs to the lower fee tier.
-The quote path changes only router replay state and emits one caller-encrypted
-winner. It does not move funds or mutate any pool.
+Candidate identity is not caller controlled. The router interprets a nine-bit
+bitmap as three fee tiers multiplied by three pool classes: standard class zero
+plus at most two finalized reviewed strategy classes. It rejects unknown bits
+and more than three selected candidates. For each bit it derives the complete
+factory key, verifies canonical pool metadata, and skips absent or uninitialized
+variants. Iteration order is fee first, then class; equal encrypted outputs keep
+the first candidate, so lower fee wins and the standard class wins within that
+fee. The default bitmap selects the three standard fee tiers. The quote path
+changes only router replay state and emits one caller-encrypted winner. It does
+not move funds or mutate any pool.
 
 Atomic execution privately repeats selection, pulls the exact input into router
 escrow, grants an exact allowance only to the selected pool and settles directly
@@ -200,35 +215,51 @@ manipulation review.
 
 ## Launchpad migration boundary
 
-The launchpad path does not forward authenticated inputs. The creator signs all
-five encrypted values for the migrator's exact selector and separately signs an
-EIP-712 migration authorization containing their ordered ciphertext commitment
-hash and public migration context. The migrator validates the public authorization,
-resolves the canonical pool, validates each MPC input and pulls exact amounts into
-transaction-scoped escrow under explicit encrypted creator allowances. It then
-grants the canonical pool matching encrypted allowances. The factory invokes the
-pool bootstrap hook, and the pool verifies logical empty-reserve state, encrypted
-normalized price bounds and exact transfer deltas while pulling from the adapter.
-Compatible token transfers and accounting are atomic; unsolicited raw token
-balances stay outside price and LP claims and cannot block deterministic-address
-bootstrap. Any failure reverts pool creation, escrow, approvals and token pulls.
+The complete confidential pool key is:
 
-The bootstrap path is restricted to factory-created empty pools and cannot
-withdraw from or mutate an initialized pool. It resolves the same canonical key
-used by permissionless creation: ordered token pair, approved fee tier, privacy
-mode, and protocol version. If absent, creation and bootstrap occur in one outer
-transaction. If present and empty, it is reused. If initialized, migration
-rejects before MPC work or token movement. There is no creator-specific namespace
-or alternate liquidity market. The initial share unit is the minimum of the
-normalized private deposits, while full exit remains reserve-complete.
-This protects custody and canonical identity, not launch liveness: the factory
-does not reserve a permissionless pair for a creator. A prior initialized market
-therefore causes a fail-closed rejection rather than privileged overwrite or a
-parallel launch pool.
-The launchpad can select creator-held, timed-lock, or permanent-lock disposition
-as part of the same bootstrap transaction. A locked bootstrap records the private
-share amount directly in the pool lock and does not mint it to the creator; timed
-unlock later mints the amount, while permanent disposition never does.
+`ordered token pair + fee tier + privacy mode + protocol version + initialization strategy`
+
+Decimals are verified against each token and are immutable token metadata; they
+are not a separate market namespace. `address(0)` is the standard permissionless
+strategy. A nonzero strategy is legitimate only when its exact runtime codehash,
+interface, factory/migrator binding and registration are authenticated by the
+finalized bounded registry. One pool may exist for each complete key, so a
+standard and launch-protected pool can coexist without creator-specific ad hoc
+namespaces. Resolving an existing protected key revalidates the complete immutable
+pool metadata, including both token decimal values; the signed launch cannot be
+silently bound to metadata from an earlier incompatible commitment.
+
+At launch configuration, both creator and fixed launch authority sign an EIP-712
+commitment binding launch ID, creator, canonical tokens/decimals, fee, privacy
+mode, protocol version, factory, migrator, strategy, chain and deadlines. The
+strategy creates or resolves its empty protected pool and records one active
+commitment for that complete key. Cancellation and expiry keep the pool empty;
+they never make it permissionlessly initializable. A later authorized launch may
+supersede an inactive empty commitment, while completed pools cannot be
+superseded.
+
+At graduation, the creator separately authorizes all five encrypted migration
+values for the migrator selector. The migrator validates the migration EIP-712
+authorization, resolves the committed pool, pulls exact amounts into
+transaction-scoped escrow and grants exact pool allowances. The factory calls
+the strategy's factory-only one-shot authorization and then invokes the pool
+bootstrap. The pool verifies logical empty reserves, encrypted final-price bounds,
+minimum shares, LP disposition and exact transfer deltas. Any failure reverts
+authorization consumption, escrow, approvals, reserve state and token pulls.
+Each registered strategy carries its own one-time pinned migrator address and
+runtime codehash. The factory authenticates that strategy-specific caller and has
+no global launch-adapter authority, so the two reviewed strategy classes can use
+independent migrators.
+
+After initialization the strategy has no callback, asset, fee, LP, reserve or
+withdrawal authority; the protected pool behaves like a standard confidential
+CPMM and remains distinguishable by its public strategy metadata. The initial
+share unit is the minimum normalized private deposit, and the same creator-held,
+timed-lock and permanent-lock dispositions apply atomically.
+If every removable LP share later exits, the pool records that protected
+initialization has already completed. It may then be re-seeded through ordinary
+permissionless liquidity addition, but the launch strategy remains consumed and
+cannot initialize it again.
 
 ## Public/public boundary
 

@@ -28,6 +28,8 @@ interface IConfidentialBestExecutionRouter {
         bytes32 indexed requestId,
         address indexed selectedPool,
         uint256 selectedFeeBps,
+        address selectedInitializationStrategy,
+        uint16 candidateBitmap,
         bool zeroForOne,
         ctUint256 result
     );
@@ -37,6 +39,8 @@ interface IConfidentialBestExecutionRouter {
         bytes32 indexed requestId,
         address indexed selectedPool,
         uint256 selectedFeeBps,
+        address selectedInitializationStrategy,
+        uint16 candidateBitmap,
         bool zeroForOne,
         ctUint256 result
     );
@@ -52,11 +56,30 @@ interface IConfidentialBestExecutionRouter {
         uint64 deadline
     ) external returns (ctUint256 memory result);
 
+    function requestBestQuoteExactInputWithCandidates(
+        address tokenIn,
+        address tokenOut,
+        itUint256 calldata amountIn,
+        uint16 candidateBitmap,
+        bytes32 requestId,
+        uint64 deadline
+    ) external returns (ctUint256 memory result);
+
     function swapBestExactInput(
         address tokenIn,
         address tokenOut,
         itUint256 calldata amountIn,
         itUint256 calldata minimumOut,
+        bytes32 requestId,
+        uint64 deadline
+    ) external returns (ctUint256 memory result);
+
+    function swapBestExactInputWithCandidates(
+        address tokenIn,
+        address tokenOut,
+        itUint256 calldata amountIn,
+        itUint256 calldata minimumOut,
+        uint16 candidateBitmap,
         bytes32 requestId,
         uint64 deadline
     ) external returns (ctUint256 memory result);

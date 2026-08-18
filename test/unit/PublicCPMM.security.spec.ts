@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers } from "../../hardhat/runtime.js";
 import { deployFeeVault } from "../helpers/deployFeeVault";
 import {
   createPublicPool,
@@ -115,7 +115,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await expect(pool.quoteExactInput(0n, true))
       .to.be.revertedWithCustomError(pool, "InsufficientLiquidity");
     await expect(pool.quoteExactInput(100n, true))
-      .to.not.be.reverted;
+      .to.not.revert(ethers);
   });
 
   it("rejects maximum-width inputs instead of wrapping reserve arithmetic", async function () {
@@ -146,7 +146,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
       ethers.MaxUint256,
       MAX_DEADLINE,
     );
-    await expect(pool.quoteExactInput(10_000n, true)).to.be.reverted;
+    await expect(pool.quoteExactInput(10_000n, true)).to.revert(ethers);
   });
 
   it("rejects a public fee above the protocol cap", async function () {

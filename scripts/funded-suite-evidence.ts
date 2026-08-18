@@ -16,7 +16,11 @@ import {
   validateFundedDeploymentBinding,
   type FundedDeploymentBinding,
 } from "./funded-deployment-binding";
-import { trustedGitExecutable } from "./trusted-git";
+import {
+  trustedGitArguments,
+  trustedGitEnvironment,
+  trustedGitExecutable,
+} from "./trusted-git";
 
 const SCHEMA = "cipherdex.funded-suite-evidence/v2" as const;
 const SOURCE_COMMIT = /^[0-9a-f]{40}$/;
@@ -145,8 +149,13 @@ export async function verifyFundedSuiteSources(
   for (const run of parsed.runs) {
     const result = await execFileAsync(
       git,
-      ["show", `${parsed.sourceCommit}:${run.runnerSource}`],
-      { cwd, encoding: "buffer", maxBuffer: 5_000_000 },
+      trustedGitArguments(["show", `${parsed.sourceCommit}:${run.runnerSource}`]),
+      {
+        cwd,
+        env: trustedGitEnvironment(),
+        encoding: "buffer",
+        maxBuffer: 5_000_000,
+      },
     );
     const hash = createHash("sha256").update(result.stdout).digest("hex");
     if (hash !== run.runnerSourceSha256) {

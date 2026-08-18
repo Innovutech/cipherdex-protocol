@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "strict": true,
+    "skipLibCheck": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "types": ["node", "mocha"]
   },
-  "include": ["hardhat.config.ts", "scripts", "test", "typechain-types", "sdk"]
+  "include": ["hardhat.config.ts", "hardhat", "scripts", "test", "typechain-types", "sdk"]
 }
