@@ -287,8 +287,10 @@ async function main() {
       env: systemEnvironment,
       failure: "locked private funded dependency installation failed",
     });
-    const require = (await import("node:module")).createRequire(resolve(runtime, "package.json"));
-    const hardhatCli = require.resolve("hardhat/internal/cli/cli.js");
+    const hardhatResolver = await import(
+      `${pathToFileURL(resolve(runtime, "scripts", "resolve-hardhat-cli.mjs")).href}?commit=${input.commit}`
+    );
+    const hardhatCli = hardhatResolver.resolveHardhatCli(runtime);
     for (const command of ["clean", "compile"]) {
       run(process.execPath, [hardhatCli, command], {
         cwd: runtime,

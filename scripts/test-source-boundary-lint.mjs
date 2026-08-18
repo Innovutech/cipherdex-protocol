@@ -9,6 +9,7 @@ import {
   uniqueFunctionDeclaration,
 } from "./source-boundary-lint.mjs";
 import { buildReviewedRuntimeEnvironment } from "./fresh-runtime-environment.mjs";
+import { resolveHardhatCli } from "./resolve-hardhat-cli.mjs";
 import { assertCompiledPrivacyDecryptBoundary } from "./solidity-privacy-ast.mjs";
 
 const fixture = `
@@ -62,6 +63,7 @@ assert.doesNotThrow(() => assertEarlyHardhatRunSequence(
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const freshRunnerSource = readFileSync("scripts/run-fresh-hardhat.mjs", "utf8");
 const operatorLauncherSource = readFileSync("scripts/operator-funded-launcher.mjs", "utf8");
+const hardhatResolverSource = readFileSync("scripts/resolve-hardhat-cli.mjs", "utf8");
 for (const script of [
   "testnet:harness",
   "testnet:preflight",
@@ -98,17 +100,23 @@ for (const required of [
   'safeDirectory.replaceAll("\\\\", "/")',
   "GIT_CONFIG_VALUE_2: canonicalSafeDirectory",
   "gitEnvironment(systemEnvironment, repositoryRoot)",
+  'resolve(runtime, "scripts", "resolve-hardhat-cli.mjs")',
   "materializeInternalFileLinks(runtime)",
   "privateFilesystem.assertPrivateTree(runtime)",
   'CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE: "1"',
 ]) {
   assert.ok(operatorLauncherSource.includes(required));
 }
+assert.doesNotMatch(operatorLauncherSource + freshRunnerSource, /hardhat\/internal\/cli\/cli\.js/);
+assert.match(hardhatResolverSource, /require\.resolve\("hardhat\/package\.json"\)/);
+assert.match(hardhatResolverSource, /manifest\.bin\?\.hardhat/);
+assert.match(hardhatResolverSource, /fromPackage\.startsWith\("\.\."\)/);
+assert.ok(resolveHardhatCli(process.cwd()).endsWith("cli.js"));
 const sourceCheckPosition = freshRunnerSource.indexOf(
   'runGit(git, executionRoot, ["status", "--porcelain=v1", "--untracked-files=all"])',
 );
 const hardhatResolvePosition = freshRunnerSource.indexOf(
-  'createRequire(resolve(executionRoot, "package.json"))',
+  'await import("./resolve-hardhat-cli.mjs")',
 );
 const envLoadPosition = freshRunnerSource.indexOf(
   'await import("./fresh-runtime-environment.mjs")',

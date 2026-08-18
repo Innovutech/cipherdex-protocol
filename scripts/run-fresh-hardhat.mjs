@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
 import {
   existsSync,
   lstatSync,
@@ -382,8 +381,8 @@ async function main() {
     runtimeEnvironment[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = signerLeaseEnvironment(signerLeases);
   }
 
-  const hardhatCli = createRequire(resolve(executionRoot, "package.json"))
-    .resolve("hardhat/internal/cli/cli.js");
+  const { resolveHardhatCli } = await import("./resolve-hardhat-cli.mjs");
+  const hardhatCli = resolveHardhatCli(executionRoot);
   const result = spawnSync(
     process.execPath,
     [hardhatCli, "run", "--no-compile", target, ...targetArguments],

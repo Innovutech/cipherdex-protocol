@@ -531,6 +531,7 @@ const operatorLauncherSource = await readFile(
   "scripts/operator-funded-launcher.mjs",
   "utf8",
 );
+const hardhatResolverSource = await readFile("scripts/resolve-hardhat-cli.mjs", "utf8");
 const prepareFundedRuntimeSource = await readFile(
   "scripts/prepare-funded-runtime.mjs",
   "utf8",
@@ -609,7 +610,7 @@ for (const required of [
   'safeDirectory.replaceAll("\\\\", "/")',
   "GIT_CONFIG_VALUE_2: canonicalSafeDirectory",
   "gitEnvironment(systemEnvironment, repositoryRoot)",
-  'require.resolve("hardhat/internal/cli/cli.js")',
+  'resolve(runtime, "scripts", "resolve-hardhat-cli.mjs")',
   "materializeInternalFileLinks(runtime)",
   "privateFilesystem.assertPrivateTree(runtime)",
   'CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE: "1"',
@@ -617,6 +618,19 @@ for (const required of [
 ]) {
   if (!operatorLauncherSource.includes(required)) {
     throw new Error(`External funded launcher omits required control: ${required}`);
+  }
+}
+if (/hardhat\/internal\/cli\/cli\.js/u.test(operatorLauncherSource + freshRunnerSource)) {
+  throw new Error("Funded execution resolves an unsupported Hardhat internal subpath");
+}
+for (const required of [
+  'require.resolve("hardhat/package.json")',
+  "manifest.bin?.hardhat",
+  'fromPackage.startsWith("..")',
+  "cliStat.isSymbolicLink()",
+]) {
+  if (!hardhatResolverSource.includes(required)) {
+    throw new Error(`Hardhat CLI resolver omits required control: ${required}`);
   }
 }
 if (/^import[\s\S]*?from\s+["'](?!node:)/mu.test(operatorLauncherSource)) {
@@ -630,7 +644,7 @@ const sourceCheckPosition = freshRunnerSource.indexOf(
   'runGit(git, executionRoot, ["status", "--porcelain=v1", "--untracked-files=all"])',
 );
 const hardhatResolvePosition = freshRunnerSource.indexOf(
-  'createRequire(resolve(executionRoot, "package.json"))',
+  'await import("./resolve-hardhat-cli.mjs")',
 );
 const repositoryEnvironmentRefusalPosition = freshRunnerSource.indexOf(
   'existsSync(resolve(executionRoot, ".env"))',

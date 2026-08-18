@@ -231,6 +231,14 @@ The review sequence and current results are:
     An elevated sanitized reproduction confirmed that the backslash form is
     rejected by Git ownership validation and the slash-normalized form resolves
     the reviewed commit without broadening the trusted directory.
+12. Focused diff scan `32d0907d-d063-404a-9fc5-10da6a58692e` reviewed the
+    authenticated Hardhat 3 CLI resolver and both funded launcher stages. It
+    covered all five changed files and completed with zero findings. Its source
+    snapshot digest is
+    `codex-security-snapshot/v1:sha256:95e77922d94f738343df6d42cdb3623f75c3b2b5d46095d6bec8680fbcc7c3f9`.
+    The resolver reads the pinned package's exported manifest, rejects linked or
+    non-regular manifest/CLI files, and requires the real CLI path to remain
+    inside the authenticated Hardhat package.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
