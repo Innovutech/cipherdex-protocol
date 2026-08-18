@@ -312,7 +312,7 @@ async function main() {
     const trackedFiles = runGit(git, runtime, hardenedGitEnvironment, ["ls-files", "-z"])
       .split("\0")
       .filter(Boolean);
-    const receiptRoot = resolve(runtime, ".cipherdex-receipts");
+    const receiptRoot = resolve(runtime, ".git", "cipherdex-receipts");
     mkdirSync(receiptRoot, { recursive: false, mode: 0o700 });
     privateFilesystem.restrictPrivateDirectory(receiptRoot);
     const reviewedBuild = await import(

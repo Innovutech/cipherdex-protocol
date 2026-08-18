@@ -248,6 +248,15 @@ The review sequence and current results are:
     runtime subdirectory and uses that explicit root for both pre- and
     post-execution build verification. The targeted 32-case funded recovery
     suite passed.
+14. Focused diff scan `47d6c28a-5469-4286-b662-b297631635a8` reviewed the
+    final receipt-journal placement at the dedicated private-runtime Git
+    metadata path `.git/cipherdex-receipts`. It covered all three changed files
+    and completed with zero findings. Its source snapshot digest is
+    `codex-security-snapshot/v1:sha256:3ccd9478eca963005fd66c826f46a80bb190e1a586020a1728c66959ecb892d1`.
+    The location remains inside the owner-only authenticated runtime and the
+    runner's strict containment boundary, does not overlap Git configuration,
+    hooks, refs, objects, replacement objects or index state, and leaves the
+    reviewed source worktree clean after receipt writes.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before

@@ -614,6 +614,7 @@ for (const required of [
   "materializeInternalFileLinks(runtime)",
   "privateFilesystem.assertPrivateTree(runtime)",
   "recordReviewedBuild(runtime, input.commit, {",
+  'resolve(runtime, ".git", "cipherdex-receipts")',
   "receiptRoot,",
   'CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE: "1"',
   "rmSync(runtime, { recursive: true, force: true })",
