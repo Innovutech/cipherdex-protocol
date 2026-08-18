@@ -223,6 +223,14 @@ The review sequence and current results are:
     `codex-security-snapshot/v1:sha256:e19616d3ecdab145bf316e659411074a03a122829ecd8836c30daf92304ecdac`.
     Global/system Git configuration, hooks, fsmonitor, replacement objects,
     prompts and wildcard directory trust remain disabled.
+11. Follow-up focused diff scan `3476067b-218f-4b4a-9729-09fff8430d63`
+    reviewed the Git-for-Windows separator normalization required for that exact
+    canonical path. It covered all three changed files and completed with zero
+    findings. Its source snapshot digest is
+    `codex-security-snapshot/v1:sha256:0281900efde9be8a4e3650184f632326ca85e6e34dd8db23e905ff08b8919472`.
+    An elevated sanitized reproduction confirmed that the backslash form is
+    rejected by Git ownership validation and the slash-normalized form resolves
+    the reviewed commit without broadening the trusted directory.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before

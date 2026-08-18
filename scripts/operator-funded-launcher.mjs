@@ -112,6 +112,9 @@ function run(executable, arguments_, options = {}) {
 }
 
 function gitEnvironment(systemEnvironment, safeDirectory) {
+  const canonicalSafeDirectory = process.platform === "win32"
+    ? safeDirectory.replaceAll("\\", "/")
+    : safeDirectory;
   return {
     ...systemEnvironment,
     GIT_CONFIG_NOSYSTEM: "1",
@@ -122,7 +125,7 @@ function gitEnvironment(systemEnvironment, safeDirectory) {
     GIT_CONFIG_KEY_1: "core.hooksPath",
     GIT_CONFIG_VALUE_1: GIT_CONFIG_NULL,
     GIT_CONFIG_KEY_2: "safe.directory",
-    GIT_CONFIG_VALUE_2: safeDirectory,
+    GIT_CONFIG_VALUE_2: canonicalSafeDirectory,
     GIT_OPTIONAL_LOCKS: "0",
     GIT_NO_REPLACE_OBJECTS: "1",
     GIT_TERMINAL_PROMPT: "0",
