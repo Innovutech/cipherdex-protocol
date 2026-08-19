@@ -1,9 +1,12 @@
 import { expect } from "chai";
 
 import {
+  futureChainDeadline,
+  MinedFailureReasonError,
   MinedTransactionStatusError,
   publicTransactionHashSuffix,
   requireMinedFailure,
+  requireMinedFailureSelector,
   requireMinedSuccess,
   safeTestnetErrorSummary,
   transactionHashFromError,
@@ -19,6 +22,57 @@ describe("funded testnet transaction evidence", function () {
   const otherHash = `0x${"34".repeat(32)}`;
   const failedReceipt = { hash, status: 0 as number | null };
   const successfulReceipt = { hash, status: 1 as number | null };
+
+  it("derives bounded deadlines from chain time", function () {
+    expect(futureChainDeadline(1_000, 3_600)).to.equal(4_600n);
+    expect(() => futureChainDeadline(1_000, 0)).to.throw("must be positive");
+    expect(() => futureChainDeadline(Number.NaN, 1)).to.throw("safe integers");
+    expect(() => futureChainDeadline((1n << 64n) - 1n, 1n)).to.throw("exceeds uint64");
+  });
+
+  it("proves the exact selector behind an expected mined failure", async function () {
+    const expectedSelector = "0x12345678";
+    const transaction = {
+      hash,
+      from: "0x0000000000000000000000000000000000000001",
+      to: "0x0000000000000000000000000000000000000002",
+      data: "0xabcdef01",
+      value: 0n,
+    };
+    let replayBlock = -1;
+    await requireMinedFailureSelector(
+      "price-bound rejection",
+      hash,
+      100,
+      expectedSelector,
+      async () => transaction,
+      async (_transaction, blockTag) => {
+        replayBlock = blockTag;
+        throw { info: { error: { data: `${expectedSelector}${"00".repeat(32)}` } } };
+      },
+    );
+    expect(replayBlock).to.equal(99);
+
+    let captured: unknown;
+    try {
+      await requireMinedFailureSelector(
+        "price-bound rejection",
+        hash,
+        100,
+        expectedSelector,
+        async () => transaction,
+        async () => { throw { data: "0x87654321" }; },
+      );
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).to.be.instanceOf(MinedFailureReasonError);
+    expect(captured).to.include({
+      transactionHash: hash,
+      expectedSelector,
+      actualSelector: "0x87654321",
+    });
+  });
 
   it("accepts only a mined failure receipt", async function () {
     const result = await requireMinedFailure(

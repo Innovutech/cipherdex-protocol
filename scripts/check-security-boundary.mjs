@@ -1490,10 +1490,25 @@ for (const fragment of [
   "await verifyDeployedRuntimeArtifact(",
   "strategyRegistry.registerInitializationStrategy(",
   "strategyRegistry.finalize(",
+  "futureChainDeadline(",
+  "requireMinedFailureSelector(",
 ]) {
   if (!launchpadSource.includes(fragment)) {
     throw new Error("Launchpad funded runner omits one-time strategy-stack bindings");
   }
+}
+const launchDeadlinePosition = launchpadRawSource.indexOf("const deadline = futureChainDeadline(");
+const finalizedStrategyPosition = launchpadRawSource.indexOf(
+  '"initialization strategy registry finalization"',
+);
+if (
+  launchDeadlinePosition < 0 ||
+  finalizedStrategyPosition < 0 ||
+  launchDeadlinePosition <= finalizedStrategyPosition ||
+  !launchpadRawSource.includes('ethers.id("PriceOutsideBounds()")') ||
+  !launchpadRawSource.includes("launchpad migration deadline window exhausted before submission")
+) {
+  throw new Error("Launchpad funded runner does not prove a live, reason-bound migration deadline");
 }
 if (!launchpadSource.includes("verifyRecoveryResourceCreation(")) {
   throw new Error("Launchpad funded recovery does not authenticate resource creation");

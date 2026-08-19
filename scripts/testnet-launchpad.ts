@@ -37,6 +37,8 @@ import {
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
 import {
+  futureChainDeadline,
+  requireMinedFailureSelector,
   requireMinedFailure,
   requireMinedSuccess,
   safeTestnetErrorSummary,
@@ -59,6 +61,10 @@ const COTI_TESTNET_TX_GAS_LIMIT = BigInt(gasLimitText);
 const EXPECTED_CHAIN_ID = 7_082_400n;
 const STACK_RESOURCE_ID = "launchpad-stack";
 const POOL_RESOURCE_ID = "launchpad-pool";
+const FUNDED_LAUNCHPAD_DEADLINE_WINDOW_SECONDS = 3_600n;
+const MINIMUM_MIGRATION_SUBMISSION_WINDOW_SECONDS = 300n;
+const PRICE_OUTSIDE_BOUNDS_SELECTOR = ethers.id("PriceOutsideBounds()").slice(0, 10);
+const INVALID_LAUNCH_COMMITMENT_SELECTOR = ethers.id("InvalidLaunchCommitment()").slice(0, 10);
 
 let stage = "configuration";
 let recoveryJournal: FundedRecoveryJournal | undefined;
@@ -189,7 +195,8 @@ const expectMinedFailure = async (
     hash: string;
     wait(): Promise<TransactionReceipt | null>;
   }>,
-): Promise<void> => {
+  expectedSelector: string,
+): Promise<Submitted> => {
   stage = label;
   const evidence = await withFundedTransactionEvidence(
     label,
@@ -205,7 +212,26 @@ const expectMinedFailure = async (
     "mined-failure",
     evidence.receipt.blockNumber,
   );
-  console.log(`${label}: rejected onchain tx=${evidence.transactionHash}`);
+  await requireMinedFailureSelector(
+    label,
+    evidence.transactionHash,
+    evidence.receipt.blockNumber,
+    expectedSelector,
+    (hash) => hardhatEthers.provider.getTransaction(hash),
+    (transaction, blockTag) => hardhatEthers.provider.send("eth_call", [{
+      from: transaction.from,
+      to: transaction.to,
+      data: transaction.data,
+      value: ethers.toQuantity(transaction.value),
+    }, ethers.toQuantity(blockTag)]),
+  );
+  console.log(
+    `${label}: rejected onchain tx=${evidence.transactionHash} expectedSelector=${expectedSelector}`,
+  );
+  return Object.freeze({
+    transactionHash: evidence.transactionHash,
+    receipt: evidence.receipt,
+  });
 };
 
 const scaleTo18 = (amount: bigint, decimals: number): bigint => {
@@ -626,8 +652,6 @@ async function main(): Promise<void> {
     "COTI_LAUNCHPAD_AMOUNT1",
     defaultTestAmount(decimalsB),
   );
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
-
   const [canonicalToken0, canonicalToken1, canonicalDecimals0, canonicalDecimals1] =
     tokenA.toLowerCase() < tokenB.toLowerCase()
       ? [tokenA, tokenB, decimalsA, decimalsB] as const
@@ -902,6 +926,12 @@ async function main(): Promise<void> {
   if (await factory.getPool(canonicalPoolKey) !== ethers.ZeroAddress) {
     throw new Error("launchpad proof requires an empty canonical pool slot");
   }
+  const launchDeadlineBlock = await hardhatEthers.provider.getBlock("latest");
+  if (!launchDeadlineBlock) throw new Error("latest COTI block unavailable for launch deadline");
+  const deadline = futureChainDeadline(
+    launchDeadlineBlock.timestamp,
+    FUNDED_LAUNCHPAD_DEADLINE_WINDOW_SECONDS,
+  );
   const launchId = ethers.hexlify(ethers.randomBytes(32));
   const launchCommitment = {
     launchId,
@@ -1127,13 +1157,20 @@ async function main(): Promise<void> {
   if (beforeRejected0 < amount0 || beforeRejected1 < amount1) {
     throw new Error("configured launchpad amounts exceed the available private balance");
   }
-  await expectMinedFailure("rejected launchpad price-bound probe", () =>
+  const rejectedMigration = await expectMinedFailure("rejected launchpad price-bound probe", () =>
     disposition === undefined
       ? migrator.migrate(rejectedRequest, { gasLimit: COTI_TESTNET_TX_GAS_LIMIT })
       : migrator.migrateWithDisposition(rejectedRequest, disposition, unlockTime, {
           gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
         }),
+    PRICE_OUTSIDE_BOUNDS_SELECTOR,
   );
+  const rejectedBlock = await hardhatEthers.provider.getBlock(
+    rejectedMigration.receipt.blockNumber,
+  );
+  if (!rejectedBlock || BigInt(rejectedBlock.timestamp) > deadline) {
+    throw new Error("launchpad price-bound proof mined after its reviewed deadline");
+  }
   if (
     ethers.getAddress(await factory.getPool(canonicalPoolKey)) !==
       predictedPoolAddress ||
@@ -1149,6 +1186,13 @@ async function main(): Promise<void> {
   }
 
   stage = "atomic launchpad migration";
+  const preMigrationBlock = await hardhatEthers.provider.getBlock("latest");
+  if (
+    !preMigrationBlock ||
+    BigInt(preMigrationBlock.timestamp) + MINIMUM_MIGRATION_SUBMISSION_WINDOW_SECONDS > deadline
+  ) {
+    throw new Error("launchpad migration deadline window exhausted before submission");
+  }
   const migration = await submit(
     stage,
     () => disposition === undefined
@@ -1262,6 +1306,7 @@ async function main(): Promise<void> {
       : migrator.migrateWithDisposition(migrationRequest, disposition, unlockTime, {
           gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
         }),
+    INVALID_LAUNCH_COMMITMENT_SELECTOR,
   );
   if (
     (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeReplay0 ||

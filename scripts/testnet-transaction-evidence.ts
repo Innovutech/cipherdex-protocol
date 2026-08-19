@@ -1,9 +1,19 @@
 const TRANSACTION_HASH = /^0x[0-9a-fA-F]{64}$/;
+const ERROR_SELECTOR = /^0x[0-9a-fA-F]{8}$/;
+const UINT64_MAX = (1n << 64n) - 1n;
 
 type ReceiptLike = Readonly<{ hash: string; status: number | null }>;
 type TransactionLike<TReceipt extends ReceiptLike> = Readonly<{
   hash: string;
   wait(): Promise<TReceipt | null>;
+}>;
+
+type ReplayableTransaction = Readonly<{
+  hash: string;
+  from: string;
+  to: string | null;
+  data: string;
+  value: bigint;
 }>;
 
 export class UnknownBroadcastOutcomeError extends Error {
@@ -40,6 +50,28 @@ export class MinedTransactionStatusError extends Error {
     this.transactionHash = transactionHash;
     this.expectedStatus = expectedStatus;
     this.actualStatus = actualStatus;
+  }
+}
+
+export class MinedFailureReasonError extends Error {
+  readonly transactionHash: string;
+  readonly expectedSelector: string;
+  readonly actualSelector: string | undefined;
+
+  constructor(
+    label: string,
+    transactionHash: string,
+    expectedSelector: string,
+    actualSelector: string | undefined,
+  ) {
+    super(
+      `${label} mined with an unexpected revert reason; expectedSelector=${expectedSelector}; ` +
+        `actualSelector=${actualSelector ?? "unavailable"}; transactionHash=${transactionHash}`,
+    );
+    this.name = "MinedFailureReasonError";
+    this.transactionHash = transactionHash;
+    this.expectedSelector = expectedSelector;
+    this.actualSelector = actualSelector;
   }
 }
 
@@ -101,6 +133,100 @@ function nestedOwnDataProperty(record: object, keys: readonly PropertyKey[]): un
     current = ownDataProperty(current, key);
   }
   return current;
+}
+
+function revertDataCandidate(value: unknown): string | undefined {
+  if (
+    typeof value === "string" &&
+    /^0x(?:[0-9a-fA-F]{2}){4,}$/.test(value)
+  ) return value;
+  if (!value || typeof value !== "object") return undefined;
+  const nested = ownDataProperty(value, "data");
+  return typeof nested === "string" && /^0x(?:[0-9a-fA-F]{2}){4,}$/.test(nested)
+    ? nested
+    : undefined;
+}
+
+function revertDataFromCallError(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  for (const candidate of [
+    ownDataProperty(error, "data"),
+    nestedOwnDataProperty(error, ["info", "error", "data"]),
+    nestedOwnDataProperty(error, ["error", "data"]),
+    nestedOwnDataProperty(error, ["cause", "data"]),
+    nestedOwnDataProperty(error, ["cause", "info", "error", "data"]),
+  ]) {
+    const data = revertDataCandidate(candidate);
+    if (data) return data;
+  }
+  return undefined;
+}
+
+export function futureChainDeadline(
+  latestBlockTimestamp: number | bigint,
+  validityWindowSeconds: number | bigint,
+): bigint {
+  if (
+    (typeof latestBlockTimestamp === "number" && !Number.isSafeInteger(latestBlockTimestamp)) ||
+    (typeof validityWindowSeconds === "number" && !Number.isSafeInteger(validityWindowSeconds))
+  ) throw new Error("chain deadline inputs must be safe integers");
+  const timestamp = BigInt(latestBlockTimestamp);
+  const validityWindow = BigInt(validityWindowSeconds);
+  if (timestamp < 0n || validityWindow <= 0n) {
+    throw new Error("chain deadline inputs must be positive");
+  }
+  const deadline = timestamp + validityWindow;
+  if (deadline > UINT64_MAX) throw new Error("chain deadline exceeds uint64");
+  return deadline;
+}
+
+export async function requireMinedFailureSelector(
+  label: string,
+  transactionHash: string,
+  receiptBlockNumber: number,
+  expectedSelector: string,
+  getTransaction: (hash: string) => Promise<ReplayableTransaction | null>,
+  replay: (transaction: ReplayableTransaction, blockTag: number) => Promise<unknown>,
+): Promise<void> {
+  const normalizedExpectedSelector = expectedSelector.toLowerCase();
+  if (
+    !TRANSACTION_HASH.test(transactionHash) ||
+    !Number.isSafeInteger(receiptBlockNumber) ||
+    receiptBlockNumber <= 0 ||
+    !ERROR_SELECTOR.test(expectedSelector)
+  ) throw new Error(`${label} expected-revert evidence is invalid`);
+
+  const transaction = await getTransaction(transactionHash);
+  if (
+    !transaction ||
+    !TRANSACTION_HASH.test(transaction.hash) ||
+    transaction.hash.toLowerCase() !== transactionHash.toLowerCase() ||
+    transaction.to === null
+  ) {
+    throw new MinedFailureReasonError(
+      label,
+      transactionHash,
+      normalizedExpectedSelector,
+      undefined,
+    );
+  }
+
+  let replayError: unknown;
+  try {
+    await replay(transaction, receiptBlockNumber - 1);
+  } catch (error) {
+    replayError = error;
+  }
+  const revertData = revertDataFromCallError(replayError);
+  const actualSelector = revertData?.slice(0, 10).toLowerCase();
+  if (actualSelector !== normalizedExpectedSelector) {
+    throw new MinedFailureReasonError(
+      label,
+      transactionHash,
+      normalizedExpectedSelector,
+      actualSelector,
+    );
+  }
 }
 
 function safeDiagnosticText(value: unknown): string | undefined {
