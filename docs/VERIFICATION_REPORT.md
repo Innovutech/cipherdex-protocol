@@ -8,9 +8,10 @@ This report tracks the complete-key and launch-protected confidential-pool
 refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. The runner-only fee-recovery change and the
-subsequent testnet factory-ABI fix passed the complete local suite and focused
-Codex Security diff reviews with zero findings. Each executable change was
+complete with zero findings. The runner-only fee-recovery change, the testnet
+factory-ABI fix and the launchpad deadline/revert-evidence hardening passed the
+complete local suite and focused Codex Security diff reviews with zero findings.
+Each executable change was
 correctly rejected by the preceding deployment's source-provenance gate, so the
 final reviewed commit was deployed through a new commit-bound public manifest.
 Superseded deployments remain diagnostic evidence only. The latest deployment
@@ -45,8 +46,8 @@ No dependency was added for this refactor.
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 205 passing, 1 intentionally gated funded-network
-  integration placeholder (206 tests discovered)
+- full local suite: 208 passing, 1 intentionally gated funded-network
+  integration placeholder (209 tests discovered)
 - diff whitespace validation: passed
 
 Fresh deployment and best-execution gas was measured against the
@@ -305,6 +306,15 @@ The review sequence and current results are:
     pool creation code. The complete verifier passed with zero production or
     operational advisories, 29 Solidity files compiled, 204 passing tests and
     one intentionally gated funded test.
+20. Focused working-tree diff scan `09bd275d-cd16-47a0-bbdc-f9cdf1d012f1`
+    reviewed the launchpad funded runner's chain-derived deadline, minimum live
+    submission window and exact mined-revert proof. Historical replay is bound
+    to the exact mined transaction and pre-transaction block, extracts only
+    known own-data error fields and fails closed when the transaction, archive
+    state or expected custom-error selector is unavailable. The scan completed
+    with full changed-source coverage and zero findings. The complete verifier
+    then passed with zero production or operational advisories, 29 Solidity
+    files compiled, 208 passing tests and one intentionally gated funded test.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
@@ -347,53 +357,65 @@ replace the remaining pending statements only after all funded gates pass.
 
 ### Fresh COTI testnet deployment
 
-Final reviewed source commit `2ba7e9e0baddefb5de22be0e45a27ab84956e480` was deployed to
+Final reviewed source commit `7153eed3950862af5b3d79d42e01e66a482467f1` was deployed to
 COTI testnet chain `7082400`. The complete 17-transaction deployment and binding
-record is `deployments/coti-testnet-2ba7e9e0baddefb5de22be0e45a27ab84956e480.json`.
+record is `deployments/coti-testnet-7153eed3950862af5b3d79d42e01e66a482467f1.json`.
 The deployment runner independently matched current artifacts, constructor
 arguments, runtime codehashes and post-deployment bindings before publishing the
 record.
 
-- Fee vault: `0x39F7b63a2cC0Fb9E37052ac0F07Bf1De9b8CD016`
-  (`0xcf4725c5ab7abe8c891a77c80c17af3d9fb92d9cfb250b7cd89490ef549d126e`,
+- Fee vault: `0x80260077CA3Bf10Accd0dfDd42c97c4Daa5a0371`
+  (`0xdb2a684fded87916705e007ed11f744272b840c0e23ffc08c20c2f0d069a2198`,
   gas `1841820`).
-- Private LP-token factory: `0xEc9a4706e71654D2b4a101E4de23DA8d7EEe317a`
-  (`0xd10d4b35b3d040d31ddcec8ef7130223357b4542cbfb3f059b64436ec82a535f`,
+- Private LP-token factory: `0x12a1185cD7C954eF51dcb6658e9E7A369F2079db`
+  (`0x14a64695401b17677d34cdbf556e66615419b349603356e46f44594d0ebd0400`,
   gas `2991054`).
 - Initialization-strategy registry:
-  `0x1b34dD440d7f44A1Cbb56c60eF534bdBf9B5bf3F`
-  (`0x968d136e051fce6e8e546f4f4351f0eeaa2403629b8ae29a95014a2d75fa4715`,
+  `0x2B712847efAD18d0977AeB6d6e20c116440384FC`
+  (`0x8832582610a6e4f80078652f2a6793721241583721fd8ced45546ef18c8a7563`,
   gas `1091793`).
 - Canonical confidential pool deployer:
-  `0x42D7A884a80152B71cFC3bd926E028F55fb3e751`
-  (`0x5b8429265833db934fe90406242806ab9d12d0be50dfc65845db93fac5c0b313`,
+  `0xb29E4f51aAa4d1FD4F175922e757DaaBF5B8Ae7d`
+  (`0x0f40584da88456c9b1310e7c66a715840576b2c348b796420b3126c028ea55ed`,
   gas `4429890`).
-- Confidential factory: `0x94EBe0Ebb3d055AC3Eb125c6678CCCC312304D1a`
-  (`0xf517eda24415faf7ee661341f929d9817e72ef8d9029bdcaf267c13082a5b30c`,
-  gas `2253901`).
+- Confidential factory: `0x2d67C1905898C7922FC62EbbF0Cbca31126BA6eA`
+  (`0xe7471c0732ef2383a0f3a55f9beab6ad754b41dc7b637dd5a4e203a783cdeaf7`,
+  gas `2253889`).
 - Launch initialization strategy:
-  `0x686E98365901B079303A4b2EAe94d90DB9931709`
-  (`0xef5874adc6ecd4b92c1ded40b800ea94c697b5a9c068ca68a9b20d1922f39a0d`,
+  `0xf071875f5CAF933aa6AE6Ad7702eEe6a8bF44Db8`
+  (`0x64aa9cc835bb368774ccd0d24205fff46b9d7183df64f437dcdd941e2dc6d09e`,
   gas `4286461`). Its constructor-created migrator is
-  `0x4F060ea5D7b7202EDb50594378A7B4C4D0f9d147`.
+  `0xE492717f7793D1346d135aba899bBb4207B187af`.
 - Confidential best-execution router:
-  `0x47eAa30350067dbC9695577D7fBc0be2A6aF7Eb0`
-  (`0xd6f2c2fa24bb9c5d3765742eb566707a893fcf9fc24bf83bde653649c2ca74c6`,
+  `0x0241a9E07E8521769F64312E9C3CeD0Be1C2efa8`
+  (`0xcac7a5aaf6994b258d1b750a00d9f2fbb854acd53237e32891ecdc2720f80d45`,
   gas `2182489`).
-- Public factory: `0x5065Ba37F3F2ABb19415D5747781dfB891143733`
-  (`0xe511621be29847ea372a27288914940186b0b569bb64ca14d9adcdaf08dbb6e9`,
-  gas `3037572`).
-- Public quoter: `0x65Cf32e13718DC209a0b412cCf8225B2d7A7Ae56`
-  (`0x012ee1fb4bdf00bb4d6234a6626840ca2b963297138b838db543bc04556e5d29`,
+- Public factory: `0xb2A809a5c404297fF9DDCFAaAE9418574cA0829e`
+  (`0x883561a77408f03741d9b6355b300fa7fd9edd2e496cde619d14725702ed0bbe`,
+  gas `3037560`).
+- Public quoter: `0xC38D6dd19D7264eEf7211c813D4921467BB5B6aE`
+  (`0x376b04b43512392d28d9d724fc6f7f7654b467f79f04199ec23c5cbde969b5fb`,
   gas `193643`).
-- Public router: `0x651792a19777BCCb35aD5D445Cc9A564C4dF2e30`
-  (`0x79c18287b9df183151590084ac8d5e0e4590bec7bb7571e6fe9669b73d3cae92`,
+- Public router: `0x1ad2E9F3790e95264759D794c97979D252D95Df6`
+  (`0x1e1160a38a34fd95b5713441e11ff4d71833095a4d747f24d5552bee91cf16e1`,
   gas `719795`).
 
 The fee-vault, pool-deployer, strategy-registry, strategy registration,
 registry finalization and best-execution-router bindings were mined and verified
 against current state. All 17 transactions were mined successfully and consumed
-`23510678` gas in total.
+`23510654` gas in total.
+
+The superseded `2ba7e9e0baddefb5de22be0e45a27ab84956e480`
+deployment remains diagnostic evidence only. Its launchpad price-bound and
+migration transactions reverted after their shared ten-minute authorization
+deadline had expired: the former was mined 5 seconds late and the latter 45
+seconds late. The old runner accepted any status-zero receipt for the negative
+probe, so deadline expiry could masquerade as the intended price-bound failure.
+The reviewed runner now derives a one-hour deadline from chain time after the
+disposable stack is finalized, requires at least five minutes before migration
+submission, proves `PriceOutsideBounds()` and `InvalidLaunchCommitment()` by
+historically replaying the exact mined transactions, and fails closed when that
+reason evidence is unavailable.
 
 The superseded deployment at commit
 `ae10fe31270e49962e383faf9308f651db5ae01f` reached its fee-collection
