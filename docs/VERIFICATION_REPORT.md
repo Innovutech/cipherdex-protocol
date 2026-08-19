@@ -328,63 +328,66 @@ hashes, block provenance, gas and assertions may be persisted. Keys, AES keys,
 ciphertexts, signatures, private balances, quotes and decrypted values must not
 be printed or stored.
 
-Fresh addresses, transactions, measured gas, scan identifiers and final command
-results will replace this pending section only after all gates pass.
+Fresh funded scenario transactions, measured gas and final command results will
+replace the remaining pending statements only after all funded gates pass.
 
 ### Fresh COTI testnet deployment
 
-Source commit `b5c72f49520ea31584bd7a5e09e5269a03a19fbb` was deployed to
+Corrected source commit `74901f63a628566ece1c48fd751eaea95ca72499` was deployed to
 COTI testnet chain `7082400`. The complete 17-transaction deployment and binding
-record is `deployments/coti-testnet-b5c72f49520ea31584bd7a5e09e5269a03a19fbb.json`.
+record is `deployments/coti-testnet-74901f63a628566ece1c48fd751eaea95ca72499.json`.
 The deployment runner independently matched current artifacts, constructor
 arguments, runtime codehashes and post-deployment bindings before publishing the
 record.
 
-- Fee vault: `0xF180B2a2ce44BFAc27450e732436D6bE197f0e1F`
-  (`0x966f514dd6ef43ce71a61b75d716a4305048a078210c62c3b1f440716a3fd801`,
+- Fee vault: `0xA46BdE6F37d79e83CF27bae1BE13bFD33E5B6209`
+  (`0xbea06013532d8b23d3a5f570a363aef8edb80a78705e4f07d781dcc0ef932e03`,
   gas `1841820`).
-- Private LP-token factory: `0xF72aab603737Be6067cD30D2C054750114498532`
-  (`0x11162f516060d9bc409bcfe3a8fcef435c75f0dbf059635904237dcec936628e`,
+- Private LP-token factory: `0x30241d8fCC7A6372987925BD7B6871C5E4ac86b2`
+  (`0xaaabfca3ad27333f3db5662cb3af40af3f5e439ee3e65bc8230970cd6780e19b`,
   gas `2991054`).
 - Initialization-strategy registry:
-  `0x7b8fF3EDAf4a785028EcF6039b825d765A36b0f9`
-  (`0xb218d3ec8f6e0e8a1e2e1c91d32481784a55b4b567a41918f7cb78e2e8c26f28`,
+  `0xAF239A51fD613cFAc5340b381888319033Aa1709`
+  (`0x9a121778ab7d3537c7dac13321200cf801f5eaf0a07d6c935db29993b0aa4edd`,
   gas `1091793`).
 - Canonical confidential pool deployer:
-  `0x5eBd36193A624b4A732a38AB45850a60A336815e`
-  (`0x2f47a890d20656c0aa4439dcb0aec1ad90f5233e359619e7df2b636ab851a840`,
+  `0x8e2DB0bb9113d23B07Fc46c19F8638EB622c6757`
+  (`0x7d941fc9e290a1a9000f82a1b244b6c63aa0a9828aa668204318ac347046df12`,
   gas `4429890`).
-- Confidential factory: `0xD3F452D1496456cB8F51eF96Efb2993b9AAA9d1a`
-  (`0x106e09037f0e247544fb97d3092e583d6003bde6e2297815d1d2e5f8aab9e36f`,
+- Confidential factory: `0x05675F8AED634FC503101c96A83346B7Fe7aAB70`
+  (`0xb4eaa566febcbc288995063eb05572e243367ed0dfa32a9614bc04aede97da1e`,
   gas `2253901`).
 - Launch initialization strategy:
-  `0xEaE63431672d316f9180942C5C2781f070Dc370A`
-  (`0xfa1ed19c42bf2db975c89edce8cb8e5dde24d784c5360c48b55674a5712b8547`,
+  `0x416cD87017D43F4D35cB20807c5C67cdb03FfD8D`
+  (`0x441f29df816f667e676fdc1c5dcdbcd7c19aa42488207b7d884f34dc65bc1101`,
   gas `4286461`). Its constructor-created migrator is
-  `0xefFaFc1f63F948b337fadfd89a673E549532AFAA`.
+  `0x1D55a14915351C1CD5403D37d45f560274650461`.
 - Confidential best-execution router:
-  `0xa6b94cBEC000Cb6929279c44F36149C8ACEA1e0e`
-  (`0x0b2648034878ea0a92dd828b338a05637835307b9ee8284212d1be61dbd7c1db`,
+  `0x72f2579c8c24A355F0e87FC638a95B7B7378E8A6`
+  (`0xf79bf84dc4d1d8bbc4a1541b53a63511053dd152bbaba6086dff8680052cdf06`,
   gas `2182489`).
-- Public factory: `0xA9355681564B84a7853C65eF3CEea1C425Dd9392`
-  (`0xf4eb2f50471f63763a80efc703ab20c1319d93dc6dbd09c9164fdc4ddaa5c66e`,
+- Public factory: `0x474B52A1332E45597b18155A5F164321278Ca655`
+  (`0x363d1c2f6775c84d549077e5e5a1ffe705725feac6315aef57ab41a9dc4aa42c`,
   gas `3037572`).
-- Public quoter: `0x6C1E52BcBB8CEc2fe75DecCa86EB2Ac298271Bb5`
-  (`0xb9c65f94f795bad894be51426a9ddb5930b690d5e9a5c0223b92d2738ab07087`,
+- Public quoter: `0x1F3a27A9e38F7b3cC1a01CA08324fDe41D60a370`
+  (`0x6bf46b38aa7df94598239591d6388a3d66232598619b271ecfb6da24472b4210`,
   gas `193643`).
-- Public router: `0xa273EDaF73ed2fa74b46E887d81DebD85536c62b`
-  (`0xb982adf68cc20e358a335d8a216b5e48720d871bef12757de925cd9e223d5fe8`,
+- Public router: `0xD0481AB7CCA4f84fdB08d2D6B908077F5F450a7D`
+  (`0x74de3d107c251bc7b956d057d042436298e1ede82d933079a0b619fa8210d720`,
   gas `719795`).
 
 The fee-vault, pool-deployer, strategy-registry, strategy registration,
 registry finalization and best-execution-router bindings were mined and verified
-against current state. Funded pool, routing, fee-collection, launchpad and MPC
+against current state. All 17 transactions were mined successfully and consumed
+`23510678` gas in total. Funded pool, routing, fee-collection, launchpad and MPC
 quote-capability evidence remains pending and must be committed separately from
-this source-bound deployment evidence. The initial feasibility operations on
-this deployment passed and all three disposable probes were permanently closed
-with exact private-asset recovery. Public evidence finalization then failed
-closed because two valid router-binding transactions used the runner's
-journaled labels while the verifier expected obsolete labels. No paid operation
-will be repeated against this deployment. It is retained as diagnostic evidence
-and superseded for the final funded suite by the corrected source-bound
-deployment.
+this source-bound deployment evidence.
+
+The earlier source-bound deployment at commit
+`b5c72f49520ea31584bd7a5e09e5269a03a19fbb` is retained only as diagnostic
+evidence. Its on-chain feasibility operations passed and all three disposable
+probes were permanently closed with exact private-asset recovery, but public
+evidence finalization failed closed because two valid router-binding operations
+used runner journal labels that no longer matched the verifier. The shared label
+contract was corrected and regression-tested before this replacement deployment;
+the paid operation from the superseded deployment will not be repeated.
