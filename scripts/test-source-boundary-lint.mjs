@@ -151,6 +151,7 @@ for (const required of [
   "targetPolicy.funded",
   "targetPolicy.environment",
   "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git",
+  'runtimeEnvironment.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE = "1"',
   "buildReviewedRuntimeEnvironment",
   "readReviewedEnvironment",
   'requiredCanonicalDirectory("CIPHERDEX_BUILD_RECEIPT_ROOT")',

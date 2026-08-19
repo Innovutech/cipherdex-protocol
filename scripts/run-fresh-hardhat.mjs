@@ -359,6 +359,7 @@ async function main() {
     allowAmbientConfiguration: false,
   });
   runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git;
+  runtimeEnvironment.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE = "1";
   runtimeEnvironment.CIPHERDEX_AUTHENTICATED_SOURCE_COMMIT = sourceCommit;
   runtimeEnvironment.CIPHERDEX_PUBLIC_REPOSITORY_ROOT = publicRepositoryRoot;
   if (fundedStateRoot !== undefined) {
