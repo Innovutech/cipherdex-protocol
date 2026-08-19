@@ -8,14 +8,14 @@ This report tracks the complete-key and launch-protected confidential-pool
 refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. The corrected reviewed source was deployed to COTI
-testnet and its funded feasibility and best-execution scenarios passed on-chain
-with exact asset recovery. Evidence generation then failed closed because the
-runtime verifier selected the standalone `ConfidentialCPMM` compiler job instead
-of the deployer-context child output used by factory-created pools. The verifier
-now resolves that exact contextual build and has passed focused security review,
-but this source change requires one final source-bound deployment before funded
-evidence can continue.
+complete with zero findings. A prior deployment's funded feasibility and
+best-execution scenarios passed on-chain with exact asset recovery, after which
+evidence generation failed closed because the runtime verifier selected the
+standalone `ConfidentialCPMM` compiler job instead of the deployer-context child
+output used by factory-created pools. The verifier now resolves that exact
+contextual build, has passed focused security review, and the final reviewed
+source has been deployed with a new commit-bound public manifest. Funded evidence
+can continue only after that manifest's separate evidence commit.
 
 Historical testnet addresses, transaction hashes and gas observations from the
 previous pool identity are not evidence for this source and are deliberately not
@@ -346,55 +346,57 @@ replace the remaining pending statements only after all funded gates pass.
 
 ### Fresh COTI testnet deployment
 
-Corrected source commit `74901f63a628566ece1c48fd751eaea95ca72499` was deployed to
+Final reviewed source commit `a46dadbf239e2a632dda02dcfb27c552d69378f8` was deployed to
 COTI testnet chain `7082400`. The complete 17-transaction deployment and binding
-record is `deployments/coti-testnet-74901f63a628566ece1c48fd751eaea95ca72499.json`.
+record is `deployments/coti-testnet-a46dadbf239e2a632dda02dcfb27c552d69378f8.json`.
 The deployment runner independently matched current artifacts, constructor
 arguments, runtime codehashes and post-deployment bindings before publishing the
 record.
 
-- Fee vault: `0xA46BdE6F37d79e83CF27bae1BE13bFD33E5B6209`
-  (`0xbea06013532d8b23d3a5f570a363aef8edb80a78705e4f07d781dcc0ef932e03`,
+- Fee vault: `0x6C0934Bc323152a8C37e8D50E8f76454998A8714`
+  (`0x36ddc050a4debcd6c619df55baa3f91590017ea4b95133fe11fc2b4b30d2b5b4`,
   gas `1841820`).
-- Private LP-token factory: `0x30241d8fCC7A6372987925BD7B6871C5E4ac86b2`
-  (`0xaaabfca3ad27333f3db5662cb3af40af3f5e439ee3e65bc8230970cd6780e19b`,
+- Private LP-token factory: `0xEA836D354E08Da0a1d66f3c6981e44fF60B7d88A`
+  (`0x914af1066386ba312311eac2e448c17d176816c48c443cfbfaf398f26692aea1`,
   gas `2991054`).
 - Initialization-strategy registry:
-  `0xAF239A51fD613cFAc5340b381888319033Aa1709`
-  (`0x9a121778ab7d3537c7dac13321200cf801f5eaf0a07d6c935db29993b0aa4edd`,
+  `0x0e9D2DB1086b5325B60Eb49A250477937438c81a`
+  (`0x4b7a8744e89ff1d0f2054328d6cc4172f00b8398b772cd008e99953c720460d1`,
   gas `1091793`).
 - Canonical confidential pool deployer:
-  `0x8e2DB0bb9113d23B07Fc46c19F8638EB622c6757`
-  (`0x7d941fc9e290a1a9000f82a1b244b6c63aa0a9828aa668204318ac347046df12`,
+  `0x1A33300B2578d3d791dD1585cE003f18834cECEe`
+  (`0x14c53cd7a331a3dbb7b0aca51bb14980cace2e87ea2925437f9cec30f2da4f8b`,
   gas `4429890`).
-- Confidential factory: `0x05675F8AED634FC503101c96A83346B7Fe7aAB70`
-  (`0xb4eaa566febcbc288995063eb05572e243367ed0dfa32a9614bc04aede97da1e`,
-  gas `2253901`).
+- Confidential factory: `0x983D220913cF093ACb23d42cD9eCB893a31575aF`
+  (`0x31b320981f419d04e3d6c497bd2012f74da5f741604f808be23c99d30b47d795`,
+  gas `2253889`).
 - Launch initialization strategy:
-  `0x416cD87017D43F4D35cB20807c5C67cdb03FfD8D`
-  (`0x441f29df816f667e676fdc1c5dcdbcd7c19aa42488207b7d884f34dc65bc1101`,
+  `0x2E949BA9EeD2b884034566e3f0C994AFCF2292b9`
+  (`0x2156691e1e0b13dcfcd78825c3a7d56d171b63459335ae700e001d38289d7d11`,
   gas `4286461`). Its constructor-created migrator is
-  `0x1D55a14915351C1CD5403D37d45f560274650461`.
+  `0x506A8eCCb4C97CEE846d08B3FF96a6c23a907224`.
 - Confidential best-execution router:
-  `0x72f2579c8c24A355F0e87FC638a95B7B7378E8A6`
-  (`0xf79bf84dc4d1d8bbc4a1541b53a63511053dd152bbaba6086dff8680052cdf06`,
+  `0xA75eF81b89B19Ce8c420a2E4555e7560cdcEeD38`
+  (`0x243bd9c6826f9656631f34b52f1800e2046b5a1ba62e56b79a2a49fc444450cd`,
   gas `2182489`).
-- Public factory: `0x474B52A1332E45597b18155A5F164321278Ca655`
-  (`0x363d1c2f6775c84d549077e5e5a1ffe705725feac6315aef57ab41a9dc4aa42c`,
+- Public factory: `0xE69929A7860653FC9F72C2962dE281FD3f1E321c`
+  (`0x29f83355e2822a0e6abe91341a0f4198c451a1e1b3713ff793aadf2203749900`,
   gas `3037572`).
-- Public quoter: `0x1F3a27A9e38F7b3cC1a01CA08324fDe41D60a370`
-  (`0x6bf46b38aa7df94598239591d6388a3d66232598619b271ecfb6da24472b4210`,
+- Public quoter: `0xe95c0b2c3CCb7CEAE736633DC7699ccF927ce8bB`
+  (`0x735e9d4116b40165a25c5cdd46f7d449c6c534cad0b3035650145f7db3693890`,
   gas `193643`).
-- Public router: `0xD0481AB7CCA4f84fdB08d2D6B908077F5F450a7D`
-  (`0x74de3d107c251bc7b956d057d042436298e1ede82d933079a0b619fa8210d720`,
+- Public router: `0xa917784C306524Cd61DC64952C823850A6948a7D`
+  (`0x7c677fcbc45505a2d44fb00eb5532fbc65f856cba70689eb990bdc3e9077587e`,
   gas `719795`).
 
 The fee-vault, pool-deployer, strategy-registry, strategy registration,
 registry finalization and best-execution-router bindings were mined and verified
 against current state. All 17 transactions were mined successfully and consumed
-`23510678` gas in total.
+`23510666` gas in total.
 
-The corrected feasibility scenario then passed on-chain. The quote-only probe
+The immediately preceding deployment at source commit
+`74901f63a628566ece1c48fd751eaea95ca72499` remains useful diagnostic evidence.
+Its corrected feasibility scenario passed on-chain. The quote-only probe
 transaction `0xe76a6bcf7186cec21b4afe5af14ebe4c4d4081ef42f780f67655d1d36ab7bf44`
 used `1728897` gas. The quote-plus-swap transaction
 `0x92659b2577b5f3cb07b24ac68aff712947d8d2305b69868cd4e3f93e53c5390b`
