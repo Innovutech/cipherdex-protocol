@@ -542,6 +542,10 @@ if (!acceptsExplicitTransactionHash || acceptsGenericHash) {
 }
 const packageManifest = JSON.parse(await readFile("package.json", "utf8"));
 const freshRunnerSource = await readFile("scripts/run-fresh-hardhat.mjs", "utf8");
+const fundedDeploymentRecoverySource = await readFile(
+  "scripts/recover-funded-deployment.ts",
+  "utf8",
+);
 const operatorLauncherSource = await readFile(
   "scripts/operator-funded-launcher.mjs",
   "utf8",
@@ -1240,11 +1244,28 @@ for (const required of [
   "acquireSignerExecutionLeases",
   "reconcileSignerExecutionLeases",
   "recordPreparedSignerTransaction",
+  "recordPreparedSignerTransactionAbandoned",
+  '"abandoned-prebroadcast"',
+  "pre-broadcast abandonment requires its dedicated proof boundary",
   "funded signer nonce is already reserved by another transaction",
   "reconcile or identically rebroadcast it before another funded run",
 ]) {
   if (!fundedCoordinatorRawSource.includes(required)) {
     throw new Error(`Funded process coordinator omits required control: ${required}`);
+  }
+}
+for (const required of [
+  "assertHistoricalPrebroadcastOrder(sourceCommit, authenticatedCommit)",
+  'trustedGitArguments(["merge-base", "--is-ancestor"',
+  '`${sourceCommit}:scripts/funded-transaction-wallet.ts`',
+  'signerTransaction.status !== "prepared"',
+  'inspection.state !== "absent"',
+  'getTransactionCount(owner, "latest")',
+  'getTransactionCount(owner, "pending")',
+  "recordPreparedSignerTransactionAbandoned(CHAIN_ID, owner, transactionHash)",
+]) {
+  if (!fundedDeploymentRecoverySource.includes(required)) {
+    throw new Error(`Funded deployment recovery omits pre-broadcast proof: ${required}`);
   }
 }
 for (const required of [

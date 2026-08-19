@@ -53,6 +53,11 @@ export function recordSignerTransactionStatus(
   status: "prepared" | "broadcast" | "outcome-unknown" | "mined-success" | "mined-failure",
   blockNumber?: number,
 ): void;
+export function recordPreparedSignerTransactionAbandoned(
+  chainId: number,
+  signer: string,
+  hash: string,
+): void;
 export function readSignerTransactionState(chainId: number, signer: string): Readonly<{
   schema: string;
   chainId: number;
@@ -60,7 +65,13 @@ export function readSignerTransactionState(chainId: number, signer: string): Rea
   transactions: readonly Readonly<{
     hash: string;
     nonce: number;
-    status: "prepared" | "broadcast" | "outcome-unknown" | "mined-success" | "mined-failure";
+    status:
+      | "prepared"
+      | "broadcast"
+      | "outcome-unknown"
+      | "abandoned-prebroadcast"
+      | "mined-success"
+      | "mined-failure";
     blockNumber?: number;
     updatedAt: string;
   }>[];

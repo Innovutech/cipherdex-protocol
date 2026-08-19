@@ -402,7 +402,9 @@ async function main() {
         const nonterminal = signerLeases.flatMap((lease) =>
           readSignerTransactionState(lease.chainId, lease.signer).transactions
             .filter((transaction) =>
-              transaction.status !== "mined-success" && transaction.status !== "mined-failure"
+              transaction.status !== "abandoned-prebroadcast" &&
+              transaction.status !== "mined-success" &&
+              transaction.status !== "mined-failure"
             )
             .map((transaction) => ({ lease, transaction }))
         );

@@ -16,10 +16,15 @@ const TRANSACTION_STATUSES = new Set([
   "prepared",
   "broadcast",
   "outcome-unknown",
+  "abandoned-prebroadcast",
   "mined-success",
   "mined-failure",
 ]);
-const TERMINAL_TRANSACTION_STATUSES = new Set(["mined-success", "mined-failure"]);
+const TERMINAL_TRANSACTION_STATUSES = new Set([
+  "abandoned-prebroadcast",
+  "mined-success",
+  "mined-failure",
+]);
 const MAX_RETAINED_TERMINAL_TRANSACTIONS = 256;
 
 function sha256(value) {
@@ -228,8 +233,7 @@ export function recordPreparedSignerTransaction(input) {
     }
     if (state.transactions.some((entry) =>
       entry.nonce === input.nonce &&
-      entry.status !== "mined-success" &&
-      entry.status !== "mined-failure"
+      !TERMINAL_TRANSACTION_STATUSES.has(entry.status)
     )) throw new Error("funded signer nonce is already reserved by another transaction");
     state.transactions.push({
       hash: input.hash.toLowerCase(),
@@ -245,6 +249,9 @@ export function recordSignerTransactionStatus(chainId, signer, hash, status, blo
   if (!TRANSACTION_STATUSES.has(status)) {
     throw new Error("invalid funded signer transaction status");
   }
+  if (status === "abandoned-prebroadcast") {
+    throw new Error("pre-broadcast abandonment requires its dedicated proof boundary");
+  }
   updateSignerState(chainId, signer.toLowerCase(), (state) => {
     const transaction = state.transactions.find((entry) => entry.hash.toLowerCase() === hash.toLowerCase());
     if (!transaction) throw new Error("signer transaction status lacks a prepared record");
@@ -255,6 +262,20 @@ export function recordSignerTransactionStatus(chainId, signer, hash, status, blo
     transaction.status = status;
     transaction.updatedAt = new Date().toISOString();
     if (blockNumber !== undefined) transaction.blockNumber = blockNumber;
+    return state;
+  });
+}
+
+export function recordPreparedSignerTransactionAbandoned(chainId, signer, hash) {
+  updateSignerState(chainId, signer.toLowerCase(), (state) => {
+    const transaction = state.transactions.find((entry) =>
+      entry.hash.toLowerCase() === hash.toLowerCase()
+    );
+    if (!transaction || transaction.status !== "prepared" || transaction.blockNumber !== undefined) {
+      throw new Error("only an unmined prepared signer transaction may be abandoned pre-broadcast");
+    }
+    transaction.status = "abandoned-prebroadcast";
+    transaction.updatedAt = new Date().toISOString();
     return state;
   });
 }

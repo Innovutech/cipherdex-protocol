@@ -31,6 +31,7 @@ import {
   ACTIVE_SIGNER_LEASES_ENVIRONMENT,
   acquireSignerExecutionLeases,
   readSignerTransactionState,
+  recordPreparedSignerTransactionAbandoned,
   recordPreparedSignerTransaction,
   recordSignerTransactionStatus,
   signerLeaseEnvironment,
@@ -825,6 +826,58 @@ describe("funded recovery journal", function () {
     expect(parsed.nonce).to.equal(1);
     expect(broadcastRaw).to.equal(RAW1);
     expect(journal.transactions[0]).to.include({ hash: TX1, status: "broadcast" });
+  });
+
+  it("releases only a prepared signer reservation through the dedicated abandonment boundary", function () {
+    const previousCoordinatorRoot = process.env.CIPHERDEX_COORDINATOR_ROOT;
+    process.env.CIPHERDEX_COORDINATOR_ROOT = join(directory, "coordinator-abandoned");
+    const leases = acquireSignerExecutionLeases(31_337, [OWNER]);
+    const previous = process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+    process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = signerLeaseEnvironment(leases);
+    try {
+      recordPreparedSignerTransaction({
+        chainId: 31_337,
+        signer: OWNER,
+        nonce: 7,
+        hash: TX1,
+      });
+      const unsafeStatusWrite = recordSignerTransactionStatus as (
+        chainId: number,
+        signer: string,
+        hash: string,
+        status: string,
+      ) => void;
+      expect(() => unsafeStatusWrite(
+        31_337,
+        OWNER,
+        TX1,
+        "abandoned-prebroadcast",
+      )).to.throw("dedicated proof boundary");
+      recordPreparedSignerTransactionAbandoned(31_337, OWNER, TX1);
+      expect(readSignerTransactionState(31_337, OWNER).transactions[0]).to.include({
+        hash: TX1.toLowerCase(),
+        nonce: 7,
+        status: "abandoned-prebroadcast",
+      });
+      expect(() => recordSignerTransactionStatus(
+        31_337,
+        OWNER,
+        TX1,
+        "outcome-unknown",
+      )).to.throw("terminal funded signer transaction status cannot change");
+      expect(() => recordPreparedSignerTransaction({
+        chainId: 31_337,
+        signer: OWNER,
+        nonce: 7,
+        hash: TX2,
+      })).not.to.throw();
+    } finally {
+      if (previous === undefined) delete process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+      else process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = previous;
+      if (previousCoordinatorRoot === undefined) delete process.env.CIPHERDEX_COORDINATOR_ROOT;
+      else process.env.CIPHERDEX_COORDINATOR_ROOT = previousCoordinatorRoot;
+      for (const lease of [...leases].reverse()) lease.release();
+    }
   });
 
   it("rejects signer nonce reuse and immutable terminal status changes", function () {
