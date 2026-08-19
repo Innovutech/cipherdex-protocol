@@ -15,6 +15,8 @@ export const CONFIDENTIAL_FACTORY_TESTNET_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function PRIVACY_MODE() view returns (uint8)",
   "function feeVault() view returns (address)",
+  "function poolDeployer() view returns (address)",
+  "function initializationStrategyRegistry() view returns (address)",
   "function isApprovedPrivateTokenCodehash(bytes32 codehash) view returns (bool)",
   "function isApprovedPrivateToken(address token) view returns (bool)",
   "function approvedPrivateTokenCodehashesLength() view returns (uint256)",
