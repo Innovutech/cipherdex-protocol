@@ -27,6 +27,7 @@ import {
   openFundedRecoveryJournal,
   withFundedTransactionEvidence,
 } from "./funded-transaction-wallet";
+import { requiredFundedRecoveryDirectory } from "./funded-runtime-state";
 import {
   recoverPrivateAllowanceObligations,
   setRecoverablePrivateAllowance,
@@ -320,6 +321,7 @@ async function main(): Promise<void> {
     sourceCommit: deploymentRecord.sourceCommit,
     chainId: Number(network.chainId),
     owner: caller,
+    directory: requiredFundedRecoveryDirectory(),
     deployment: await createFundedDeploymentBinding(deploymentRecord),
   });
   const unresolved = await recoveryJournal.reconcileTransactions(provider);

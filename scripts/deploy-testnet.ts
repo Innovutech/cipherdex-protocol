@@ -31,6 +31,7 @@ import {
   withFundedTransactionEvidence,
 } from "./funded-transaction-wallet";
 import type { FundedRecoveryJournal } from "./funded-recovery-journal";
+import { requiredFundedRecoveryDirectory } from "./funded-runtime-state";
 
 const execFileAsync = promisify(execFile);
 
@@ -365,6 +366,7 @@ async function main(): Promise<void> {
     sourceCommit: deployedSourceCommit,
     chainId: Number(network.chainId),
     owner: deployerAddress,
+    directory: requiredFundedRecoveryDirectory(),
     deployment: {
       recordPath: `deployments/coti-testnet-${deployedSourceCommit.toLowerCase()}.json`,
       recordSha256: "0".repeat(64),

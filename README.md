@@ -114,6 +114,9 @@ a fresh private checkout, performs a locked script-disabled install and
 secretless build, records the source/dependency/artifact measurement, reads the
 external environment only after authentication, executes Hardhat with
 `--no-compile`, atomically publishes allowed JSON, and removes the private runtime.
+Encrypted recovery journals are stored in an owner-only, repository-scoped
+directory outside that disposable runtime, so runtime cleanup cannot erase
+replay protection, pending transaction evidence, or asset-recovery obligations.
 
 The `scripts/deploy-testnet.ts` target requires a committed source tree and a commit-named
 `COTI_DEPLOYMENT_RECORD`. All four funded gates run only after the reviewed

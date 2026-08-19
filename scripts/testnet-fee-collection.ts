@@ -19,6 +19,7 @@ import {
   openFundedRecoveryJournal,
   withFundedTransactionEvidence,
 } from "./funded-transaction-wallet";
+import { requiredFundedRecoveryDirectory } from "./funded-runtime-state";
 import {
   recoverPrivateAllowanceObligations,
   setRecoverablePrivateAllowance,
@@ -792,6 +793,7 @@ async function main(): Promise<void> {
     sourceCommit,
     chainId: Number(network.chainId),
     owner,
+    directory: requiredFundedRecoveryDirectory(),
     deployment: await createFundedDeploymentBinding(deploymentRecord),
   });
   recoveryWallet = wallet;

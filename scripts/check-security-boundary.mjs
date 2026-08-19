@@ -556,6 +556,14 @@ const fundedRpcConfirmationSource = await readFile(
   "scripts/funded-rpc-confirmation.mjs",
   "utf8",
 );
+const fundedTransactionWalletSource = await readFile(
+  "scripts/funded-transaction-wallet.ts",
+  "utf8",
+);
+const fundedRuntimeStateSource = await readFile(
+  "scripts/funded-runtime-state.ts",
+  "utf8",
+);
 if (!freshRunnerSource.includes('"CIPHERDEX_LAUNCH_AUTHORITY"')) {
   throw new Error("Fresh deployment runner strips the required launch authority");
 }
@@ -625,6 +633,30 @@ for (const required of [
 }
 if (/hardhat\/internal\/cli\/cli\.js/u.test(operatorLauncherSource + freshRunnerSource)) {
   throw new Error("Funded execution resolves an unsupported Hardhat internal subpath");
+}
+for (const required of [
+  "persistentRecoveryRoot(repositoryRoot)",
+  "CIPHERDEX_FUNDED_STATE_ROOT: recoveryRoot",
+]) {
+  if (!operatorLauncherSource.includes(required)) {
+    throw new Error(`Funded launcher omits durable recovery control: ${required}`);
+  }
+}
+for (const required of [
+  "funded recovery state requires an explicit absolute durable directory",
+]) {
+  if (!fundedTransactionWalletSource.includes(required)) {
+    throw new Error(`Funded wallet omits durable recovery control: ${required}`);
+  }
+}
+for (const required of [
+  "CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE",
+  "CIPHERDEX_FUNDED_STATE_ROOT",
+  "funded recovery state requires the authenticated operator launcher",
+]) {
+  if (!fundedRuntimeStateSource.includes(required)) {
+    throw new Error(`Funded runtime state omits durable recovery control: ${required}`);
+  }
 }
 for (const required of [
   'require.resolve("hardhat/package.json")',

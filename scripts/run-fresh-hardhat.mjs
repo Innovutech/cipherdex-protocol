@@ -172,6 +172,7 @@ const SYSTEM_ENVIRONMENT = Object.freeze([
   "PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "ComSpec", "COMSPEC",
   "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
   "LANG", "LC_ALL", "CI", "GITHUB_ACTIONS",
+  "CIPHERDEX_FUNDED_STATE_ROOT",
 ]);
 
 const heldLeases = [];
@@ -283,11 +284,20 @@ async function main() {
   const executionRoot = realpathSync(resolve(process.cwd()));
   const publicRepositoryRoot = requiredCanonicalDirectory("CIPHERDEX_PUBLIC_REPOSITORY_ROOT");
   const buildReceiptRoot = requiredCanonicalDirectory("CIPHERDEX_BUILD_RECEIPT_ROOT");
+  const fundedStateRoot = targetPolicy.funded
+    ? requiredCanonicalDirectory("CIPHERDEX_FUNDED_STATE_ROOT")
+    : undefined;
   if (isInside(executionRoot, publicRepositoryRoot) || isInside(publicRepositoryRoot, executionRoot)) {
     throw new Error("private funded runtime and public repository must be separate trees");
   }
   if (buildReceiptRoot === executionRoot || !isInside(executionRoot, buildReceiptRoot)) {
     throw new Error("reviewed build receipt root must be a private runtime subdirectory");
+  }
+  if (
+    fundedStateRoot !== undefined &&
+    (isInside(executionRoot, fundedStateRoot) || isInside(publicRepositoryRoot, fundedStateRoot))
+  ) {
+    throw new Error("funded recovery state must remain outside runtime and public repository");
   }
   const sourceCommit = process.env.CIPHERDEX_AUTHENTICATED_SOURCE_COMMIT?.trim().toLowerCase();
   if (!sourceCommit || !/^[0-9a-f]{40}$/u.test(sourceCommit)) {
@@ -351,6 +361,9 @@ async function main() {
   runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git;
   runtimeEnvironment.CIPHERDEX_AUTHENTICATED_SOURCE_COMMIT = sourceCommit;
   runtimeEnvironment.CIPHERDEX_PUBLIC_REPOSITORY_ROOT = publicRepositoryRoot;
+  if (fundedStateRoot !== undefined) {
+    runtimeEnvironment.CIPHERDEX_FUNDED_STATE_ROOT = fundedStateRoot;
+  }
 
   if (targetPolicy.funded) {
     const { JsonRpcProvider, Wallet } = await import("ethers");

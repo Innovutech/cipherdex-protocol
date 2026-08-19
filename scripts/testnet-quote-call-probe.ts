@@ -19,6 +19,7 @@ import {
   openFundedRecoveryJournal,
   withFundedTransactionEvidence,
 } from "./funded-transaction-wallet";
+import { requiredFundedRecoveryDirectory } from "./funded-runtime-state";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
 import {
   requiredTestnetDeploymentRecordPath,
@@ -186,6 +187,7 @@ async function main(): Promise<void> {
     sourceCommit,
     chainId: Number(network.chainId),
     owner: quoteAddress,
+    directory: requiredFundedRecoveryDirectory(),
     deployment: await createFundedDeploymentBinding(deploymentRecord),
   });
   const unresolved = await recoveryJournal.reconcileTransactions(ethers.provider);

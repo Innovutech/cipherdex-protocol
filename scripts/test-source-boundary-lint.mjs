@@ -107,6 +107,8 @@ for (const required of [
   'resolve(runtime, ".git", "cipherdex-receipts")',
   "receiptRoot,",
   'CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE: "1"',
+  "CIPHERDEX_FUNDED_STATE_ROOT: recoveryRoot",
+  "persistentRecoveryRoot(repositoryRoot)",
 ]) {
   assert.ok(operatorLauncherSource.includes(required));
 }
@@ -152,6 +154,8 @@ for (const required of [
   "buildReviewedRuntimeEnvironment",
   "readReviewedEnvironment",
   'requiredCanonicalDirectory("CIPHERDEX_BUILD_RECEIPT_ROOT")',
+  'requiredCanonicalDirectory("CIPHERDEX_FUNDED_STATE_ROOT")',
+  "funded recovery state must remain outside runtime and public repository",
   "receiptRoot: buildReceiptRoot",
   "fresh-runtime-environment.mjs",
   "GIT_CONFIG_NOSYSTEM",

@@ -160,7 +160,10 @@ source-bound modeled disposable scenario and must remain positive.
 
 All funded runners use the v7 encrypted append-only recovery journal. They derive
 the transaction hash from the locally signed payload and durably record both
-before RPC submission.
+before RPC submission. The external authenticated launcher places these journals
+in a stable owner-only, repository-scoped directory outside each disposable
+checkout. Runtime deletion after success, failure, or process interruption cannot
+delete replay protection, evidence-pending state, or cleanup obligations.
 An ambiguous provider response therefore retains a deterministic hash and exact
 payload for explicit receipt reconciliation or identical rebroadcast; it never
 causes a blind re-sign. Signed payloads remain private local recovery material

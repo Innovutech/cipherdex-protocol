@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -205,6 +205,18 @@ function restrictOperatorDirectory(path) {
   return canonical;
 }
 
+function persistentRecoveryRoot(repositoryRoot) {
+  const recoveryRoot = resolve(homedir(), ".cipherdex", "recovery");
+  mkdirSync(recoveryRoot, { recursive: true, mode: 0o700 });
+  const canonicalRecoveryRoot = restrictOperatorDirectory(recoveryRoot);
+  const repositoryId = createHash("sha256")
+    .update(repositoryRoot.toLowerCase(), "utf8")
+    .digest("hex");
+  const repositoryRecoveryRoot = resolve(canonicalRecoveryRoot, repositoryId);
+  mkdirSync(repositoryRecoveryRoot, { recursive: true, mode: 0o700 });
+  return restrictOperatorDirectory(repositoryRecoveryRoot);
+}
+
 function materializeInternalFileLinks(root) {
   const canonicalRoot = realpathSync(root);
   const visit = (path) => {
@@ -240,6 +252,7 @@ async function main() {
     throw new Error("funded launcher repository must be a real directory");
   }
   const environmentPath = assertExternalEnvironment(repositoryRoot, resolve(input.environment));
+  const recoveryRoot = persistentRecoveryRoot(repositoryRoot);
   const git = trustedGit();
   const systemEnvironment = selectedEnvironment(SYSTEM_ENVIRONMENT);
   const hardenedGitEnvironment = gitEnvironment(systemEnvironment, repositoryRoot);
@@ -333,6 +346,7 @@ async function main() {
       CIPHERDEX_AUTHENTICATED_SOURCE_COMMIT: input.commit,
       CIPHERDEX_PUBLIC_REPOSITORY_ROOT: repositoryRoot,
       CIPHERDEX_FUNDED_ENV_FILE: environmentPath,
+      CIPHERDEX_FUNDED_STATE_ROOT: recoveryRoot,
       CIPHERDEX_BUILD_RECEIPT_ROOT: receiptRoot,
       CIPHERDEX_TRUSTED_GIT: git,
     };

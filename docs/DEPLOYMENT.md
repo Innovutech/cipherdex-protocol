@@ -53,7 +53,12 @@ is no mainnet deployment script or mainnet network entry.
    internal package links into regular files, recursively validates owner-only
    storage, records a v2 build measurement, and only then permits the private
    runner to read the external environment. The private runner always uses
-   `hardhat run --no-compile`. The runtime is deleted on success or failure.
+   `hardhat run --no-compile`. The launcher provisions a stable owner-only,
+   repository-scoped recovery directory outside the checkout and passes it as a
+   non-overridable runner boundary. The runtime is deleted on success or failure,
+   while encrypted recovery journals survive for reconciliation, evidence retry,
+   and asset cleanup. Do not manually delete that recovery directory while any
+   run is nonterminal.
 8. Run the launcher with target `scripts/testnet-preflight.ts`. The preflight intentionally skips contract
    compilation so missing configuration fails immediately. It verifies the configured chain, native
    testnet gas, token contract code/decimals, and caller-encrypted balance
@@ -124,8 +129,9 @@ minimum confirmation depth are all independently corroborated.
     stack; it never creates pools in or mutates the reviewed deployment. Each
     runner locally populates and signs every funded transaction, persists its
     deterministic hash and signed payload to an authenticated encrypted recovery
-    journal in private OS-protected storage before the exact payload is handed to
-    the RPC, and never automatically re-signs an uncertain operation. The
+    journal in stable private OS-protected storage outside the disposable runtime
+    before the exact payload is handed to the RPC, and never automatically
+    re-signs an uncertain operation. The
     signer-global coordinator stores only hash, nonce and status, never replayable
     signed bytes. Public evidence excludes signed payloads. Disposable
     resource creation is bound to the exact deployment manifest and owner-created

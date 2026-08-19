@@ -21,8 +21,10 @@ import {
 } from "../../scripts/funded-recovery-journal";
 import {
   FundedWallet,
+  openFundedRecoveryJournal,
   withFundedTransactionEvidence,
 } from "../../scripts/funded-transaction-wallet";
+import { requiredFundedRecoveryDirectory } from "../../scripts/funded-runtime-state";
 import {
   ACTIVE_SIGNER_LEASES_ENVIRONMENT,
   acquireSignerExecutionLeases,
@@ -469,6 +471,44 @@ describe("funded recovery journal", function () {
     expect(resumed.activeResources).to.have.length(1);
     resumed.markRecovered("pool-30", [TX1]);
     expect(open().activeResources).to.have.length(0);
+  });
+
+  it("requires the authenticated launcher to provide durable recovery state", function () {
+    const previousActive = process.env.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE;
+    const previousRoot = process.env.CIPHERDEX_FUNDED_STATE_ROOT;
+    delete process.env.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE;
+    delete process.env.CIPHERDEX_FUNDED_STATE_ROOT;
+    const identity = {
+      runner: "best-execution",
+      sourceCommit: COMMIT,
+      chainId: 7_082_400,
+      owner: OWNER,
+      deployment: DEPLOYMENT,
+    } as const;
+    try {
+      expect(requiredFundedRecoveryDirectory).to.throw(
+        "requires the authenticated operator launcher",
+      );
+      process.env.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE = "1";
+      expect(requiredFundedRecoveryDirectory).to.throw("requires an absolute durable directory");
+      process.env.CIPHERDEX_FUNDED_STATE_ROOT = directory;
+      const durableDirectory = requiredFundedRecoveryDirectory();
+      const journal = openFundedRecoveryJournal(TEST_SIGNER.privateKey, {
+        ...identity,
+        directory: durableDirectory,
+      });
+      expect(journal.path.startsWith(`${directory}\\`) || journal.path.startsWith(`${directory}/`))
+        .to.equal(true);
+      expect(() => openFundedRecoveryJournal(TEST_SIGNER.privateKey, {
+        ...identity,
+        directory: "relative-state",
+      })).to.throw("explicit absolute durable directory");
+    } finally {
+      if (previousActive === undefined) delete process.env.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE;
+      else process.env.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE = previousActive;
+      if (previousRoot === undefined) delete process.env.CIPHERDEX_FUNDED_STATE_ROOT;
+      else process.env.CIPHERDEX_FUNDED_STATE_ROOT = previousRoot;
+    }
   });
 
   it("rejects a stale concurrent writer before a second transaction can be broadcast", function () {

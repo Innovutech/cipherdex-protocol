@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHmac } from "node:crypto";
+import { isAbsolute } from "node:path";
 
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import {
@@ -41,7 +42,7 @@ type FundedRecoveryIdentity = Readonly<{
   chainId: number;
   owner: string;
   deployment: FundedDeploymentBinding;
-  directory?: string;
+  directory: string;
 }>;
 
 export function deriveFundedRecoveryKey(
@@ -67,6 +68,9 @@ export function openFundedRecoveryJournal(
   privateKey: string | SigningKey,
   identity: FundedRecoveryIdentity,
 ): FundedRecoveryJournal {
+  if (!identity.directory || !isAbsolute(identity.directory)) {
+    throw new Error("funded recovery state requires an explicit absolute durable directory");
+  }
   return FundedRecoveryJournal.open({
     runner: identity.runner,
     sourceCommit: identity.sourceCommit,
