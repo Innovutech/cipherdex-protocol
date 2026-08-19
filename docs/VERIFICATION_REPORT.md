@@ -8,16 +8,14 @@ This report tracks the complete-key and launch-protected confidential-pool
 refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. The runner-only fee-recovery change passed the
-complete local suite and a focused Codex Security diff review with zero
-findings. Because that executable change was correctly rejected by the prior
-deployment's source-provenance gate, the resulting reviewed commit was deployed
-through a new commit-bound public manifest. The immediately preceding deployment
-remains diagnostic evidence for funded feasibility and production
-best-execution, which passed with exact asset recovery and zero disposable-pool
-residue. The latest deployment must repeat those funded scenarios together with
-fee collection, launchpad migration and quote-call evidence before the final
-funded suite can be sealed.
+complete with zero findings. The runner-only fee-recovery change and the
+subsequent testnet factory-ABI fix passed the complete local suite and focused
+Codex Security diff reviews with zero findings. Each executable change was
+correctly rejected by the preceding deployment's source-provenance gate, so the
+final reviewed commit was deployed through a new commit-bound public manifest.
+Superseded deployments remain diagnostic evidence only. The latest deployment
+must repeat funded feasibility, best execution, fee collection, launchpad
+migration and quote-call evidence before the final funded suite can be sealed.
 
 Historical testnet addresses, transaction hashes and gas observations from
 superseded pool identities are diagnostic only and are not evidence for this
@@ -349,53 +347,66 @@ replace the remaining pending statements only after all funded gates pass.
 
 ### Fresh COTI testnet deployment
 
-Final reviewed source commit `ae10fe31270e49962e383faf9308f651db5ae01f` was deployed to
+Final reviewed source commit `2ba7e9e0baddefb5de22be0e45a27ab84956e480` was deployed to
 COTI testnet chain `7082400`. The complete 17-transaction deployment and binding
-record is `deployments/coti-testnet-ae10fe31270e49962e383faf9308f651db5ae01f.json`.
+record is `deployments/coti-testnet-2ba7e9e0baddefb5de22be0e45a27ab84956e480.json`.
 The deployment runner independently matched current artifacts, constructor
 arguments, runtime codehashes and post-deployment bindings before publishing the
 record.
 
-- Fee vault: `0x93D9a1A7D94D08FF1a71671526E45704E8C15d5F`
-  (`0x2c80cf291ffd92ab5b2454db9587ffca1c2bd21610639c0e00f105a8fefc39a1`,
+- Fee vault: `0x39F7b63a2cC0Fb9E37052ac0F07Bf1De9b8CD016`
+  (`0xcf4725c5ab7abe8c891a77c80c17af3d9fb92d9cfb250b7cd89490ef549d126e`,
   gas `1841820`).
-- Private LP-token factory: `0x69265b74C8A015611A9f78E1EA51f2576C42a6f8`
-  (`0xeff96370b57d5105bd1ee9201ebbc416ff31db161b2e8433cc2f853ebd37b57c`,
+- Private LP-token factory: `0xEc9a4706e71654D2b4a101E4de23DA8d7EEe317a`
+  (`0xd10d4b35b3d040d31ddcec8ef7130223357b4542cbfb3f059b64436ec82a535f`,
   gas `2991054`).
 - Initialization-strategy registry:
-  `0xF6e442905a9E36b1F3a1dD90cc96c969A4B9e6FB`
-  (`0xecc31241985fae14d6e154209ab6a89969e558fd194ed3e4dcb80699799518f7`,
+  `0x1b34dD440d7f44A1Cbb56c60eF534bdBf9B5bf3F`
+  (`0x968d136e051fce6e8e546f4f4351f0eeaa2403629b8ae29a95014a2d75fa4715`,
   gas `1091793`).
 - Canonical confidential pool deployer:
-  `0x7f4bf414DDdAcFD1b7cDaD2DEf4C42fB7C1F35F4`
-  (`0xa608e7ed7ea937ed46fda76f5474d41811c7dec587fca544a71f678ac8987011`,
+  `0x42D7A884a80152B71cFC3bd926E028F55fb3e751`
+  (`0x5b8429265833db934fe90406242806ab9d12d0be50dfc65845db93fac5c0b313`,
   gas `4429890`).
-- Confidential factory: `0xF09103fBc1B9dF6460255CaEd67321af35118e80`
-  (`0xcaa015e93ca283f969086b1e5c82832506f9b92334c24af50b82637cfaa5cf24`,
+- Confidential factory: `0x94EBe0Ebb3d055AC3Eb125c6678CCCC312304D1a`
+  (`0xf517eda24415faf7ee661341f929d9817e72ef8d9029bdcaf267c13082a5b30c`,
   gas `2253901`).
 - Launch initialization strategy:
-  `0x8f8e9Ef8654aFc0B91468aE26Af8D208C6Ad8766`
-  (`0xdf9ae630ec09c8f7d97d51253518148994cdc95112cd9ce93c81094380c5e242`,
+  `0x686E98365901B079303A4b2EAe94d90DB9931709`
+  (`0xef5874adc6ecd4b92c1ded40b800ea94c697b5a9c068ca68a9b20d1922f39a0d`,
   gas `4286461`). Its constructor-created migrator is
-  `0x57D74E96f0a5e52939C8C99668F92e5d735A7cc8`.
+  `0x4F060ea5D7b7202EDb50594378A7B4C4D0f9d147`.
 - Confidential best-execution router:
-  `0x4596f1E34ADE627CAf07f3d50541a7375a02aCeA`
-  (`0x803c33f71b3059f721b9915f76eb798ac0fab3e367e1214567a971011018a51b`,
+  `0x47eAa30350067dbC9695577D7fBc0be2A6aF7Eb0`
+  (`0xd6f2c2fa24bb9c5d3765742eb566707a893fcf9fc24bf83bde653649c2ca74c6`,
   gas `2182489`).
-- Public factory: `0x56DD6FF70e9bf0aedE8627aA74eC0A3D90BA9A3C`
-  (`0xe1ea035ee558e800acf386cbfb6444f29e303132af8e43cfa08d054a4a60d579`,
+- Public factory: `0x5065Ba37F3F2ABb19415D5747781dfB891143733`
+  (`0xe511621be29847ea372a27288914940186b0b569bb64ca14d9adcdaf08dbb6e9`,
   gas `3037572`).
-- Public quoter: `0x50Ae30427D99DeBD17DF60d7D3a75b1839266C89`
-  (`0x47bbd6140f57c3cd9ed3fcb17949611ac832487a6e4f124c78b97c3f87c823d9`,
+- Public quoter: `0x65Cf32e13718DC209a0b412cCf8225B2d7A7Ae56`
+  (`0x012ee1fb4bdf00bb4d6234a6626840ca2b963297138b838db543bc04556e5d29`,
   gas `193643`).
-- Public router: `0xc1bfC11DfD9D61C047a40A927164593eBf43f6F8`
-  (`0x1a643ebd56d89f3550b0c17f3bb4a6cfa7ef799c545438a7d7c76a96595723f3`,
+- Public router: `0x651792a19777BCCb35aD5D445Cc9A564C4dF2e30`
+  (`0x79c18287b9df183151590084ac8d5e0e4590bec7bb7571e6fe9669b73d3cae92`,
   gas `719795`).
 
 The fee-vault, pool-deployer, strategy-registry, strategy registration,
 registry finalization and best-execution-router bindings were mined and verified
 against current state. All 17 transactions were mined successfully and consumed
 `23510678` gas in total.
+
+The superseded deployment at commit
+`ae10fe31270e49962e383faf9308f651db5ae01f` reached its fee-collection
+disposable-pool creation transaction
+`0x61210300af6ecfb8204f0d4e87235efb18b91fc8394a879a247706a947c3bd83`
+before a client-side ABI omission prevented the runner from reading the
+factory's immutable pool-deployer and strategy-registry getters. The failure
+occurred before liquidity, approvals, swaps or other private-token operations.
+The shared testnet ABI now includes the existing view getters, its regression
+test is mandatory in the unit suite, and the focused security diff scan reported
+zero findings. The strict source boundary requires the current replacement
+deployment instead of retrying the superseded pool with modified executable
+code.
 
 The immediately preceding source-bound deployment at commit
 `a46dadbf239e2a632dda02dcfb27c552d69378f8` remains diagnostic evidence. Its
