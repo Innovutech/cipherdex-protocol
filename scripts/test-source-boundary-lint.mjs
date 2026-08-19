@@ -236,10 +236,17 @@ for (const path of [
   "scripts/testnet-best-execution.ts",
   "scripts/testnet-fee-collection.ts",
   "scripts/testnet-launchpad.ts",
+  "scripts/testnet-quote-call-probe.ts",
 ]) {
   const source = readFileSync(path, "utf8");
   assert.ok(source.includes("const sourceCommit = deploymentRecord.sourceCommit;"));
 }
+const quoteProbeSource = readFileSync("scripts/testnet-quote-call-probe.ts", "utf8");
+assert.ok(quoteProbeSource.includes("deploymentRecord.evidenceCommit !== evidenceCommit"));
+assert.doesNotMatch(
+  quoteProbeSource,
+  /deploymentRecord\.sourceCommit\s*!==\s*sourceCommit/,
+);
 for (const path of [
   "scripts/testnet-best-execution.ts",
   "scripts/testnet-launchpad.ts",

@@ -153,7 +153,7 @@ async function submit(
 
 async function main(): Promise<void> {
   stage = "source provenance";
-  const sourceCommit = await assertCleanCommittedSource();
+  const evidenceCommit = await assertCleanCommittedSource();
 
   stage = "network provenance";
   const network = await ethers.provider.getNetwork();
@@ -179,9 +179,10 @@ async function main(): Promise<void> {
       address: factoryAddress,
     }],
   );
-  if (deploymentRecord.sourceCommit !== sourceCommit) {
-    throw new Error("quote-call probe source does not match the reviewed deployment source");
+  if (deploymentRecord.evidenceCommit !== evidenceCommit) {
+    throw new Error("quote-call probe evidence does not match the authenticated source HEAD");
   }
+  const sourceCommit = deploymentRecord.sourceCommit;
   recoveryJournal = openFundedRecoveryJournal(quoteKey, {
     runner: "quote-call-probe",
     sourceCommit,

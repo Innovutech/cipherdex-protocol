@@ -1774,6 +1774,8 @@ for (const required of [
   "assertCleanCommittedSource",
   "network.chainId !== COTI_TESTNET_CHAIN_ID",
   "verifyDeployedRuntimeArtifactWithProvenance",
+  "deploymentRecord.evidenceCommit !== evidenceCommit",
+  "const sourceCommit = deploymentRecord.sourceCommit",
   "serializeMinedEvidence(deploymentEvidence)",
   "serializeMinedEvidence(controlEvidence)",
   "openFundedRecoveryJournal(quoteKey, {",
