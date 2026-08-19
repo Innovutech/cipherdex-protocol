@@ -1401,6 +1401,8 @@ for (const required of [
   "restrictAndAssertPrivateRegularFile",
   "restrictPrivateFile(path)",
   "assertDescriptorMatchesPrivatePath",
+  "compactedFrom",
+  "renameSync(checkpointPath, targetPath)",
 ]) {
   if (!durableAppendLogSource.includes(required)) {
     throw new Error(`Durable append log omits required control: ${required}`);
@@ -1408,7 +1410,8 @@ for (const required of [
 }
 if (
   !durableAppendLogRawSource.includes("cipherdex.durable-append-log/v1") ||
-  !durableAppendLogRawSource.includes("durable append log changed since it was read")
+  !durableAppendLogRawSource.includes("durable append log changed since it was read") ||
+  !durableAppendLogRawSource.includes("durable append-log checkpoint could not be verified")
 ) {
   throw new Error("Durable append log omits the stale-writer rejection diagnostic");
 }

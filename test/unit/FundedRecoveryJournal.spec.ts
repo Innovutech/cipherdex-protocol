@@ -1,11 +1,13 @@
 import { expect } from "chai";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   mkdirSync,
   linkSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -154,6 +156,40 @@ describe("funded recovery journal", function () {
     appendUtf8RecordIfUnchanged(path, "first", "second");
     writeFileSync(path, `${readFileSync(path, "utf8")}incomplete-tail`, "utf8");
     expect(readLatestUtf8Record(path)).to.equal("second");
+  });
+
+  it("atomically checkpoints a legacy log that crossed its former size limit", function () {
+    this.timeout(90_000);
+    const path = join(directory, "bounded-append.journal");
+    const body = "x".repeat(8 * 1024 * 1024);
+    const records: string[] = [];
+    let previousDigest = "0".repeat(64);
+    let previous: string | undefined;
+    for (let index = 0; index < 6; index += 1) {
+      const next = `${index}:${body}`;
+      const payload = Buffer.from(next, "utf8");
+      const line = JSON.stringify({
+        schema: "cipherdex.durable-append-log/v1",
+        sequence: index,
+        previousDigest,
+        payload: payload.toString("base64"),
+        payloadSha256: createHash("sha256").update(payload).digest("hex"),
+      });
+      records.push(line);
+      previousDigest = createHash("sha256").update(line, "utf8").digest("hex");
+      previous = next;
+    }
+    writeFileSync(path, `${records.join("\n")}\n`, "utf8");
+    expect(statSync(path).size).to.be.greaterThan(64 * 1024 * 1024);
+
+    const checkpointed = `6:${body}`;
+    appendUtf8RecordIfUnchanged(path, previous, checkpointed);
+
+    expect(statSync(path).size).to.be.lessThan(24 * 1024 * 1024);
+    expect(readLatestUtf8Record(path)).to.equal(checkpointed);
+    expect(() => appendUtf8RecordIfUnchanged(path, "stale", "rejected")).to.throw(
+      "durable append log changed since it was read",
+    );
   });
 
   it("repairs and validates Windows child ACLs before reading journals or leases", function () {

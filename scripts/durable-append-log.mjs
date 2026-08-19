@@ -23,7 +23,11 @@ import {
 const LOG_SCHEMA = "cipherdex.durable-append-log/v1";
 const LEASE_SCHEMA = "cipherdex.process-lease/v1";
 const MAX_LOG_BYTES = 64 * 1024 * 1024;
-const MAX_RECORD_BYTES = 16 * 1024 * 1024;
+const MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
+const MAX_RECORD_BYTES = Math.ceil((MAX_PAYLOAD_BYTES * 4) / 3) + 4 * 1024;
+// A legacy append could cross MAX_LOG_BYTES by one complete record before the
+// next read. Accept exactly that bounded condition so it can be checkpointed.
+const MAX_RECOVERABLE_LOG_BYTES = MAX_LOG_BYTES + MAX_RECORD_BYTES;
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -168,7 +172,9 @@ export function acquireProcessLease(path, scope) {
 }
 
 function parseLog(raw) {
-  if (raw.length > MAX_LOG_BYTES) throw new Error("durable append log is too large");
+  if (Buffer.byteLength(raw, "utf8") > MAX_RECOVERABLE_LOG_BYTES) {
+    throw new Error("durable append log is too large");
+  }
   const hasCompleteTail = raw.endsWith("\n");
   const lines = raw.split("\n");
   if (!hasCompleteTail) lines.pop();
@@ -181,16 +187,32 @@ function parseLog(raw) {
       throw new Error("durable append-log record is too large");
     }
     const record = JSON.parse(line);
+    const checkpoint = record?.compactedFrom;
     if (
       record?.schema !== LOG_SCHEMA ||
       record.sequence !== sequence ||
       record.previousDigest !== previousDigest ||
       typeof record.payload !== "string" ||
       typeof record.payloadSha256 !== "string" ||
-      !/^[0-9a-f]{64}$/.test(record.payloadSha256)
+      !/^[0-9a-f]{64}$/.test(record.payloadSha256) ||
+      (
+        checkpoint !== undefined &&
+        (
+          sequence !== 0 ||
+          previousDigest !== "0".repeat(64) ||
+          !Number.isSafeInteger(checkpoint?.sequence) ||
+          checkpoint.sequence <= 0 ||
+          typeof checkpoint.digest !== "string" ||
+          !/^[0-9a-f]{64}$/.test(checkpoint.digest)
+        )
+      )
     ) throw new Error("durable append-log hash chain is invalid");
     const payload = Buffer.from(record.payload, "base64");
-    if (payload.toString("base64") !== record.payload || sha256(payload) !== record.payloadSha256) {
+    if (
+      payload.length > MAX_PAYLOAD_BYTES ||
+      payload.toString("base64") !== record.payload ||
+      sha256(payload) !== record.payloadSha256
+    ) {
       throw new Error("durable append-log payload authentication failed");
     }
     previousDigest = sha256(Buffer.from(line, "utf8"));
@@ -198,6 +220,56 @@ function parseLog(raw) {
     sequence += 1;
   }
   return Object.freeze({ latest, previousDigest, sequence });
+}
+
+function encodeRecord(sequence, previousDigest, contents, compactedFrom) {
+  const payload = Buffer.from(contents, "utf8");
+  const record = {
+    schema: LOG_SCHEMA,
+    sequence,
+    previousDigest,
+    payload: payload.toString("base64"),
+    payloadSha256: sha256(payload),
+    ...(compactedFrom === undefined ? {} : { compactedFrom }),
+  };
+  const encoded = Buffer.from(`${JSON.stringify(record)}\n`, "utf8");
+  if (encoded.length > MAX_RECORD_BYTES) {
+    throw new Error("durable append-log record is too large");
+  }
+  return encoded;
+}
+
+function replaceWithCheckpoint(targetPath, directory, encoded) {
+  const checkpointPath = `${targetPath}.checkpoint.${randomBytes(16).toString("hex")}`;
+  const noFollow = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+  let descriptor;
+  try {
+    descriptor = openSync(
+      checkpointPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow,
+      0o600,
+    );
+    restrictAndAssertPrivateRegularFile(checkpointPath, descriptor);
+    writeFileSync(descriptor, encoded);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(checkpointPath, targetPath);
+    restrictAndAssertPrivateRegularFile(targetPath);
+
+    if (process.platform !== "win32") {
+      const directoryDescriptor = openSync(directory, constants.O_RDONLY);
+      try {
+        fsyncSync(directoryDescriptor);
+      } finally {
+        closeSync(directoryDescriptor);
+      }
+    }
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (existsSync(checkpointPath)) unlinkSync(checkpointPath);
+    throw error;
+  }
 }
 
 export function readLatestUtf8Record(path) {
@@ -215,7 +287,7 @@ export function readLatestUtf8Record(path) {
 }
 
 export function appendUtf8RecordIfUnchanged(path, expectedContents, contents) {
-  if (typeof contents !== "string" || Buffer.byteLength(contents, "utf8") > MAX_RECORD_BYTES) {
+  if (typeof contents !== "string" || Buffer.byteLength(contents, "utf8") > MAX_PAYLOAD_BYTES) {
     throw new Error("durable append-log payload is invalid");
   }
   const targetPath = resolve(path);
@@ -230,15 +302,18 @@ export function appendUtf8RecordIfUnchanged(path, expectedContents, contents) {
     if (current.latest !== expectedContents) {
       throw new Error("durable append log changed since it was read");
     }
-    const payload = Buffer.from(contents, "utf8");
-    const record = JSON.stringify({
-      schema: LOG_SCHEMA,
-      sequence: current.sequence,
-      previousDigest: current.previousDigest,
-      payload: payload.toString("base64"),
-      payloadSha256: sha256(payload),
-    });
-    const encoded = Buffer.from(`${record}\n`, "utf8");
+    const encoded = encodeRecord(current.sequence, current.previousDigest, contents);
+    if (Buffer.byteLength(currentRaw, "utf8") + encoded.length > MAX_LOG_BYTES) {
+      const checkpoint = encodeRecord(0, "0".repeat(64), contents, {
+        sequence: current.sequence,
+        digest: current.previousDigest,
+      });
+      replaceWithCheckpoint(targetPath, directory, checkpoint);
+      if (readLatestUtf8Record(targetPath) !== contents) {
+        throw new Error("durable append-log checkpoint could not be verified");
+      }
+      return;
+    }
     const noFollow = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
     const descriptor = openSync(
       targetPath,
