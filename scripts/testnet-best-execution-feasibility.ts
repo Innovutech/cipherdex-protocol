@@ -16,7 +16,10 @@ import {
   type FundedRecoveryJournal,
   verifyRecoveryResourceCreation,
 } from "./funded-recovery-journal";
-import { writePreparedFundedRunEvidence } from "./funded-run-evidence";
+import {
+  BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS,
+  writePreparedFundedRunEvidence,
+} from "./funded-run-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
 import {
   FundedCotiWallet as CotiWallet,
@@ -432,11 +435,11 @@ async function main(): Promise<void> {
   const routerAddress = routerProbeDeployment.address;
   await verifyDeployedRuntimeArtifact("MpcBestExecutionRouterProbe", routerAddress);
   await submit(
-    "pool probe 0 router binding",
+    BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS[0],
     () => pool0.configureRouter(routerAddress, { gasLimit: CALL_GAS_LIMIT }),
   );
   await submit(
-    "pool probe 1 router binding",
+    BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS[1],
     () => pool1.configureRouter(routerAddress, { gasLimit: CALL_GAS_LIMIT }),
   );
 

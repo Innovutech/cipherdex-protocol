@@ -139,6 +139,11 @@ export const BEST_EXECUTION_FUNDED_ASSERTIONS = Object.freeze([
   "disposable pools recovered with zero residue",
 ]);
 
+export const BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS = Object.freeze([
+  "pool probe 0 router binding",
+  "pool probe 1 router binding",
+] as const);
+
 const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
   "best-execution-feasibility": {
     configurationKeys: [
@@ -155,8 +160,8 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
     ],
     artifacts: { MpcBestExecutionPoolProbe: 2, MpcBestExecutionRouterProbe: 1 },
     requiredTransactions: [
-      { label: /^configure pool probe 0 router$/, status: 1, targetArtifactLabel: "GT pool probe 0", selectors: [PROBE_CONFIGURATION_INTERFACE.getFunction("configureRouter")!.selector] },
-      { label: /^configure pool probe 1 router$/, status: 1, targetArtifactLabel: "GT pool probe 1", selectors: [PROBE_CONFIGURATION_INTERFACE.getFunction("configureRouter")!.selector] },
+      { label: new RegExp(`^${BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS[0]}$`), status: 1, targetArtifactLabel: "GT pool probe 0", selectors: [PROBE_CONFIGURATION_INTERFACE.getFunction("configureRouter")!.selector] },
+      { label: new RegExp(`^${BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS[1]}$`), status: 1, targetArtifactLabel: "GT pool probe 1", selectors: [PROBE_CONFIGURATION_INTERFACE.getFunction("configureRouter")!.selector] },
       { label: /^cross-contract GT quote and private selection$/, status: 1, targetArtifactLabel: "GT router probe", selectors: [SELECTOR.probeQuote] },
       { label: /^atomic selected-pool settlement$/, status: 1, targetArtifactLabel: "GT router probe", selectors: [SELECTOR.probeSwap] },
       { label: /^pool probe 0 closure and recovery$/, status: 1, targetArtifactLabel: "GT pool probe 0", selectors: [SELECTOR.closeAndRecover] },
@@ -957,7 +962,7 @@ async function requireBestExecutionFeasibilityBindings(
     ) throw new Error(`funded feasibility pool ${index} state is not provenance-bound`);
     const configure = requireUniqueTransaction(
       transactions,
-      `configure pool probe ${index} router`,
+      BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS[index],
       1,
     );
     const decoded = poolInterface.decodeFunctionData("configureRouter", configure.data);

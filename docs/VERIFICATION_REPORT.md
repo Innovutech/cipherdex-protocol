@@ -8,9 +8,11 @@ This report tracks the complete-key and launch-protected confidential-pool
 refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. The exact reviewed source has been deployed to
-COTI testnet and its public deployment evidence is recorded below. Funded pool,
-routing, fee-collection, launchpad and quote-capability evidence remains pending.
+complete with zero findings. The prior exact reviewed source was deployed to
+COTI testnet and its public deployment evidence is recorded below. Its first
+funded feasibility run passed on-chain and recovered all assets, but exposed a
+fail-closed evidence-label mismatch. The corrected source requires a fresh
+source-bound deployment before funded evidence can continue.
 
 Historical testnet addresses, transaction hashes and gas observations from the
 previous pool identity are not evidence for this source and are deliberately not
@@ -40,8 +42,8 @@ No dependency was added for this refactor.
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 202 passing, 1 intentionally gated funded-network
-  integration placeholder (203 tests discovered)
+- full local suite: 203 passing, 1 intentionally gated funded-network
+  integration placeholder (204 tests discovered)
 - diff whitespace validation: passed
 
 Fresh deployment gas was measured from the source-commit-bound testnet manifest
@@ -281,6 +283,14 @@ The review sequence and current results are:
     was covered by a static source-boundary regression plus the complete local
     verification cycle: zero production or operational advisories, 29 Solidity
     files compiled, 202 passing tests and one intentionally gated funded test.
+18. Focused working-tree diff scan `510640ff-1446-4163-8c58-0e555042fdad`
+    reviewed the shared feasibility transaction-label fix across the funded
+    runner, evidence policy and directly related regression test. Exact status,
+    selector, canonical artifact target, calldata, event, ordering and live-state
+    checks remain mandatory. The scan completed with full coverage and zero
+    findings. The complete verifier then passed with zero advisories, 29
+    Solidity files compiled, 203 passing tests and one intentionally gated
+    funded test.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
@@ -370,4 +380,11 @@ The fee-vault, pool-deployer, strategy-registry, strategy registration,
 registry finalization and best-execution-router bindings were mined and verified
 against current state. Funded pool, routing, fee-collection, launchpad and MPC
 quote-capability evidence remains pending and must be committed separately from
-this source-bound deployment evidence.
+this source-bound deployment evidence. The initial feasibility operations on
+this deployment passed and all three disposable probes were permanently closed
+with exact private-asset recovery. Public evidence finalization then failed
+closed because two valid router-binding transactions used the runner's
+journaled labels while the verifier expected obsolete labels. No paid operation
+will be repeated against this deployment. It is retained as diagnostic evidence
+and superseded for the final funded suite by the corrected source-bound
+deployment.

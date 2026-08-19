@@ -7,6 +7,7 @@ import { Interface, TypedDataEncoder, Wallet, ZeroAddress, keccak256 } from "eth
 
 import { FundedRecoveryJournal } from "../../scripts/funded-recovery-journal";
 import {
+  BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS,
   readFundedRunEvidence,
   requireFeeCollectionMaturityEvidence,
   requireProtectedPoolLifecycleOrder,
@@ -36,6 +37,13 @@ describe("funded run evidence", function () {
 
   afterEach(function () {
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("shares the feasibility router-binding labels with the funded runner", function () {
+    expect(BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS).to.deep.equal([
+      "pool probe 0 router binding",
+      "pool probe 1 router binding",
+    ]);
   });
 
   it("requires replay and caller-isolation failures to match successful controls", function () {
