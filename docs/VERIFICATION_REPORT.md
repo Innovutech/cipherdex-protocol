@@ -308,3 +308,54 @@ be printed or stored.
 
 Fresh addresses, transactions, measured gas, scan identifiers and final command
 results will replace this pending section only after all gates pass.
+
+### Fresh COTI testnet deployment
+
+Source commit `e774287e565411952da8a29337cb055bcae3bf44` was deployed to
+COTI testnet chain `7082400`. The complete 17-transaction deployment and binding
+record is `deployments/coti-testnet-e774287e565411952da8a29337cb055bcae3bf44.json`.
+The deployment runner independently matched current artifacts, constructor
+arguments, runtime codehashes and post-deployment bindings before publishing the
+record.
+
+- Fee vault: `0x698b663E8Ed8587C6dbac7A8Df490fB6083752cd`
+  (`0x5dc7e648a8b69ba9ce58af362a258f00e7e5c7ca762f039dfc959053f3140036`,
+  gas `1841820`).
+- Private LP-token factory: `0xbc5AEd1E90d5479dc41e9400E3797B3E9f2B5891`
+  (`0x54d7ec62ac56bea6c1f47d04d097c1e034f1e8a22894759b994f500c0394990a`,
+  gas `2991054`).
+- Initialization-strategy registry:
+  `0xb0E206D2F290Fd549309154B9600Aa4d0E180983`
+  (`0x3c18b867bac11670a387ea91a7f736f957a68ad573d0e3feaa0c0dd2f2ce8f88`,
+  gas `1091793`).
+- Canonical confidential pool deployer:
+  `0x0E07Da34BD4d46FBaa3Bf45eAb09c4c9Afe0DBb8`
+  (`0x8faad1e361d9a661993c679844e8a8aae12c9997229b4f699ce009f192fd8dfe`,
+  gas `4429890`).
+- Confidential factory: `0x07e2864F2976441c8b47334df5EDf31A109c6282`
+  (`0xb0ad359b68618f5b4b699c9c4ca21bd639934736e84719e43c88dceb66592d74`,
+  gas `2253877`).
+- Launch initialization strategy:
+  `0xBfAdf74a3007bF77fDe32270Da2dBc46CAfAd985`
+  (`0x2ae037272d2ba4909ef700d945d70612b99f44e3f18fa6548dce01ec1f0e1754`,
+  gas `4286449`). Its constructor-created migrator is
+  `0x9fbd2c7A361f2252d41F87A3a6a31142AC2376B3`.
+- Confidential best-execution router:
+  `0x83986ff7e1faA52F388663be84cD0f09eDd1828b`
+  (`0x5e3b4f9c2f4e94fbd5ac75c242b58076de0dbe16416b52d920a7ec78b4688b8d`,
+  gas `2182489`).
+- Public factory: `0x08EcbD216820c3611D809Cc213f5d4C70FB9865d`
+  (`0xd6a932b77985a3c6829f4b0896baa7c3abe276f0631cd9ad94f59069fc958ff9`,
+  gas `3037572`).
+- Public quoter: `0x09F42f993f15a466266a49C8617AD00698855E72`
+  (`0xcec46ddb816cdbc2da7d984716c0bd6c64651b64a988b6e0e22b2c5cf7f0f2f4`,
+  gas `193643`).
+- Public router: `0xd38EAF09f19D2beCCB12875dc4a8C76801B7cB8D`
+  (`0xdb3190ad8a0bfa59a6145cf9d8447cd07123b83bebfa7853c2f37866c0ed3434`,
+  gas `719795`).
+
+The fee-vault, pool-deployer, strategy-registry, strategy registration,
+registry finalization and best-execution-router bindings were mined and verified
+against current state. Funded pool, routing, fee-collection, launchpad and MPC
+quote-capability evidence remains pending and must be committed separately from
+this source-bound deployment evidence.
