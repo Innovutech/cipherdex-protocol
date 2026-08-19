@@ -9,8 +9,9 @@ refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
 complete with zero findings. The runner-only fee-recovery change, the testnet
-factory-ABI fix and the launchpad deadline/revert-evidence hardening passed the
-complete local suite and focused Codex Security diff reviews with zero findings.
+factory-ABI fix, the launchpad deadline/revert-evidence hardening and the
+deployment-evidence provenance handoff passed the complete local suite and
+focused Codex Security diff reviews with zero findings.
 Each executable change was
 correctly rejected by the preceding deployment's source-provenance gate, so the
 final reviewed commit was deployed through a new commit-bound public manifest.
@@ -50,10 +51,10 @@ No dependency was added for this refactor.
   integration placeholder (209 tests discovered)
 - diff whitespace validation: passed
 
-Fresh deployment and best-execution gas was measured against the
-source-commit-bound testnet manifest recorded below. The remaining funded
-fee-collection, launchpad and quote-call evidence remains gated by the
-separately authenticated funded suite.
+Fresh deployment gas was measured against the source-commit-bound testnet
+manifest recorded below. Feasibility, best-execution, fee-collection,
+launchpad and quote-call evidence remains gated by the separately authenticated
+funded suite.
 
 ## Complete pool identity
 
@@ -315,6 +316,16 @@ The review sequence and current results are:
     with full changed-source coverage and zero findings. The complete verifier
     then passed with zero production or operational advisories, 29 Solidity
     files compiled, 208 passing tests and one intentionally gated funded test.
+21. Focused working-tree diff scan `cbca3b2f-ced7-4b4e-89a6-80302427f93f`
+    reviewed the funded quote-call runner's deployment-evidence provenance
+    handoff. The runner now authenticates the clean evidence HEAD while binding
+    its journal and public evidence to the immutable deployment-source commit
+    recorded by the tracked manifest. Static source/security checks reject the
+    former circular requirement that the post-deployment evidence HEAD equal
+    the pre-deployment source commit. The scan covered all three changed files
+    and the supporting provenance boundary with zero findings. The complete
+    verifier passed with zero production or operational advisories, 29 Solidity
+    files compiled, 208 passing tests and one intentionally gated funded test.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
@@ -357,53 +368,65 @@ replace the remaining pending statements only after all funded gates pass.
 
 ### Fresh COTI testnet deployment
 
-Final reviewed source commit `7153eed3950862af5b3d79d42e01e66a482467f1` was deployed to
+Final reviewed source commit `c10b23e7b1c871a95e5d258e26b961cbf4c14a3d` was deployed to
 COTI testnet chain `7082400`. The complete 17-transaction deployment and binding
-record is `deployments/coti-testnet-7153eed3950862af5b3d79d42e01e66a482467f1.json`.
+record is `deployments/coti-testnet-c10b23e7b1c871a95e5d258e26b961cbf4c14a3d.json`.
 The deployment runner independently matched current artifacts, constructor
 arguments, runtime codehashes and post-deployment bindings before publishing the
 record.
 
-- Fee vault: `0x80260077CA3Bf10Accd0dfDd42c97c4Daa5a0371`
-  (`0xdb2a684fded87916705e007ed11f744272b840c0e23ffc08c20c2f0d069a2198`,
+- Fee vault: `0xfCeE820a22F69b3765B07E41fefB57CdF984D6D9`
+  (`0x6fbe61cf639bdcdbd8621321cc02f9fd20bcf1cb33408c8c0dbc62deb711933c`,
   gas `1841820`).
-- Private LP-token factory: `0x12a1185cD7C954eF51dcb6658e9E7A369F2079db`
-  (`0x14a64695401b17677d34cdbf556e66615419b349603356e46f44594d0ebd0400`,
+- Private LP-token factory: `0x4dcee5c653279083aA466B93928bBE62123621Cb`
+  (`0xa6a88bcc6bba27c1280c934e80e60c93f34910af20106bb64fba202a8b832c53`,
   gas `2991054`).
 - Initialization-strategy registry:
-  `0x2B712847efAD18d0977AeB6d6e20c116440384FC`
-  (`0x8832582610a6e4f80078652f2a6793721241583721fd8ced45546ef18c8a7563`,
+  `0x04a5f0EeDCA92847043ebe57Ec975306429210E7`
+  (`0x91dc3a2764061a5765bdc751cd55eae30d79e7677101289739c6a5e08bf7f0fb`,
   gas `1091793`).
 - Canonical confidential pool deployer:
-  `0xb29E4f51aAa4d1FD4F175922e757DaaBF5B8Ae7d`
-  (`0x0f40584da88456c9b1310e7c66a715840576b2c348b796420b3126c028ea55ed`,
+  `0x092852E1dA2AcC09Ed5B977aA7ea5A8261eD0fD7`
+  (`0x29e1a9730d9c0699d955c904084f56a2565dd41acdd646de795afc02bb5b6237`,
   gas `4429890`).
-- Confidential factory: `0x2d67C1905898C7922FC62EbbF0Cbca31126BA6eA`
-  (`0xe7471c0732ef2383a0f3a55f9beab6ad754b41dc7b637dd5a4e203a783cdeaf7`,
-  gas `2253889`).
+- Confidential factory: `0x6d34bcf1A55b9939A2517bE194353404C2Ce7882`
+  (`0x8b577f232cbc0c1dd5d64fc909827d4623e6822affb1594d650f64816bad1ec8`,
+  gas `2253901`).
 - Launch initialization strategy:
-  `0xf071875f5CAF933aa6AE6Ad7702eEe6a8bF44Db8`
-  (`0x64aa9cc835bb368774ccd0d24205fff46b9d7183df64f437dcdd941e2dc6d09e`,
+  `0xf795419eA9654371A30576Ab5FBDc50C90856E92`
+  (`0xac245e7055901292a95de482ae228970a9af872ad549e25dee9c96b191eaafbc`,
   gas `4286461`). Its constructor-created migrator is
-  `0xE492717f7793D1346d135aba899bBb4207B187af`.
+  `0xEb72dF1EFF25bd72431f4D27aad5045d6fd97DC4`.
 - Confidential best-execution router:
-  `0x0241a9E07E8521769F64312E9C3CeD0Be1C2efa8`
-  (`0xcac7a5aaf6994b258d1b750a00d9f2fbb854acd53237e32891ecdc2720f80d45`,
+  `0xaa47EC7C1d5492a4286d5De9EBAd2010A5770961`
+  (`0x11b52db734cb67cf0c7af701eae05aad553bca4c9ed77abf4b2fa5376db0d8f1`,
   gas `2182489`).
-- Public factory: `0xb2A809a5c404297fF9DDCFAaAE9418574cA0829e`
-  (`0x883561a77408f03741d9b6355b300fa7fd9edd2e496cde619d14725702ed0bbe`,
-  gas `3037560`).
-- Public quoter: `0xC38D6dd19D7264eEf7211c813D4921467BB5B6aE`
-  (`0x376b04b43512392d28d9d724fc6f7f7654b467f79f04199ec23c5cbde969b5fb`,
+- Public factory: `0x415Fd23a4Ae5d3Ba73DF5b3319B3AF4cCD271FFe`
+  (`0x2dea7d1ca7892987b2cdda0a51559644721abda345925f81cf5bccc159b38928`,
+  gas `3037572`).
+- Public quoter: `0xcf23524facA6B74A55800857465e8eF3fa08ac78`
+  (`0xfe6aba657daf42c2efb28c4fbcfaf924350cf63d09b28d2eac34dc36188e40fd`,
   gas `193643`).
-- Public router: `0x1ad2E9F3790e95264759D794c97979D252D95Df6`
-  (`0x1e1160a38a34fd95b5713441e11ff4d71833095a4d747f24d5552bee91cf16e1`,
+- Public router: `0x81E8487F8F25F2a73bb9f8af02a9B23ed99DD535`
+  (`0x87939caeec5152c6c8ab3c1702e4c2329e28f73dc903a3580c2f7c0ea6fe2352`,
   gas `719795`).
 
 The fee-vault, pool-deployer, strategy-registry, strategy registration,
 registry finalization and best-execution-router bindings were mined and verified
 against current state. All 17 transactions were mined successfully and consumed
-`23510654` gas in total.
+`23510678` gas in total.
+
+The preceding source-bound deployment at commit
+`7153eed3950862af5b3d79d42e01e66a482467f1` remains diagnostic evidence only.
+Its first funded feasibility run stopped before creating a pool or transferring
+private assets because the isolated checkout was pinned to the deployment source
+and therefore could not contain its necessarily later evidence manifest. The
+quote-call runner also incorrectly required the evidence HEAD to equal the
+deployment source. The corrected boundary authenticates the tracked evidence
+HEAD, proves the deployment source is its ancestor with no unauthorized
+post-source executable changes, and binds funded journals to the deployment
+source. A fresh deployment was required rather than weakening that provenance
+gate or injecting an untracked manifest.
 
 The superseded `2ba7e9e0baddefb5de22be0e45a27ab84956e480`
 deployment remains diagnostic evidence only. Its launchpad price-bound and
