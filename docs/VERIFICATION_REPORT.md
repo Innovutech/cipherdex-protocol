@@ -8,19 +8,16 @@ This report tracks the complete-key and launch-protected confidential-pool
 refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. Final reviewed source has been deployed through a
-commit-bound public manifest. Fresh funded feasibility and production
-best-execution scenarios passed on-chain against that deployment with exact
-asset recovery and zero disposable-pool residue. Fee-collection evidence then
-failed closed during disposable-stack validation; the protocol transactions
-were successful, while the runner hid the nested validation and recovery causes
-and attempted an LP-share read before an uninitialized pool had created an LP
-token. The runner now reports bounded redacted aggregate causes and treats an
-uninitialized pool as recovered only after proving both pool balances and both
-owner allowances are zero. The runner-only change passed the complete local
-suite and a focused Codex Security diff review with zero findings. The remaining
-funded fee-collection, launchpad and quote-call evidence must still pass before
-the final funded suite can be sealed.
+complete with zero findings. The runner-only fee-recovery change passed the
+complete local suite and a focused Codex Security diff review with zero
+findings. Because that executable change was correctly rejected by the prior
+deployment's source-provenance gate, the resulting reviewed commit was deployed
+through a new commit-bound public manifest. The immediately preceding deployment
+remains diagnostic evidence for funded feasibility and production
+best-execution, which passed with exact asset recovery and zero disposable-pool
+residue. The latest deployment must repeat those funded scenarios together with
+fee collection, launchpad migration and quote-call evidence before the final
+funded suite can be sealed.
 
 Historical testnet addresses, transaction hashes and gas observations from
 superseded pool identities are diagnostic only and are not evidence for this
@@ -352,55 +349,57 @@ replace the remaining pending statements only after all funded gates pass.
 
 ### Fresh COTI testnet deployment
 
-Final reviewed source commit `a46dadbf239e2a632dda02dcfb27c552d69378f8` was deployed to
+Final reviewed source commit `ae10fe31270e49962e383faf9308f651db5ae01f` was deployed to
 COTI testnet chain `7082400`. The complete 17-transaction deployment and binding
-record is `deployments/coti-testnet-a46dadbf239e2a632dda02dcfb27c552d69378f8.json`.
+record is `deployments/coti-testnet-ae10fe31270e49962e383faf9308f651db5ae01f.json`.
 The deployment runner independently matched current artifacts, constructor
 arguments, runtime codehashes and post-deployment bindings before publishing the
 record.
 
-- Fee vault: `0x6C0934Bc323152a8C37e8D50E8f76454998A8714`
-  (`0x36ddc050a4debcd6c619df55baa3f91590017ea4b95133fe11fc2b4b30d2b5b4`,
+- Fee vault: `0x93D9a1A7D94D08FF1a71671526E45704E8C15d5F`
+  (`0x2c80cf291ffd92ab5b2454db9587ffca1c2bd21610639c0e00f105a8fefc39a1`,
   gas `1841820`).
-- Private LP-token factory: `0xEA836D354E08Da0a1d66f3c6981e44fF60B7d88A`
-  (`0x914af1066386ba312311eac2e448c17d176816c48c443cfbfaf398f26692aea1`,
+- Private LP-token factory: `0x69265b74C8A015611A9f78E1EA51f2576C42a6f8`
+  (`0xeff96370b57d5105bd1ee9201ebbc416ff31db161b2e8433cc2f853ebd37b57c`,
   gas `2991054`).
 - Initialization-strategy registry:
-  `0x0e9D2DB1086b5325B60Eb49A250477937438c81a`
-  (`0x4b7a8744e89ff1d0f2054328d6cc4172f00b8398b772cd008e99953c720460d1`,
+  `0xF6e442905a9E36b1F3a1dD90cc96c969A4B9e6FB`
+  (`0xecc31241985fae14d6e154209ab6a89969e558fd194ed3e4dcb80699799518f7`,
   gas `1091793`).
 - Canonical confidential pool deployer:
-  `0x1A33300B2578d3d791dD1585cE003f18834cECEe`
-  (`0x14c53cd7a331a3dbb7b0aca51bb14980cace2e87ea2925437f9cec30f2da4f8b`,
+  `0x7f4bf414DDdAcFD1b7cDaD2DEf4C42fB7C1F35F4`
+  (`0xa608e7ed7ea937ed46fda76f5474d41811c7dec587fca544a71f678ac8987011`,
   gas `4429890`).
-- Confidential factory: `0x983D220913cF093ACb23d42cD9eCB893a31575aF`
-  (`0x31b320981f419d04e3d6c497bd2012f74da5f741604f808be23c99d30b47d795`,
-  gas `2253889`).
+- Confidential factory: `0xF09103fBc1B9dF6460255CaEd67321af35118e80`
+  (`0xcaa015e93ca283f969086b1e5c82832506f9b92334c24af50b82637cfaa5cf24`,
+  gas `2253901`).
 - Launch initialization strategy:
-  `0x2E949BA9EeD2b884034566e3f0C994AFCF2292b9`
-  (`0x2156691e1e0b13dcfcd78825c3a7d56d171b63459335ae700e001d38289d7d11`,
+  `0x8f8e9Ef8654aFc0B91468aE26Af8D208C6Ad8766`
+  (`0xdf9ae630ec09c8f7d97d51253518148994cdc95112cd9ce93c81094380c5e242`,
   gas `4286461`). Its constructor-created migrator is
-  `0x506A8eCCb4C97CEE846d08B3FF96a6c23a907224`.
+  `0x57D74E96f0a5e52939C8C99668F92e5d735A7cc8`.
 - Confidential best-execution router:
-  `0xA75eF81b89B19Ce8c420a2E4555e7560cdcEeD38`
-  (`0x243bd9c6826f9656631f34b52f1800e2046b5a1ba62e56b79a2a49fc444450cd`,
+  `0x4596f1E34ADE627CAf07f3d50541a7375a02aCeA`
+  (`0x803c33f71b3059f721b9915f76eb798ac0fab3e367e1214567a971011018a51b`,
   gas `2182489`).
-- Public factory: `0xE69929A7860653FC9F72C2962dE281FD3f1E321c`
-  (`0x29f83355e2822a0e6abe91341a0f4198c451a1e1b3713ff793aadf2203749900`,
+- Public factory: `0x56DD6FF70e9bf0aedE8627aA74eC0A3D90BA9A3C`
+  (`0xe1ea035ee558e800acf386cbfb6444f29e303132af8e43cfa08d054a4a60d579`,
   gas `3037572`).
-- Public quoter: `0xe95c0b2c3CCb7CEAE736633DC7699ccF927ce8bB`
-  (`0x735e9d4116b40165a25c5cdd46f7d449c6c534cad0b3035650145f7db3693890`,
+- Public quoter: `0x50Ae30427D99DeBD17DF60d7D3a75b1839266C89`
+  (`0x47bbd6140f57c3cd9ed3fcb17949611ac832487a6e4f124c78b97c3f87c823d9`,
   gas `193643`).
-- Public router: `0xa917784C306524Cd61DC64952C823850A6948a7D`
-  (`0x7c677fcbc45505a2d44fb00eb5532fbc65f856cba70689eb990bdc3e9077587e`,
+- Public router: `0xc1bfC11DfD9D61C047a40A927164593eBf43f6F8`
+  (`0x1a643ebd56d89f3550b0c17f3bb4a6cfa7ef799c545438a7d7c76a96595723f3`,
   gas `719795`).
 
 The fee-vault, pool-deployer, strategy-registry, strategy registration,
 registry finalization and best-execution-router bindings were mined and verified
 against current state. All 17 transactions were mined successfully and consumed
-`23510666` gas in total.
+`23510678` gas in total.
 
-The fresh feasibility scenario passed on-chain against this deployment. The
+The immediately preceding source-bound deployment at commit
+`a46dadbf239e2a632dda02dcfb27c552d69378f8` remains diagnostic evidence. Its
+fresh feasibility scenario passed on-chain. The
 quote-only transaction
 `0x920b8cf353e6c9335812adb669df48bf9203a6c4fafa13600a80d7859fdf0d79`
 used `1728897` gas. The quote-plus-swap transaction
