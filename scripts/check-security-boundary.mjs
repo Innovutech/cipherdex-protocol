@@ -1229,8 +1229,8 @@ if (
   signerPreparedPosition < 0 ||
   broadcastPosition < 0 ||
   broadcastRecordPosition < 0 ||
-  signerPreparedPosition >= preparedPosition ||
-  preparedPosition >= broadcastPosition ||
+  preparedPosition >= signerPreparedPosition ||
+  signerPreparedPosition >= broadcastPosition ||
   broadcastPosition >= broadcastRecordPosition
 ) {
   throw new Error("Funded transaction boundary does not journal before RPC broadcast");
@@ -1245,6 +1245,16 @@ for (const required of [
 ]) {
   if (!fundedCoordinatorRawSource.includes(required)) {
     throw new Error(`Funded process coordinator omits required control: ${required}`);
+  }
+}
+for (const required of [
+  '"scripts/recover-funded-deployment.ts"',
+  "recovery: true",
+  "funded recovery target is not bound to the sole unresolved signer transaction",
+  "CIPHERDEX_RECOVERY_TRANSACTION_HASH",
+]) {
+  if (!freshRunnerSource.includes(required)) {
+    throw new Error(`Funded runner omits required recovery control: ${required}`);
   }
 }
 for (const required of [

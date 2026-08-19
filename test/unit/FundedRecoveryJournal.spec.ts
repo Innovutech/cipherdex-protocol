@@ -768,6 +768,65 @@ describe("funded recovery journal", function () {
     }
   });
 
+  it("retains the signed payload for recovery when signer reservation fails before broadcast", async function () {
+    const wallet = new FundedWallet(
+      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      ethers.provider,
+    );
+    const journal = FundedRecoveryJournal.open({
+      runner: "best-execution",
+      sourceCommit: COMMIT,
+      chainId: 31_337,
+      owner: wallet.address,
+      deployment: DEPLOYMENT,
+      recoveryKey: RECOVERY_KEY,
+      directory,
+    });
+    const previous = process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+    delete process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+    const nonceBefore = await ethers.provider.getTransactionCount(wallet.address);
+    try {
+      await expectRejected(
+        withFundedTransactionEvidence(
+          "reservation failure",
+          journal,
+          () => wallet.sendTransaction({ to: wallet.address, value: 0n }),
+        ),
+        "lacks its parent execution lease",
+      );
+      expect(journal.transactions).to.have.length(1);
+      expect(journal.transactions[0]).to.include({
+        label: "reservation failure",
+        status: "prepared",
+      });
+      expect(await ethers.provider.getTransactionCount(wallet.address)).to.equal(nonceBefore);
+    } finally {
+      if (previous === undefined) delete process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+      else process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = previous;
+    }
+  });
+
+  it("rebroadcasts only the identical signed transaction retained by recovery", async function () {
+    const journal = open();
+    journal.recordPreparedTransaction("identical recovery", TX1, RAW1);
+    const parsed = Transaction.from(RAW1);
+    let broadcastRaw: string | undefined;
+    await journal.rebroadcastIdenticalTransaction(TX1, {
+      async getNetwork() { return { chainId: 7_082_400n }; },
+      async getTransaction() { return null; },
+      async getTransactionReceipt() { return null; },
+      async getBlock() { return null; },
+      async getBlockNumber() { return 1; },
+      async broadcastTransaction(rawTransaction) {
+        broadcastRaw = rawTransaction;
+        return { hash: keccak256(rawTransaction) };
+      },
+    });
+    expect(parsed.nonce).to.equal(1);
+    expect(broadcastRaw).to.equal(RAW1);
+    expect(journal.transactions[0]).to.include({ hash: TX1, status: "broadcast" });
+  });
+
   it("rejects signer nonce reuse and immutable terminal status changes", function () {
     const previousCoordinatorRoot = process.env.CIPHERDEX_COORDINATOR_ROOT;
     process.env.CIPHERDEX_COORDINATOR_ROOT = join(directory, "coordinator-status");

@@ -8,6 +8,15 @@ import {
 import { isAbsolute, relative, resolve } from "node:path";
 
 const ALLOWED_TARGETS = new Map([
+  ["scripts/recover-funded-deployment.ts", {
+    arguments: ["--network", "cotiTestnet"],
+    funded: true,
+    recovery: true,
+    environment: [
+      "CIPHERDEX_RECOVERY_SOURCE_COMMIT",
+      "CIPHERDEX_RECOVERY_TRANSACTION_HASH",
+    ],
+  }],
   ["scripts/deploy-testnet.ts", {
     arguments: ["--network", "cotiTestnet"],
     funded: true,
@@ -338,6 +347,7 @@ async function main() {
     ACTIVE_SIGNER_LEASES_ENVIRONMENT,
     acquireRepositoryExecutionLease,
     acquireSignerExecutionLeases,
+    readSignerTransactionState,
     reconcileSignerExecutionLeases,
     signerLeaseEnvironment,
   } = await import("./funded-process-coordinator.mjs");
@@ -384,15 +394,37 @@ async function main() {
       { staticNetwork: true },
     );
     try {
-      await reconcileSignerExecutionLeases(
-        signerLeases,
-        async (lease, transaction) => inspectFundedTransaction(provider, {
-          chainId: lease.chainId,
-          signer: lease.signer,
-          nonce: transaction.nonce,
-          hash: transaction.hash,
-        }),
-      );
+      if (targetPolicy.recovery === true) {
+        const expectedHash = runtimeEnvironment.CIPHERDEX_RECOVERY_TRANSACTION_HASH?.toLowerCase();
+        if (!expectedHash || !/^0x[0-9a-f]{64}$/u.test(expectedHash)) {
+          throw new Error("funded recovery target requires one explicit transaction hash");
+        }
+        const nonterminal = signerLeases.flatMap((lease) =>
+          readSignerTransactionState(lease.chainId, lease.signer).transactions
+            .filter((transaction) =>
+              transaction.status !== "mined-success" && transaction.status !== "mined-failure"
+            )
+            .map((transaction) => ({ lease, transaction }))
+        );
+        if (
+          nonterminal.length !== 1 ||
+          nonterminal[0].transaction.hash.toLowerCase() !== expectedHash
+        ) {
+          throw new Error(
+            "funded recovery target is not bound to the sole unresolved signer transaction",
+          );
+        }
+      } else {
+        await reconcileSignerExecutionLeases(
+          signerLeases,
+          async (lease, transaction) => inspectFundedTransaction(provider, {
+            chainId: lease.chainId,
+            signer: lease.signer,
+            nonce: transaction.nonce,
+            hash: transaction.hash,
+          }),
+        );
+      }
     } finally {
       provider.destroy();
     }

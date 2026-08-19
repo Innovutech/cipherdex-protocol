@@ -195,13 +195,6 @@ async function sendPreparedFundedTransaction(
     chainId !== context.journal.identity.chainId
   ) throw new Error("funded signed transaction identity is invalid");
 
-  recordPreparedSignerTransaction({
-    chainId,
-    signer,
-    nonce: parsed.nonce,
-    hash: localHash,
-  });
-
   // The signed payload is retained only in the mode-0600 recovery journal and is
   // deliberately excluded from public evidence. This write must complete before RPC submission.
   context.journal.recordPreparedTransaction(
@@ -209,6 +202,14 @@ async function sendPreparedFundedTransaction(
     localHash,
     signedTransaction,
   );
+  // The signer lease serializes all funded sends. Reserve its nonce only after
+  // the exact signed payload is durably recoverable, and still before broadcast.
+  recordPreparedSignerTransaction({
+    chainId,
+    signer,
+    nonce: parsed.nonce,
+    hash: localHash,
+  });
 
   try {
     const response = await wallet.provider.broadcastTransaction(signedTransaction);
