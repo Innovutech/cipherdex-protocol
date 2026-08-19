@@ -428,4 +428,25 @@ describe("funded testnet transaction evidence", function () {
     expect(summary).to.include(`transactionHash=${hash}`);
     expect(summary).not.to.include("abababab");
   });
+
+  it("summarizes aggregate causes without evaluating hostile properties", function () {
+    const nested: Record<string, unknown> = {
+      name: "ValidationError",
+      message: `binding mismatch data=0x${"cd".repeat(64)}`,
+    };
+    const hostile: Record<string, unknown> = {};
+    Object.defineProperty(hostile, "message", {
+      get() {
+        throw new Error("hostile aggregate getter must not execute");
+      },
+    });
+    const summary = safeTestnetErrorSummary(
+      new AggregateError([nested, hostile], "validation and recovery failed"),
+    );
+
+    expect(summary).to.include("errors=[");
+    expect(summary).to.include("ValidationError");
+    expect(summary).to.include("[redacted-hex]");
+    expect(summary).not.to.include("cdcdcdcd");
+  });
 });

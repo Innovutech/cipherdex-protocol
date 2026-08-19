@@ -8,18 +8,23 @@ This report tracks the complete-key and launch-protected confidential-pool
 refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. A prior deployment's funded feasibility and
-best-execution scenarios passed on-chain with exact asset recovery, after which
-evidence generation failed closed because the runtime verifier selected the
-standalone `ConfidentialCPMM` compiler job instead of the deployer-context child
-output used by factory-created pools. The verifier now resolves that exact
-contextual build, has passed focused security review, and the final reviewed
-source has been deployed with a new commit-bound public manifest. Funded evidence
-can continue only after that manifest's separate evidence commit.
+complete with zero findings. Final reviewed source has been deployed through a
+commit-bound public manifest. Fresh funded feasibility and production
+best-execution scenarios passed on-chain against that deployment with exact
+asset recovery and zero disposable-pool residue. Fee-collection evidence then
+failed closed during disposable-stack validation; the protocol transactions
+were successful, while the runner hid the nested validation and recovery causes
+and attempted an LP-share read before an uninitialized pool had created an LP
+token. The runner now reports bounded redacted aggregate causes and treats an
+uninitialized pool as recovered only after proving both pool balances and both
+owner allowances are zero. The runner-only change passed the complete local
+suite and a focused Codex Security diff review with zero findings. The remaining
+funded fee-collection, launchpad and quote-call evidence must still pass before
+the final funded suite can be sealed.
 
-Historical testnet addresses, transaction hashes and gas observations from the
-previous pool identity are not evidence for this source and are deliberately not
-carried forward. This is a testnet implementation, not a mainnet-readiness or
+Historical testnet addresses, transaction hashes and gas observations from
+superseded pool identities are diagnostic only and are not evidence for this
+source. This is a testnet implementation, not a mainnet-readiness or
 external-audit claim.
 
 ## Environment
@@ -45,13 +50,14 @@ No dependency was added for this refactor.
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 204 passing, 1 intentionally gated funded-network
-  integration placeholder (205 tests discovered)
+- full local suite: 205 passing, 1 intentionally gated funded-network
+  integration placeholder (206 tests discovered)
 - diff whitespace validation: passed
 
-Fresh deployment gas was measured from the source-commit-bound testnet manifest
-recorded below. Funded scenario gas and behavioral evidence remains deferred to
-the separately authenticated funded suite.
+Fresh deployment and best-execution gas was measured against the
+source-commit-bound testnet manifest recorded below. The remaining funded
+fee-collection, launchpad and quote-call evidence remains gated by the
+separately authenticated funded suite.
 
 ## Complete pool identity
 
@@ -394,30 +400,54 @@ registry finalization and best-execution-router bindings were mined and verified
 against current state. All 17 transactions were mined successfully and consumed
 `23510666` gas in total.
 
-The immediately preceding deployment at source commit
-`74901f63a628566ece1c48fd751eaea95ca72499` remains useful diagnostic evidence.
-Its corrected feasibility scenario passed on-chain. The quote-only probe
-transaction `0xe76a6bcf7186cec21b4afe5af14ebe4c4d4081ef42f780f67655d1d36ab7bf44`
+The fresh feasibility scenario passed on-chain against this deployment. The
+quote-only transaction
+`0x920b8cf353e6c9335812adb669df48bf9203a6c4fafa13600a80d7859fdf0d79`
 used `1728897` gas. The quote-plus-swap transaction
-`0x92659b2577b5f3cb07b24ac68aff712947d8d2305b69868cd4e3f93e53c5390b`
-used `5774409` gas. All three disposable probes were permanently closed through
-`0xc093b3c3d62f8db7c86de551ee3528cf972dee7e5e82989aa6e9bbb481d00b20`,
-`0x8d7f0edd4a59e1d3f72924b9465f4b3d15b6a4dc75a27667815b509d2c4fdfe4`
-and `0xd0bb1a32cefc5986c9193391f2860a10b11b87032882c0eba2af71b0984084b6`.
-The starting private input balance and both private assets were recovered
-exactly.
+`0x7986c369e330cb23c12c378008581b21a09b2d79dc059986aceb197dcd48d5e6`
+used `5774373` gas. Its three disposable pools were permanently closed through
+`0x9c777f50a423600232ed7379966680dab3dc0df3bc9c88b351c27d9537dd2d63`,
+`0xda3b44064d0bb777ce844e922830230a2606007e6f4ad0cd47ff91f53df07ad4`
+and `0xff1be5a574982fdf583241869a1366b4e28fa575bd5156a0862358552d6a4664`.
+All private assets were recovered exactly.
 
-The production best-execution scenario also passed on-chain for canonical
-discovery, paid quote-only execution, mixed-class selection, deterministic tier
-tie-breaking, both directions, all v1 fee tiers, invalid-candidate isolation,
-caller/replay/deadline protection, slippage rollback, exact escrow, quote parity,
-full LP exits and zero-residue cleanup. Evidence publication failed closed only
-after those terminal checks because factory-created pools use the 17,882-byte
-`ConfidentialCPMM` child runtime from the deployer compilation job while the
-verifier had selected the 18,103-byte standalone artifact. The operation will
-not be repeated against this deployment. The contextual verifier fix is locally
-verified and security-reviewed, and a fresh exact-source deployment is required
-before fee-collection, launchpad and quote-capability evidence resumes.
+The fresh production best-execution scenario passed canonical discovery,
+paid quote-only execution, mixed standard/protected selection, deterministic
+tier tie-breaking, both directions, all v1 fee tiers, invalid-candidate
+isolation, caller/replay/deadline protection, slippage rollback, exact escrow,
+quote parity, full LP exits and zero-residue cleanup. The protected launch was
+committed in
+`0x723b721568bb98c1117fb49d6006a2ca25faf0392fb14326641e522db00196be`
+and initialized in
+`0xa1abd5519023c8d0e57d407b30d2aea9be9d3bcdb1dc87131f06477b906e74bf`.
+The three-candidate quote and swap transactions were respectively
+`0x0f90033bb8fec5e77730e73960208eb6914fa1b0212d3d354327f4779c284a6e`
+and `0x28c9a42c389a045eb2f16883656d090ae39f84b790e5e479fd8567532a91e90f`;
+the reverse quote and swap were
+`0xd8a7149d8510f1759db8a22fbbd8a60d2895368e2fe442b0ca42107125f0a892`
+and `0x06f9cc285b822e7536d3637460a7d7ba52ffc1e3badd50079b8863ac431f04b5`.
+Two-candidate quote/swap execution consumed `16913089`/`29573337` gas and
+three-candidate quote/swap execution consumed `25291060`/`38282426` gas. Full
+exits for the 5, 30 and 100 bps pools were mined in
+`0xc3f49c664d47f14f3784bed4a744e029f5a8b8bc98f3f6b990a8cc524dfedb55`,
+`0xe2d25687a5ce30f0dbf2a5bc33e67c03bd90512aaf939cbe7c69a0b739c6ebfc`
+and `0xe05891e92d0a15f958f9d7beb3a4baa025a604a2e11d9385c56f5b89b0547a7d`.
+
+The first fresh fee-collection attempt successfully deployed and bound its
+disposable stack and created its pool in
+`0xca7be742dc658302b66c4f847efefffc1f294c6b4524d09d1f54f85b2a109c1c`.
+Validation then failed before initialization. Read-only provenance checks proved
+that every deployment and binding receipt succeeded, the factory, pool, vault,
+deployer and registry bindings were canonical, the pool parameters and approved
+private-token codehashes matched, and the factory-created pool had the expected
+17,882-byte contextual runtime. The failure exposed two runner defects rather
+than a protocol or deployment defect: aggregate causes were not included in the
+sanitized diagnostic, and recovery attempted to decrypt LP shares before an
+uninitialized pool had an LP token. The corrected runner preserves fail-closed
+validation, emits at most four getter-free redacted aggregate causes, and marks
+the uninitialized disposable resource recovered only after live zero-balance
+and zero-allowance checks backed by the mined creation receipt. No paid action
+was blindly repeated.
 
 The earlier source-bound deployment at commit
 `b5c72f49520ea31584bd7a5e09e5269a03a19fbb` is retained only as diagnostic

@@ -666,6 +666,7 @@ async function createDisposableStack(
   });
   const resource = journal().activeResources.find((candidate) => candidate.id === RESOURCE_ID);
   if (!resource) throw new Error("disposable fee stack recovery record is missing");
+  stage = "validate disposable fee stack";
   return validateStackResource(resource, wallet, owner, reviewedAddresses);
 }
 
@@ -726,6 +727,19 @@ async function recoverDisposablePool(): Promise<void> {
     recoveryOwner,
     reviewedAddresses,
   );
+  if (!(await stack.pool.initialized())) {
+    const [balance0, balance1, allowance0, allowance1] = await Promise.all([
+      privateBalance(stack.token0, stack.poolAddress, recoveryWallet),
+      privateBalance(stack.token1, stack.poolAddress, recoveryWallet),
+      privateAllowance(stack.token0, recoveryOwner, stack.poolAddress, recoveryWallet),
+      privateAllowance(stack.token1, recoveryOwner, stack.poolAddress, recoveryWallet),
+    ]);
+    if (balance0 !== 0n || balance1 !== 0n || allowance0 !== 0n || allowance1 !== 0n) {
+      throw new Error("uninitialized fee-pool recovery found private-token residue or allowance");
+    }
+    recoveryJournal.markRecovered(RESOURCE_ID, [resource.creationTransactionHash]);
+    return;
+  }
   const recovery = await removeAllLiquidity(stack, recoveryWallet, 1n, 1n);
   const [balance0, balance1, allowance0, allowance1] = await Promise.all([
     privateBalance(stack.token0, stack.poolAddress, recoveryWallet),

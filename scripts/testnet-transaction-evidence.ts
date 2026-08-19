@@ -124,12 +124,30 @@ export function safeTestnetErrorSummary(error: unknown, depth = 0): string {
     ownDataProperty(error, "message"),
   ].map(safeDiagnosticText).find((candidate) => candidate !== undefined);
   const cause = ownDataProperty(error, "cause");
+  const aggregate = ownDataProperty(error, "errors");
+  const aggregateLength = Array.isArray(aggregate)
+    ? ownDataProperty(aggregate, "length")
+    : undefined;
+  const aggregateErrors = depth === 0 &&
+      Array.isArray(aggregate) &&
+      Number.isSafeInteger(aggregateLength) &&
+      Number(aggregateLength) >= 0
+    ? Array.from({ length: Math.min(Number(aggregateLength), 4) }, (_, index) =>
+      ownDataProperty(aggregate, index)
+    ).filter((candidate) => candidate !== undefined)
+    : [];
   const actionSummary = action ? ` action=${action}` : "";
   const detailSummary = detail ? ` detail=${detail}` : "";
   const causeSummary = depth === 0 && cause
     ? ` cause=(${safeTestnetErrorSummary(cause, depth + 1)})`
     : "";
+  const aggregateSummary = aggregateErrors.length > 0
+    ? ` errors=[${aggregateErrors.map((candidate) =>
+      safeTestnetErrorSummary(candidate, depth + 1)
+    ).join("; ")}]`
+    : "";
   return `name=${name} code=${code}${actionSummary}${detailSummary}${causeSummary}` +
+    aggregateSummary +
     publicTransactionHashSuffix(error);
 }
 
