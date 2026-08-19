@@ -1492,10 +1492,18 @@ for (const fragment of [
   "strategyRegistry.finalize(",
   "futureChainDeadline(",
   "requireMinedFailureSelector(",
+  "evidence.receipt.gasUsed >= failedTransaction.gasLimit",
+  "{ allowUnavailable: true }",
 ]) {
   if (!launchpadSource.includes(fragment)) {
     throw new Error("Launchpad funded runner omits one-time strategy-stack bindings");
   }
+}
+if (
+  (launchpadRawSource.match(/allowUnavailable:\s*true/gu) ?? []).length !== 1 ||
+  (transactionEvidenceSource.match(/allowUnavailable:\s*true/gu) ?? []).length !== 0
+) {
+  throw new Error("Opaque COTI revert evidence escaped the single reviewed launchpad call site");
 }
 const launchDeadlinePosition = launchpadRawSource.indexOf("const deadline = futureChainDeadline(");
 const finalizedStrategyPosition = launchpadRawSource.indexOf(

@@ -40,7 +40,7 @@ describe("funded testnet transaction evidence", function () {
       value: 0n,
     };
     let replayBlock = -1;
-    await requireMinedFailureSelector(
+    expect(await requireMinedFailureSelector(
       "price-bound rejection",
       hash,
       100,
@@ -50,7 +50,7 @@ describe("funded testnet transaction evidence", function () {
         replayBlock = blockTag;
         throw { info: { error: { data: `${expectedSelector}${"00".repeat(32)}` } } };
       },
-    );
+    )).to.equal("matched");
     expect(replayBlock).to.equal(99);
 
     let captured: unknown;
@@ -72,6 +72,31 @@ describe("funded testnet transaction evidence", function () {
       expectedSelector,
       actualSelector: "0x87654321",
     });
+
+    expect(await requireMinedFailureSelector(
+      "opaque COTI rejection",
+      hash,
+      100,
+      expectedSelector,
+      async () => transaction,
+      async () => { throw { data: null }; },
+      { allowUnavailable: true },
+    )).to.equal("rpc-unavailable");
+
+    let strictOpaqueFailure: unknown;
+    try {
+      await requireMinedFailureSelector(
+        "strict opaque rejection",
+        hash,
+        100,
+        expectedSelector,
+        async () => transaction,
+        async () => { throw { data: null }; },
+      );
+    } catch (error) {
+      strictOpaqueFailure = error;
+    }
+    expect(strictOpaqueFailure).to.be.instanceOf(MinedFailureReasonError);
   });
 
   it("accepts only a mined failure receipt", async function () {

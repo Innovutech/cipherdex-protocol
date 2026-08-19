@@ -212,7 +212,16 @@ const expectMinedFailure = async (
     "mined-failure",
     evidence.receipt.blockNumber,
   );
-  await requireMinedFailureSelector(
+  const failedTransaction = await hardhatEthers.provider.getTransaction(
+    evidence.transactionHash,
+  );
+  if (
+    !failedTransaction ||
+    evidence.receipt.gasUsed >= failedTransaction.gasLimit
+  ) {
+    throw new Error(`${label} exhausted its reviewed gas limit`);
+  }
+  const selectorEvidence = await requireMinedFailureSelector(
     label,
     evidence.transactionHash,
     evidence.receipt.blockNumber,
@@ -224,9 +233,11 @@ const expectMinedFailure = async (
       data: transaction.data,
       value: ethers.toQuantity(transaction.value),
     }, ethers.toQuantity(blockTag)]),
+    { allowUnavailable: true },
   );
   console.log(
-    `${label}: rejected onchain tx=${evidence.transactionHash} expectedSelector=${expectedSelector}`,
+    `${label}: rejected onchain tx=${evidence.transactionHash} ` +
+      `expectedSelector=${expectedSelector} selectorEvidence=${selectorEvidence}`,
   );
   return Object.freeze({
     transactionHash: evidence.transactionHash,

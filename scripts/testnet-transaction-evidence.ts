@@ -187,7 +187,8 @@ export async function requireMinedFailureSelector(
   expectedSelector: string,
   getTransaction: (hash: string) => Promise<ReplayableTransaction | null>,
   replay: (transaction: ReplayableTransaction, blockTag: number) => Promise<unknown>,
-): Promise<void> {
+  options: Readonly<{ allowUnavailable?: boolean }> = {},
+): Promise<"matched" | "rpc-unavailable"> {
   const normalizedExpectedSelector = expectedSelector.toLowerCase();
   if (
     !TRANSACTION_HASH.test(transactionHash) ||
@@ -219,6 +220,9 @@ export async function requireMinedFailureSelector(
   }
   const revertData = revertDataFromCallError(replayError);
   const actualSelector = revertData?.slice(0, 10).toLowerCase();
+  if (actualSelector === undefined && options.allowUnavailable === true) {
+    return "rpc-unavailable";
+  }
   if (actualSelector !== normalizedExpectedSelector) {
     throw new MinedFailureReasonError(
       label,
@@ -227,6 +231,7 @@ export async function requireMinedFailureSelector(
       actualSelector,
     );
   }
+  return "matched";
 }
 
 function safeDiagnosticText(value: unknown): string | undefined {
