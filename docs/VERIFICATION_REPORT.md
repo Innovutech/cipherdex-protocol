@@ -1,6 +1,6 @@
 # Verification Report
 
-Date: 2026-08-18
+Date: 2026-08-19
 
 ## Status
 
@@ -8,8 +8,9 @@ This report tracks the complete-key and launch-protected confidential-pool
 refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. Fresh COTI testnet deployment and funded evidence
-remain pending until the reviewed source tree is sealed and committed.
+complete with zero findings. The exact reviewed source has been deployed to
+COTI testnet and its public deployment evidence is recorded below. Funded pool,
+routing, fee-collection, launchpad and quote-capability evidence remains pending.
 
 Historical testnet addresses, transaction hashes and gas observations from the
 previous pool identity are not evidence for this source and are deliberately not
@@ -39,13 +40,13 @@ No dependency was added for this refactor.
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 199 passing, 1 intentionally gated funded-network
-  integration placeholder
+- full local suite: 202 passing, 1 intentionally gated funded-network
+  integration placeholder (203 tests discovered)
 - diff whitespace validation: passed
 
-Deployment gas measurement remains intentionally deferred until the reviewed
-source is committed, so the resulting gas report is bound to the exact source
-commit used for deployment.
+Fresh deployment gas was measured from the source-commit-bound testnet manifest
+recorded below. Funded scenario gas and behavioral evidence remains deferred to
+the separately authenticated funded suite.
 
 ## Complete pool identity
 
@@ -269,6 +270,17 @@ The review sequence and current results are:
     compiler provenance. The complete verifier passed with zero production or
     operational advisories and 201 passing tests; one funded integration test
     remains intentionally gated.
+16. Focused diff scan `a522af2b-55de-4ccd-a28f-30b39dd4a5b3` reviewed the
+    durable funded-recovery refactor, including the owner-only recovery root,
+    authenticated launcher handoff and fail-closed runner validation. It
+    completed with full changed-source coverage and zero findings.
+17. Final full-repository scan `e9fb1ef7-1f7f-4e7c-912c-b3179b358a45`
+    reviewed the complete repository across eight security surfaces and
+    completed with zero Critical, High, Medium or Low findings. The subsequent
+    two-line launcher-marker handoff changed no contract or protocol source and
+    was covered by a static source-boundary regression plus the complete local
+    verification cycle: zero production or operational advisories, 29 Solidity
+    files compiled, 202 passing tests and one intentionally gated funded test.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
@@ -311,47 +323,47 @@ results will replace this pending section only after all gates pass.
 
 ### Fresh COTI testnet deployment
 
-Source commit `e774287e565411952da8a29337cb055bcae3bf44` was deployed to
+Source commit `b5c72f49520ea31584bd7a5e09e5269a03a19fbb` was deployed to
 COTI testnet chain `7082400`. The complete 17-transaction deployment and binding
-record is `deployments/coti-testnet-e774287e565411952da8a29337cb055bcae3bf44.json`.
+record is `deployments/coti-testnet-b5c72f49520ea31584bd7a5e09e5269a03a19fbb.json`.
 The deployment runner independently matched current artifacts, constructor
 arguments, runtime codehashes and post-deployment bindings before publishing the
 record.
 
-- Fee vault: `0x698b663E8Ed8587C6dbac7A8Df490fB6083752cd`
-  (`0x5dc7e648a8b69ba9ce58af362a258f00e7e5c7ca762f039dfc959053f3140036`,
+- Fee vault: `0xF180B2a2ce44BFAc27450e732436D6bE197f0e1F`
+  (`0x966f514dd6ef43ce71a61b75d716a4305048a078210c62c3b1f440716a3fd801`,
   gas `1841820`).
-- Private LP-token factory: `0xbc5AEd1E90d5479dc41e9400E3797B3E9f2B5891`
-  (`0x54d7ec62ac56bea6c1f47d04d097c1e034f1e8a22894759b994f500c0394990a`,
+- Private LP-token factory: `0xF72aab603737Be6067cD30D2C054750114498532`
+  (`0x11162f516060d9bc409bcfe3a8fcef435c75f0dbf059635904237dcec936628e`,
   gas `2991054`).
 - Initialization-strategy registry:
-  `0xb0E206D2F290Fd549309154B9600Aa4d0E180983`
-  (`0x3c18b867bac11670a387ea91a7f736f957a68ad573d0e3feaa0c0dd2f2ce8f88`,
+  `0x7b8fF3EDAf4a785028EcF6039b825d765A36b0f9`
+  (`0xb218d3ec8f6e0e8a1e2e1c91d32481784a55b4b567a41918f7cb78e2e8c26f28`,
   gas `1091793`).
 - Canonical confidential pool deployer:
-  `0x0E07Da34BD4d46FBaa3Bf45eAb09c4c9Afe0DBb8`
-  (`0x8faad1e361d9a661993c679844e8a8aae12c9997229b4f699ce009f192fd8dfe`,
+  `0x5eBd36193A624b4A732a38AB45850a60A336815e`
+  (`0x2f47a890d20656c0aa4439dcb0aec1ad90f5233e359619e7df2b636ab851a840`,
   gas `4429890`).
-- Confidential factory: `0x07e2864F2976441c8b47334df5EDf31A109c6282`
-  (`0xb0ad359b68618f5b4b699c9c4ca21bd639934736e84719e43c88dceb66592d74`,
-  gas `2253877`).
+- Confidential factory: `0xD3F452D1496456cB8F51eF96Efb2993b9AAA9d1a`
+  (`0x106e09037f0e247544fb97d3092e583d6003bde6e2297815d1d2e5f8aab9e36f`,
+  gas `2253901`).
 - Launch initialization strategy:
-  `0xBfAdf74a3007bF77fDe32270Da2dBc46CAfAd985`
-  (`0x2ae037272d2ba4909ef700d945d70612b99f44e3f18fa6548dce01ec1f0e1754`,
-  gas `4286449`). Its constructor-created migrator is
-  `0x9fbd2c7A361f2252d41F87A3a6a31142AC2376B3`.
+  `0xEaE63431672d316f9180942C5C2781f070Dc370A`
+  (`0xfa1ed19c42bf2db975c89edce8cb8e5dde24d784c5360c48b55674a5712b8547`,
+  gas `4286461`). Its constructor-created migrator is
+  `0xefFaFc1f63F948b337fadfd89a673E549532AFAA`.
 - Confidential best-execution router:
-  `0x83986ff7e1faA52F388663be84cD0f09eDd1828b`
-  (`0x5e3b4f9c2f4e94fbd5ac75c242b58076de0dbe16416b52d920a7ec78b4688b8d`,
+  `0xa6b94cBEC000Cb6929279c44F36149C8ACEA1e0e`
+  (`0x0b2648034878ea0a92dd828b338a05637835307b9ee8284212d1be61dbd7c1db`,
   gas `2182489`).
-- Public factory: `0x08EcbD216820c3611D809Cc213f5d4C70FB9865d`
-  (`0xd6a932b77985a3c6829f4b0896baa7c3abe276f0631cd9ad94f59069fc958ff9`,
+- Public factory: `0xA9355681564B84a7853C65eF3CEea1C425Dd9392`
+  (`0xf4eb2f50471f63763a80efc703ab20c1319d93dc6dbd09c9164fdc4ddaa5c66e`,
   gas `3037572`).
-- Public quoter: `0x09F42f993f15a466266a49C8617AD00698855E72`
-  (`0xcec46ddb816cdbc2da7d984716c0bd6c64651b64a988b6e0e22b2c5cf7f0f2f4`,
+- Public quoter: `0x6C1E52BcBB8CEc2fe75DecCa86EB2Ac298271Bb5`
+  (`0xb9c65f94f795bad894be51426a9ddb5930b690d5e9a5c0223b92d2738ab07087`,
   gas `193643`).
-- Public router: `0xd38EAF09f19D2beCCB12875dc4a8C76801B7cB8D`
-  (`0xdb3190ad8a0bfa59a6145cf9d8447cd07123b83bebfa7853c2f37866c0ed3434`,
+- Public router: `0xa273EDaF73ed2fa74b46E887d81DebD85536c62b`
+  (`0xb982adf68cc20e358a335d8a216b5e48720d871bef12757de925cd9e223d5fe8`,
   gas `719795`).
 
 The fee-vault, pool-deployer, strategy-registry, strategy registration,
