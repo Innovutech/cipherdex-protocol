@@ -37,6 +37,27 @@ type HardhatBuildOutput = Readonly<{
   }>;
 }>;
 
+function compilerSourceNameForArtifact(
+  buildInfo: HardhatBuildInfo,
+  buildOutput: HardhatBuildOutput,
+  artifact: Readonly<{ sourceName: string; contractName: string }>,
+): string {
+  const mappedSourceName = buildInfo.userSourceNameMap?.[artifact.sourceName];
+  const matches = Object.entries(buildOutput.output.contracts ?? {}).filter(
+    ([sourceName, contracts]) =>
+      contracts[artifact.contractName] !== undefined &&
+      (
+        sourceName === mappedSourceName ||
+        sourceName === artifact.sourceName ||
+        sourceName.endsWith(`/${artifact.sourceName}`)
+      ),
+  );
+  if (matches.length !== 1) {
+    throw new Error(`${artifact.contractName} compiler source is unavailable or ambiguous`);
+  }
+  return matches[0][0];
+}
+
 export type RuntimeArtifactProvenance = Readonly<{
   contractName: string;
   sourceName: string;
@@ -56,6 +77,16 @@ export type RuntimeArtifactProvenance = Readonly<{
 export type RuntimeCodeProvider = Readonly<{
   getCode(address: string): Promise<string>;
 }>;
+
+const RUNTIME_BUILD_CONTEXTS: Readonly<Record<string, string>> = Object.freeze({
+  // Pools are emitted from type(ConfidentialCPMM).creationCode in the deployer
+  // compilation job, so the deployer build output is the canonical runtime.
+  ConfidentialCPMM: "ConfidentialCPMMDeployer",
+});
+
+function runtimeBuildContext(contractName: string): string {
+  return RUNTIME_BUILD_CONTEXTS[contractName] ?? contractName;
+}
 
 function hasReferences(references: LinkReferenceMap | undefined): boolean {
   return Object.values(references ?? {}).some((byName) =>
@@ -99,7 +130,11 @@ export async function verifyDeployedRuntimeArtifactWithProvenance(
   provider: RuntimeCodeProvider = hardhatEthers.provider,
 ): Promise<RuntimeArtifactProvenance> {
   const artifact = await artifacts.readArtifact(contractName);
-  const fullyQualifiedName = `${artifact.sourceName}:${artifact.contractName}`;
+  const buildContextName = runtimeBuildContext(contractName);
+  const buildContextArtifact = buildContextName === contractName
+    ? artifact
+    : await artifacts.readArtifact(buildContextName);
+  const fullyQualifiedName = `${buildContextArtifact.sourceName}:${buildContextArtifact.contractName}`;
   const buildInfoId = await artifacts.getBuildInfoId(fullyQualifiedName);
   const buildInfoPath = buildInfoId
     ? await artifacts.getBuildInfoPath(buildInfoId)
@@ -114,8 +149,7 @@ export async function verifyDeployedRuntimeArtifactWithProvenance(
     readFile(buildInfoPath, "utf8").then((raw) => JSON.parse(raw) as HardhatBuildInfo),
     readFile(buildOutputPath, "utf8").then((raw) => JSON.parse(raw) as HardhatBuildOutput),
   ]);
-  const compilerSourceName = buildInfo.userSourceNameMap?.[artifact.sourceName] ??
-    artifact.sourceName;
+  const compilerSourceName = compilerSourceNameForArtifact(buildInfo, buildOutput, artifact);
   const deployedBytecode = buildOutput.output.contracts?.[compilerSourceName]?.[
     artifact.contractName
   ]?.evm?.deployedBytecode as DeployedBytecodeOutput | undefined;

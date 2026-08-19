@@ -64,4 +64,33 @@ describe("funded runtime artifact verification", function () {
     );
     expect(provenance.settings.optimizer.runs).to.equal(1);
   });
+
+  it("matches a factory-created pool to the deployer's compilation context", async function () {
+    const deployment = await deployConfidentialFactory();
+    await configureConfidentialLaunch(deployment);
+    const [token0, token1] = await Promise.all(
+      deployment.representativeTokens.map((token) => token.getAddress()),
+    );
+    const transaction = await deployment.factory.createPool(token0, token1, 18, 6, 30);
+    const receipt = await transaction.wait();
+    const created = receipt?.logs.flatMap((log) => {
+      try {
+        const parsed = deployment.factory.interface.parseLog(log);
+        return parsed?.name === "PoolCreated" ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    });
+    expect(created).to.have.length(1);
+    const address = String(created?.[0].args.pool);
+
+    const provenance = await verifyDeployedRuntimeArtifactWithProvenance(
+      "ConfidentialCPMM",
+      address,
+    );
+    expect(provenance.runtimeCodehash).to.equal(
+      ethers.keccak256(await ethers.provider.getCode(address)),
+    );
+    expect(provenance.settings.optimizer.runs).to.equal(1);
+  });
 });

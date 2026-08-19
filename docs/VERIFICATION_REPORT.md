@@ -8,11 +8,14 @@ This report tracks the complete-key and launch-protected confidential-pool
 refactor. The contract, SDK, runner and documentation changes have passed the
 complete local verification cycle after the latest security remediations. Both
 the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. The prior exact reviewed source was deployed to
-COTI testnet and its public deployment evidence is recorded below. Its first
-funded feasibility run passed on-chain and recovered all assets, but exposed a
-fail-closed evidence-label mismatch. The corrected source requires a fresh
-source-bound deployment before funded evidence can continue.
+complete with zero findings. The corrected reviewed source was deployed to COTI
+testnet and its funded feasibility and best-execution scenarios passed on-chain
+with exact asset recovery. Evidence generation then failed closed because the
+runtime verifier selected the standalone `ConfidentialCPMM` compiler job instead
+of the deployer-context child output used by factory-created pools. The verifier
+now resolves that exact contextual build and has passed focused security review,
+but this source change requires one final source-bound deployment before funded
+evidence can continue.
 
 Historical testnet addresses, transaction hashes and gas observations from the
 previous pool identity are not evidence for this source and are deliberately not
@@ -42,8 +45,8 @@ No dependency was added for this refactor.
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 203 passing, 1 intentionally gated funded-network
-  integration placeholder (204 tests discovered)
+- full local suite: 204 passing, 1 intentionally gated funded-network
+  integration placeholder (205 tests discovered)
 - diff whitespace validation: passed
 
 Fresh deployment gas was measured from the source-commit-bound testnet manifest
@@ -291,6 +294,16 @@ The review sequence and current results are:
     findings. The complete verifier then passed with zero advisories, 29
     Solidity files compiled, 203 passing tests and one intentionally gated
     funded test.
+19. Focused working-tree diff scan `d055a5e6-32ec-4606-812d-5c555d7b7a34`
+    reviewed the contextual runtime-artifact resolver, its source-boundary
+    enforcement and the real factory-created pool regression. It completed with
+    full changed-source coverage and zero findings. The verifier fails closed on
+    missing or ambiguous child outputs, retains exact runtime-length and
+    immutable-normalized byte equality, and records compiler provenance from the
+    `ConfidentialCPMMDeployer` optimizer-runs-1 build that actually embeds the
+    pool creation code. The complete verifier passed with zero production or
+    operational advisories, 29 Solidity files compiled, 204 passing tests and
+    one intentionally gated funded test.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
@@ -379,9 +392,30 @@ record.
 The fee-vault, pool-deployer, strategy-registry, strategy registration,
 registry finalization and best-execution-router bindings were mined and verified
 against current state. All 17 transactions were mined successfully and consumed
-`23510678` gas in total. Funded pool, routing, fee-collection, launchpad and MPC
-quote-capability evidence remains pending and must be committed separately from
-this source-bound deployment evidence.
+`23510678` gas in total.
+
+The corrected feasibility scenario then passed on-chain. The quote-only probe
+transaction `0xe76a6bcf7186cec21b4afe5af14ebe4c4d4081ef42f780f67655d1d36ab7bf44`
+used `1728897` gas. The quote-plus-swap transaction
+`0x92659b2577b5f3cb07b24ac68aff712947d8d2305b69868cd4e3f93e53c5390b`
+used `5774409` gas. All three disposable probes were permanently closed through
+`0xc093b3c3d62f8db7c86de551ee3528cf972dee7e5e82989aa6e9bbb481d00b20`,
+`0x8d7f0edd4a59e1d3f72924b9465f4b3d15b6a4dc75a27667815b509d2c4fdfe4`
+and `0xd0bb1a32cefc5986c9193391f2860a10b11b87032882c0eba2af71b0984084b6`.
+The starting private input balance and both private assets were recovered
+exactly.
+
+The production best-execution scenario also passed on-chain for canonical
+discovery, paid quote-only execution, mixed-class selection, deterministic tier
+tie-breaking, both directions, all v1 fee tiers, invalid-candidate isolation,
+caller/replay/deadline protection, slippage rollback, exact escrow, quote parity,
+full LP exits and zero-residue cleanup. Evidence publication failed closed only
+after those terminal checks because factory-created pools use the 17,882-byte
+`ConfidentialCPMM` child runtime from the deployer compilation job while the
+verifier had selected the 18,103-byte standalone artifact. The operation will
+not be repeated against this deployment. The contextual verifier fix is locally
+verified and security-reviewed, and a fresh exact-source deployment is required
+before fee-collection, launchpad and quote-capability evidence resumes.
 
 The earlier source-bound deployment at commit
 `b5c72f49520ea31584bd7a5e09e5269a03a19fbb` is retained only as diagnostic

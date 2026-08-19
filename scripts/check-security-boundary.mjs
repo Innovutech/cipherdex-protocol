@@ -57,6 +57,21 @@ const publicSource = maskSourceCommentsAndLiterals(
 const publicRouterSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicCPMMRouter.sol", "utf8"),
 );
+const runtimeArtifactRawSource = await readFile("scripts/runtime-artifact.ts", "utf8");
+const runtimeArtifactSource = maskSourceCommentsAndLiterals(runtimeArtifactRawSource);
+if (
+  !runtimeArtifactRawSource.includes('ConfidentialCPMM: "ConfidentialCPMMDeployer"') ||
+  !functionBody(runtimeArtifactSource, "runtimeBuildContext").includes(
+    "RUNTIME_BUILD_CONTEXTS[contractName] ?? contractName",
+  ) ||
+  !runtimeArtifactRawSource.includes("artifacts.readArtifact(buildContextName)") ||
+  !runtimeArtifactRawSource.includes(
+    "`${buildContextArtifact.sourceName}:${buildContextArtifact.contractName}`",
+  ) ||
+  !runtimeArtifactRawSource.includes("compilerSourceNameForArtifact(buildInfo, buildOutput, artifact)")
+) {
+  throw new Error("Factory-created confidential pool runtime is not bound to its deployer build context");
+}
 for (const line of confidentialSource.split("\n")) {
   if (/^\s*(?:mapping|ctUint\d+)\b[^;]*(totalShares|shares|locks)\b[^;]*;/.test(line)) {
     if (/\b(public|external)\b/.test(line)) {
