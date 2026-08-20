@@ -275,6 +275,22 @@ function stageFundedEvidence(recoveryRoot, runtime, sourceCommit) {
   }
 }
 
+async function deploymentSourceCommit(runtime, environmentPath, authenticatedCommit) {
+  const reviewedEnvironment = await import(
+    `${pathToFileURL(resolve(runtime, "scripts", "fresh-runtime-environment.mjs")).href}` +
+      `?commit=${authenticatedCommit}`
+  );
+  const configured = reviewedEnvironment
+    .readReviewedEnvironment(environmentPath)
+    .COTI_DEPLOYMENT_RECORD?.trim()
+    .replaceAll("\\", "/");
+  const match = /^deployments\/coti-testnet-([0-9a-f]{40})\.json$/u.exec(configured ?? "");
+  if (!match) {
+    throw new Error("funded finalization requires a canonical deployment record path");
+  }
+  return match[1].toLowerCase();
+}
+
 function promoteFundedEvidence(runtime, recoveryRoot, target, authenticatedCommit) {
   const sourceRoot = resolve(runtime, ".testnet-state", "evidence");
   if (!existsSync(sourceRoot)) return;
@@ -462,7 +478,11 @@ async function main() {
       throw new Error("reviewed funded build receipt has the wrong source commit");
     }
     if (input.target === "scripts/finalize-funded-evidence.ts") {
-      stageFundedEvidence(recoveryRoot, runtime, input.commit);
+      stageFundedEvidence(
+        recoveryRoot,
+        runtime,
+        await deploymentSourceCommit(runtime, environmentPath, input.commit),
+      );
     }
     privateFilesystem.assertPrivateTree(runtime);
 
