@@ -18,6 +18,10 @@ export function acquireSignerExecutionLeases(
   signers: readonly string[],
 ): readonly HeldSignerLease[];
 export function signerLeaseEnvironment(leases: readonly HeldSignerLease[]): string;
+export function assertSoleRecoverableSignerTransaction(
+  leases: readonly HeldSignerLease[],
+  expectedHash: string,
+): void;
 export function reconcileSignerExecutionLeases(
   leases: readonly HeldSignerLease[],
   inspectTransaction: (

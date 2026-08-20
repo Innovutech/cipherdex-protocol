@@ -347,7 +347,7 @@ async function main() {
     ACTIVE_SIGNER_LEASES_ENVIRONMENT,
     acquireRepositoryExecutionLease,
     acquireSignerExecutionLeases,
-    readSignerTransactionState,
+    assertSoleRecoverableSignerTransaction,
     reconcileSignerExecutionLeases,
     signerLeaseEnvironment,
   } = await import("./funded-process-coordinator.mjs");
@@ -399,23 +399,7 @@ async function main() {
         if (!expectedHash || !/^0x[0-9a-f]{64}$/u.test(expectedHash)) {
           throw new Error("funded recovery target requires one explicit transaction hash");
         }
-        const nonterminal = signerLeases.flatMap((lease) =>
-          readSignerTransactionState(lease.chainId, lease.signer).transactions
-            .filter((transaction) =>
-              transaction.status !== "abandoned-prebroadcast" &&
-              transaction.status !== "mined-success" &&
-              transaction.status !== "mined-failure"
-            )
-            .map((transaction) => ({ lease, transaction }))
-        );
-        if (
-          nonterminal.length !== 1 ||
-          nonterminal[0].transaction.hash.toLowerCase() !== expectedHash
-        ) {
-          throw new Error(
-            "funded recovery target is not bound to the sole unresolved signer transaction",
-          );
-        }
+        assertSoleRecoverableSignerTransaction(signerLeases, expectedHash);
       } else {
         await reconcileSignerExecutionLeases(
           signerLeases,

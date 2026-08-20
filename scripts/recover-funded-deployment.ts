@@ -7,6 +7,7 @@ import {
 } from "./funded-transaction-wallet";
 import {
   readSignerTransactionState,
+  recordPreparedSignerTransaction,
   recordPreparedSignerTransactionAbandoned,
   recordSignerTransactionStatus,
 } from "./funded-process-coordinator.mjs";
@@ -147,6 +148,20 @@ async function main(): Promise<void> {
     recordPreparedSignerTransactionAbandoned(CHAIN_ID, owner, transactionHash);
     console.log(`Released unbroadcast deployment transaction ${transactionHash}.`);
     return;
+  }
+
+  if (signerTransaction.status === "abandoned-prebroadcast") {
+    recordPreparedSignerTransaction({
+      chainId: CHAIN_ID,
+      signer: owner,
+      nonce: signerTransaction.nonce,
+      hash: transactionHash,
+    });
+  } else if (
+    signerTransaction.status === "mined-success" ||
+    signerTransaction.status === "mined-failure"
+  ) {
+    throw new Error("deployment recovery transaction is already terminal");
   }
 
   let unresolved = await journal.reconcileTransactions(ethers.provider);

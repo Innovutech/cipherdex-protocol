@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Interface, Transaction, Wallet, keccak256 } from "ethers";
+import { Interface, Transaction, Wallet, keccak256, type Provider } from "ethers";
 import { ethers } from "../../hardhat/runtime.js";
 
 import {
@@ -24,12 +24,14 @@ import {
 import {
   FundedWallet,
   openFundedRecoveryJournal,
+  sendPreparedFundedTransaction,
   withFundedTransactionEvidence,
 } from "../../scripts/funded-transaction-wallet";
 import { requiredFundedRecoveryDirectory } from "../../scripts/funded-runtime-state";
 import {
   ACTIVE_SIGNER_LEASES_ENVIRONMENT,
   acquireSignerExecutionLeases,
+  assertSoleRecoverableSignerTransaction,
   readSignerTransactionState,
   reconcileSignerExecutionLeases,
   recordPreparedSignerTransactionAbandoned,
@@ -770,6 +772,82 @@ describe("funded recovery journal", function () {
     }
   });
 
+  it("preserves the deterministic hash when coordinator recording fails after broadcast", async function () {
+    const signingWallet = new Wallet(
+      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    );
+    const journal = FundedRecoveryJournal.open({
+      runner: "best-execution",
+      sourceCommit: COMMIT,
+      chainId: 31_337,
+      owner: signingWallet.address,
+      deployment: DEPLOYMENT,
+      recoveryKey: RECOVERY_KEY,
+      directory,
+    });
+    const previousCoordinatorRoot = process.env.CIPHERDEX_COORDINATOR_ROOT;
+    process.env.CIPHERDEX_COORDINATOR_ROOT = join(directory, "coordinator-post-broadcast");
+    const leases = acquireSignerExecutionLeases(31_337, [signingWallet.address]);
+    const previous = process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+    process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = signerLeaseEnvironment(leases);
+    let transactionHash: string | undefined;
+    const provider = {
+      async broadcastTransaction(signedTransaction: string) {
+        transactionHash = keccak256(signedTransaction);
+        recordPreparedSignerTransactionAbandoned(
+          31_337,
+          signingWallet.address,
+          transactionHash,
+        );
+        return { hash: transactionHash };
+      },
+    } as unknown as Provider;
+    const wallet = {
+      provider,
+      async populateTransaction(transaction: Record<string, unknown>) {
+        return {
+          ...transaction,
+          chainId: 31_337,
+          nonce: 7,
+          gasLimit: 21_000n,
+          gasPrice: 1n,
+          type: 0,
+        };
+      },
+      async signTransaction(transaction: Parameters<Wallet["signTransaction"]>[0]) {
+        return signingWallet.signTransaction(transaction);
+      },
+    };
+    let captured: unknown;
+    try {
+      await withFundedTransactionEvidence(
+        "post-broadcast coordinator failure",
+        journal,
+        () => sendPreparedFundedTransaction(wallet, {
+          to: signingWallet.address,
+          value: 0n,
+        }),
+      );
+    } catch (error) {
+      captured = error;
+    } finally {
+      if (previous === undefined) delete process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+      else process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = previous;
+      if (previousCoordinatorRoot === undefined) delete process.env.CIPHERDEX_COORDINATOR_ROOT;
+      else process.env.CIPHERDEX_COORDINATOR_ROOT = previousCoordinatorRoot;
+      for (const lease of [...leases].reverse()) lease.release();
+    }
+    expect(transactionHash).to.match(/^0x[0-9a-f]{64}$/u);
+    expect(captured).to.be.instanceOf(Error);
+    expect((captured as Error).name).to.equal("PreparedFundedBroadcastError");
+    expect(captured).to.have.property("transactionHash", transactionHash);
+    expect((captured as Error & { cause?: unknown }).cause).to.be.instanceOf(AggregateError);
+    expect(journal.transactions[0]).to.include({
+      hash: transactionHash,
+      status: "outcome-unknown",
+    });
+  });
+
   it("retains the signed payload for recovery when signer reservation fails before broadcast", async function () {
     const wallet = new FundedWallet(
       "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
@@ -878,6 +956,69 @@ describe("funded recovery journal", function () {
         nonce: 7,
         hash: TX2,
       })).not.to.throw();
+      expect(() => recordPreparedSignerTransaction({
+        chainId: 31_337,
+        signer: OWNER,
+        nonce: 7,
+        hash: TX1,
+      })).to.throw("nonce is already reserved");
+    } finally {
+      if (previous === undefined) delete process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+      else process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = previous;
+      if (previousCoordinatorRoot === undefined) delete process.env.CIPHERDEX_COORDINATOR_ROOT;
+      else process.env.CIPHERDEX_COORDINATOR_ROOT = previousCoordinatorRoot;
+      for (const lease of [...leases].reverse()) lease.release();
+    }
+  });
+
+  it("reactivates only the exact abandoned signed transaction identity", function () {
+    const previousCoordinatorRoot = process.env.CIPHERDEX_COORDINATOR_ROOT;
+    process.env.CIPHERDEX_COORDINATOR_ROOT = join(directory, "coordinator-reactivated");
+    const leases = acquireSignerExecutionLeases(31_337, [OWNER]);
+    const previous = process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
+    process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = signerLeaseEnvironment(leases);
+    try {
+      recordPreparedSignerTransaction({
+        chainId: 31_337,
+        signer: OWNER,
+        nonce: 7,
+        hash: TX1,
+      });
+      recordPreparedSignerTransactionAbandoned(31_337, OWNER, TX1);
+      expect(() => assertSoleRecoverableSignerTransaction(leases, TX1)).not.to.throw();
+      expect(() => recordPreparedSignerTransaction({
+        chainId: 31_337,
+        signer: OWNER,
+        nonce: 8,
+        hash: TX1,
+      })).to.throw("identity changed");
+      recordPreparedSignerTransaction({
+        chainId: 31_337,
+        signer: OWNER,
+        nonce: 7,
+        hash: TX1,
+      });
+      expect(readSignerTransactionState(31_337, OWNER).transactions[0]).to.include({
+        hash: TX1.toLowerCase(),
+        nonce: 7,
+        status: "prepared",
+      });
+      recordSignerTransactionStatus(31_337, OWNER, TX1, "broadcast");
+      expect(() => assertSoleRecoverableSignerTransaction(leases, TX1)).not.to.throw();
+      recordPreparedSignerTransaction({
+        chainId: 31_337,
+        signer: OWNER,
+        nonce: 8,
+        hash: TX2,
+      });
+      expect(() => assertSoleRecoverableSignerTransaction(leases, TX1))
+        .to.throw("sole recoverable signer transaction");
+      expect(() => recordPreparedSignerTransaction({
+        chainId: 31_337,
+        signer: OWNER,
+        nonce: 7,
+        hash: TX1,
+      })).to.throw("cannot be prepared from its current status");
     } finally {
       if (previous === undefined) delete process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT];
       else process.env[ACTIVE_SIGNER_LEASES_ENVIRONMENT] = previous;

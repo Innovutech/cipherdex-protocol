@@ -168,7 +168,30 @@ type LocalSigningWallet = Readonly<{
   signTransaction(transaction: TransactionRequest): Promise<string>;
 }>;
 
-async function sendPreparedFundedTransaction(
+function recordUnknownBroadcastOutcome(
+  context: FundedTransactionContext,
+  chainId: number,
+  signer: string,
+  localHash: string,
+  originalError: unknown,
+): unknown {
+  const causes = [originalError];
+  try {
+    context.journal.recordTransaction(localHash, "outcome-unknown");
+  } catch (error) {
+    causes.push(error);
+  }
+  try {
+    recordSignerTransactionStatus(chainId, signer, localHash, "outcome-unknown");
+  } catch (error) {
+    causes.push(error);
+  }
+  return causes.length === 1
+    ? originalError
+    : new AggregateError(causes, "funded broadcast outcome recording failed");
+}
+
+export async function sendPreparedFundedTransaction(
   wallet: LocalSigningWallet,
   transaction: TransactionRequest,
 ): Promise<TransactionResponse> {
@@ -220,9 +243,11 @@ async function sendPreparedFundedTransaction(
     recordSignerTransactionStatus(chainId, signer, localHash, "broadcast");
     return response;
   } catch (error) {
-    context.journal.recordTransaction(localHash, "outcome-unknown");
-    recordSignerTransactionStatus(chainId, signer, localHash, "outcome-unknown");
-    throw new PreparedFundedBroadcastError(context.label, localHash, error);
+    throw new PreparedFundedBroadcastError(
+      context.label,
+      localHash,
+      recordUnknownBroadcastOutcome(context, chainId, signer, localHash, error),
+    );
   }
 }
 

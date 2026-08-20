@@ -221,6 +221,30 @@ export async function reconcileSignerExecutionLeases(leases, inspectTransaction)
   }
 }
 
+export function assertSoleRecoverableSignerTransaction(leases, expectedHash) {
+  if (!/^0x[0-9a-f]{64}$/iu.test(expectedHash)) {
+    throw new Error("funded recovery transaction hash is invalid");
+  }
+  const signerTransactions = leases.flatMap((lease) =>
+    readSignerTransactionState(lease.chainId, lease.signer).transactions
+      .map((transaction) => ({ lease, transaction }))
+  );
+  const recoverable = signerTransactions.filter(({ transaction }) =>
+    transaction.hash.toLowerCase() === expectedHash.toLowerCase() &&
+    transaction.status !== "mined-success" &&
+    transaction.status !== "mined-failure"
+  );
+  const otherNonterminal = signerTransactions.filter(({ transaction }) =>
+    transaction.hash.toLowerCase() !== expectedHash.toLowerCase() &&
+    !TERMINAL_TRANSACTION_STATUSES.has(transaction.status)
+  );
+  if (recoverable.length !== 1 || otherNonterminal.length !== 0) {
+    throw new Error(
+      "funded recovery target is not bound to the sole recoverable signer transaction",
+    );
+  }
+}
+
 export function recordPreparedSignerTransaction(input) {
   const signer = input.signer.toLowerCase();
   updateSignerState(input.chainId, signer, (state) => {
@@ -228,6 +252,20 @@ export function recordPreparedSignerTransaction(input) {
     if (existing) {
       if (existing.nonce !== input.nonce) {
         throw new Error("prepared signer transaction identity changed");
+      }
+      if (existing.status === "abandoned-prebroadcast") {
+        if (state.transactions.some((entry) =>
+          entry !== existing &&
+          entry.nonce === input.nonce &&
+          !TERMINAL_TRANSACTION_STATUSES.has(entry.status)
+        )) throw new Error("funded signer nonce is already reserved by another transaction");
+        existing.status = "prepared";
+        delete existing.blockNumber;
+        existing.updatedAt = new Date().toISOString();
+        return state;
+      }
+      if (existing.status !== "prepared") {
+        throw new Error("funded signer transaction cannot be prepared from its current status");
       }
       return state;
     }
