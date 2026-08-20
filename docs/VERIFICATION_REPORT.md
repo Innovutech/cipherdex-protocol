@@ -1,6 +1,6 @@
 # Verification Report
 
-Date: 2026-08-19
+Date: 2026-08-20
 
 ## Status
 
@@ -16,8 +16,8 @@ Each executable change was
 correctly rejected by the preceding deployment's source-provenance gate, so the
 final reviewed commit was deployed through a new commit-bound public manifest.
 Superseded deployments remain diagnostic evidence only. The latest deployment
-must repeat funded feasibility, best execution, fee collection, launchpad
-migration and quote-call evidence before the final funded suite can be sealed.
+has passed funded feasibility, best execution, fee collection, launchpad
+migration, quote-call capability probing and independent suite verification.
 
 Historical testnet addresses, transaction hashes and gas observations from
 superseded pool identities are diagnostic only and are not evidence for this
@@ -47,14 +47,14 @@ No dependency was added for this refactor.
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 208 passing, 1 intentionally gated funded-network
-  integration placeholder (209 tests discovered)
+- full local suite: 214 passing, 1 intentionally gated funded-network
+  integration placeholder; the Hardhat aggregate reported 215 Mocha cases
 - diff whitespace validation: passed
 
 Fresh deployment gas was measured against the source-commit-bound testnet
-manifest recorded below. Feasibility, best-execution, fee-collection,
-launchpad and quote-call evidence remains gated by the separately authenticated
-funded suite.
+manifest recorded below. Feasibility, best-execution, fee-collection and
+launchpad evidence passed the separately authenticated funded suite; the
+quote-call probe separately established the current runtime capability boundary.
 
 ## Complete pool identity
 
@@ -137,11 +137,11 @@ timing, gas and success/failure remain public.
 
 The tested COTI runtime permits ciphertext storage reads under `eth_call` but
 rejects fresh MPC execution at stored-ciphertext `OnBoard`, including the
-deployment-time encrypted-constant design. Therefore paid per-pool encrypted
-quote transactions remain the only proven primary quote path. The paid bounded
-best-quote router is implemented but is not gasless and is not promoted until
-fresh funded evidence succeeds. Retaining the direct paid quote is not evidence
-of a separate gasless main path.
+deployment-time encrypted-constant design. Fresh funded evidence proves both
+paid per-pool exact quoting and the paid bounded best-quote router. The router is
+the preferred bounded integration path; direct pool quoting remains supported.
+Neither is gasless, and retaining the direct paid quote is not evidence of a
+separate gasless main path.
 
 Exact permissionless quotes also permit active curve probing: encryption hides
 the request/result from passive observers, but a caller can query and decrypt
@@ -326,6 +326,15 @@ The review sequence and current results are:
     and the supporting provenance boundary with zero findings. The complete
     verifier passed with zero production or operational advisories, 29 Solidity
     files compiled, 208 passing tests and one intentionally gated funded test.
+22. Pre-publication full-repository scan
+    `cf3b2338-0822-4c47-992f-ae6135168e75` reviewed commit
+    `0130124510de657224015bb6d87d2f00c4152ff3` across all eight security
+    surfaces and completed with zero Critical, High, Medium or Low findings.
+    The scan covered 169 registered files, including the complete public and
+    confidential accounting paths, canonical factories, best execution,
+    launch migration, fee custody, SDK, deployment provenance and funded
+    recovery/evidence boundary. The parent-only review requirement was retained;
+    no delegated workers or private operator material were used.
 
 Funded execution is available only through an externally installed,
 operator-owned launcher. It authenticates the exact reviewed Git commit before
@@ -360,13 +369,68 @@ Funded evidence must then cover preflight, direct pool behavior, launch
 migration, mixed standard/protected best execution, protocol-fee collection,
 recovery and final evidence verification. Only public addresses, transaction
 hashes, block provenance, gas and assertions may be persisted. Keys, AES keys,
-ciphertexts, signatures, private balances, quotes and decrypted values must not
-be printed or stored.
+ciphertexts, encrypted-input signatures, private balances, quotes and decrypted
+values must not be printed or stored. The evidence record's EIP-191 attestation
+signature is public integrity metadata over the sanitized record, not a private
+operation signature or secret.
 
-Fresh funded scenario transactions, measured gas and final command results will
-replace the remaining pending statements only after all funded gates pass.
+The current fresh funded scenario suite passed and is recorded below. Historical
+deployment narratives are retained only to explain superseded testnet artifacts;
+they are not the supported integration surface.
 
 ### Fresh COTI testnet deployment
+
+Final reviewed source commit `ce11f2ed4b6f42d5eb656ea69c0dfb84d7206484`
+was deployed to COTI testnet chain `7082400`. The complete 17-transaction
+deployment and binding record is
+`deployments/coti-testnet-ce11f2ed4b6f42d5eb656ea69c0dfb84d7206484.json`.
+The deployment runner matched reviewed creation bytecode, constructor arguments,
+runtime codehashes and all post-deployment bindings before publication.
+
+- Fee vault: `0x52635eDB35c2A41C2DfE60C587b731776F236fC2`.
+- Private LP-token factory: `0x379160bB671b5256FE9e960464Ae2968Acf1A981`.
+- Initialization-strategy registry:
+  `0x6bfF02Ad5d8fA2B5c0a2176DD56Fa54EC76f8cEb`.
+- Canonical confidential pool deployer:
+  `0x87d4C40f8A50ea908F13678948f170bBE1843870`.
+- Confidential factory: `0x9e3Ac92646Bf3E0fcE5EE4fb39c20e71F4bE30d4`.
+- Launch initialization strategy:
+  `0x3B3c633BcE36F993De839909a8F721b3084e9DB9`.
+- Launchpad migrator: `0xe0661C6e10DB11BAD8e2A0620D39bD47c184af05`.
+- Confidential best-execution router:
+  `0xaBA86B669966E9a1583D4E4C34DED504E6d0ED32`.
+- Public factory: `0x233D3F71Ad7DFb2088cA652F8fc41095637bB139`.
+- Public quoter: `0x44e7Fe7D3c70106503E7aff6638238fB6ed84e27`.
+- Public router: `0x22c7A05dAC6f15502AFe1662aAeB157Ed80F4D07`.
+
+All 17 deployment and binding transactions succeeded and consumed `23510678`
+gas in total. The source-bound funded suite is sealed at
+`evidence/coti-testnet-ce11f2ed4b6f42d5eb656ea69c0dfb84d7206484.json`.
+Its four records contain 136 reconciled scenario transactions and passed an
+independent read-only verifier in an isolated evidence-only checkout:
+
+- feasibility: 13 transactions and 6 assertions, including cross-pool GT reuse,
+  private winner selection, atomic settlement and zero-residue cleanup;
+- best execution: 51 transactions and 15 assertions, covering mixed standard and
+  protected candidates, all v1 fee tiers, both directions, deterministic ties,
+  invalid candidate isolation, authorization guards, rollback, exact escrow,
+  quote parity and full exits;
+- fee collection: 50 transactions and 8 assertions, covering both input tokens,
+  premature collection rejection, mature aggregation, terminal sub-threshold
+  deposit, reserve exclusion, exact vault deposits and full cleanup;
+- launchpad: 22 transactions and 9 assertions, covering dual authorization,
+  price-bound rejection, atomic migration, canonical protected identity, replay
+  rejection, full exit, ordinary reseeding and final zero residue.
+
+The funded MPC-call probe separately confirmed that ciphertext-only storage reads
+work under `eth_call`, while `SetPublic`, stored-ciphertext `OnBoard`, fresh
+offboarding, arithmetic, comparison/mux and both complete quote forms revert.
+This includes the deployment-time stored-encrypted-constant design. The paid
+per-pool quote and paid bounded best-quote router are therefore the proven exact
+transports on this runtime; the router is preferred for bounded integration
+routing, but neither is gasless.
+
+### Superseded COTI testnet deployment history
 
 Final reviewed source commit `c10b23e7b1c871a95e5d258e26b961cbf4c14a3d` was deployed to
 COTI testnet chain `7082400`. The complete 17-transaction deployment and binding

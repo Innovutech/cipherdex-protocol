@@ -46,11 +46,12 @@ The staged probe proves ciphertext-only user reads work under `eth_call`, while
 raw stored-ciphertext `OnBoard`, authenticated validation, arithmetic,
 comparison/mux and both full quote forms fail. A real transaction executes the
 same MPC operations. The lower-level funded probe proved that one paid router
-transaction can reuse one validated GT input across pools. The final production
-router still requires fresh funded mixed standard/protected evidence before it
-is promoted. The stable SDK exposes that paid canonical best-quote/best-swap
-transport explicitly, while paid per-pool transactions remain the currently
-proven primary quote operation. This enables a testnet routing path without
+transaction can reuse one validated GT input across pools. Fresh funded
+production-router evidence now covers mixed standard/protected candidates, all
+v1 fee tiers, both directions, invalid-candidate isolation, quote/settlement
+parity and full cleanup. The stable SDK exposes that paid canonical
+best-quote/best-swap transport as the preferred bounded integration path, while
+direct paid per-pool quotes remain supported. This enables a testnet routing path without
 publishing reserves, but gas, latency and public winning-route metadata remain
 product limitations rather than normal gasless quote UX.
 

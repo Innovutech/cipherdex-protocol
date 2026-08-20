@@ -135,10 +135,11 @@ Its trusted adapter must fetch the
 raw transaction and receipt by that hash; application code cannot inject either
 as evidence. The SDK verifies the chain, byte-for-byte calldata, exact router event,
 selected tier/strategy and a fresh complete-key pool lookup before decrypting.
-Paid pool-level `requestQuoteExactInput` is the only proven primary quote path.
-The paid router may become the preferred integration transport after fresh
-funded proof, but neither path is gasless and the direct path is not merely a
-fallback.
+Paid pool-level `requestQuoteExactInput` and the canonical paid best-quote and
+best-execution router both have fresh funded proof. Use the router as the
+preferred bounded integration path and the pool-level method for explicit direct
+pool quoting. Neither path is gasless; there is no gasless route for either one
+to fall back from on the tested runtime.
 
 The verification and decryption adapters are trusted chain-data boundaries, not
 indexer callbacks. Expected addresses and runtime codehashes must come from the

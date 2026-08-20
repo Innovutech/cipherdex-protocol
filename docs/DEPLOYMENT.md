@@ -49,16 +49,20 @@ is no mainnet deployment script or mainnet network entry.
 
    The external launcher uses built-ins and trusted system Git to authenticate
    the commit before importing repository code. It creates a fresh private
-   checkout, runs `npm ci --ignore-scripts`, compiles without secrets, resolves
+   checkout, runs `npm ci --ignore-scripts` with its npm cache inside the
+   disposable runtime, compiles without secrets, resolves
    internal package links into regular files, recursively validates owner-only
    storage, records a v2 build measurement, and only then permits the private
    runner to read the external environment. The private runner always uses
    `hardhat run --no-compile`. The launcher provisions a stable owner-only,
    repository-scoped recovery directory outside the checkout and passes it as a
    non-overridable runner boundary. The runtime is deleted on success or failure,
-   while encrypted recovery journals survive for reconciliation, evidence retry,
-   and asset cleanup. Do not manually delete that recovery directory while any
-   run is nonterminal.
+   while encrypted recovery journals and immutable sanitized run evidence survive
+   for reconciliation, evidence retry, and asset cleanup. The launcher promotes
+   only the expected schema-valid public evidence record before deleting the
+   runtime and rejects private fields, links, oversized files or changed durable
+   records. Do not manually delete that recovery directory while any run is
+   nonterminal.
 8. Run the launcher with target `scripts/testnet-preflight.ts`. The preflight intentionally skips contract
    compilation so missing configuration fails immediately. It verifies the configured chain, native
    testnet gas, token contract code/decimals, and caller-encrypted balance
@@ -151,6 +155,17 @@ minimum confirmation depth are all independently corroborated.
     manifest. It rejects duplicate transaction hashes, changed runner source,
     unreviewed senders or targets, unresolved outcomes, and runtime-provenance
     mismatches.
+
+If a terminal encrypted journal predates durable evidence promotion,
+`scripts/rematerialize-funded-evidence.ts` is the transaction-free recovery path.
+It accepts only the immutable manifest creation commit, requires every original
+funded runner to remain byte-identical to the deployed source, opens only terminal
+journals, reconciles receipts and zero-residue state, and regenerates exactly the
+four sanitized run records. The launcher then promotes those immutable records to
+the private recovery evidence directory. The finalizer stages records from that
+directory by deployment source commit. Rematerialization never signs, sends or
+rebroadcasts a transaction and is not a substitute for running a missing funded
+scenario.
 
 The deploy script prints only public contract configuration. It does not onboard
 accounts, handle AES keys, create a pool, or manufacture encrypted inputs. Use the

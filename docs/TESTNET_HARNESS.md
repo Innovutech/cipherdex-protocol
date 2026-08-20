@@ -164,6 +164,12 @@ before RPC submission. The external authenticated launcher places these journals
 in a stable owner-only, repository-scoped directory outside each disposable
 checkout. Runtime deletion after success, failure, or process interruption cannot
 delete replay protection, evidence-pending state, or cleanup obligations.
+Before deleting a completed runtime, the launcher promotes only the expected
+schema-valid sanitized run record into the stable private recovery evidence
+directory. Finalization stages those immutable source-bound records back into a
+fresh authenticated runtime. A transaction-free rematerializer can regenerate
+them from terminal journals when recovering runs completed before that promotion
+boundary.
 An ambiguous provider response therefore retains a deterministic hash and exact
 payload for explicit receipt reconciliation or identical rebroadcast; it never
 causes a blind re-sign. Signed payloads remain private local recovery material

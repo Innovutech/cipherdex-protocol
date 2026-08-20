@@ -9,16 +9,18 @@ public reserve-derived state. On the current COTI testnet runtime, exact private
 quotes require paid transactions because fresh MPC operations cannot execute
 under `eth_call`.
 
-The paid per-pool quote is the only currently proven primary quote mechanism.
-This version also implements one factory-bound
+The paid per-pool quote is a proven exact quote mechanism. This version also
+implements one factory-bound
 `ConfidentialBestExecutionRouter.requestBestQuoteExactInput` transaction. The
 caller creates one router/selector-bound encrypted input. The router reuses the
 validated GT value across a bounded factory-derived fee/strategy candidate set,
 privately selects the largest valid output and offboards only the winner. It pays
 gas, waits for inclusion and creates public caller/winning-pool/tier/strategy/
 direction/timing history, but does not reveal losing outputs or move funds. It
-may become the preferred integration path after fresh funded verification, but
-it is not a gasless main path and does not turn the direct quote into a fallback.
+has passed fresh funded mixed standard/protected verification and is the
+preferred bounded integration transport. It is not a gasless path, and the
+direct per-pool quote remains an independently supported exact path rather than
+a substitute for nonexistent gasless quoting.
 
 No public reserve, TVL, spot-price, TWAP, depth ladder or quote state is added.
 This is a testnet feasibility boundary, not a mainnet-readiness claim.
@@ -160,9 +162,10 @@ integrations need:
 
 ### 8. Keep, extend or redesign?
 
-Keep the settlement privacy boundary. Paid pool-level quotes remain the proven
-primary transport until the final paid canonical best-quote/best-execution
-router passes fresh funded mixed-class evidence. The router is not an unchecked forwarding router: user
+Keep the settlement privacy boundary. Paid pool-level quotes and the paid
+canonical best-quote/best-execution router are both proven by fresh funded
+evidence. Prefer the router for bounded integration routing. The router is not
+an unchecked forwarding router: user
 ciphertexts bind to the router, pools accept raw GT values only from the one
 router bound by their factory, and each pool remains authoritative for
 settlement. Do not add public reserve-derived state. Re-test gasless encrypted
@@ -174,8 +177,8 @@ succeeds, replace only the quote transport after parity and security review.
 | Model | Benefit | Cost or privacy consequence | Decision |
 | --- | --- | --- | --- |
 | MPC `eth_call` | Exact, gasless, no quote transaction history | Unsupported by tested runtime | Preferred future transport |
-| Paid canonical best quote | Exact, one transaction, losing outputs stay private | Gas, latency, winning route metadata; final router still requires funded proof | Implemented candidate for preferred integration |
-| Paid per-pool quote | Exact and currently proven | One transaction per candidate and caller learns every output | Current proven primary direct transport |
+| Paid canonical best quote | Exact, one transaction, losing outputs stay private | Gas, latency and winning route metadata | Preferred proven bounded integration transport |
+| Paid per-pool quote | Exact and proven | One transaction per candidate and caller learns every output | Supported direct exact transport |
 | Public exact reserves | Simple universal routing | Reveals aggregate state and per-change deltas | Rejected |
 | Public exact quote | Simple universal routing | Public active oracle over curve | Rejected |
 | Public spot/TWAP | Analytics and rough routing | Persistent ratio/history disclosure; insufficient for slippage | Not embedded |

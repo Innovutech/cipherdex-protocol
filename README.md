@@ -83,12 +83,13 @@ Confidential pools deliberately expose no public reserve-derived market data:
 no reserves, TVL, aggregate LP supply, spot price or TWAP. The current COTI
 testnet RPC permits ciphertext-only storage reads but rejects `OnBoard` and every
 tested fresh MPC path under `eth_call`, including the stored-encrypted-constant
-design. Paid per-pool encrypted quote transactions are therefore the only proven
-primary quote transport. This source also supports one paid best-quote transaction
-over a bounded, factory-derived strategy/fee bitmap, but that route is not a
-gasless replacement and is not described as primary until fresh funded deployment
-evidence proves it. Both transports cost gas and wait for inclusion, so this is a
-testnet runtime limitation rather than normal gasless DEX quote UX. Read
+design. Paid per-pool encrypted quote transactions are therefore the proven
+exact per-pool quote transport. The paid best-quote transaction over a bounded,
+factory-derived strategy/fee bitmap has also passed fresh funded mixed-class
+evidence and is the preferred integration transport when its bounded candidate
+model applies. Neither transport is gasless: both cost gas and wait for inclusion,
+so this remains a testnet runtime limitation rather than normal gasless DEX quote
+UX. Read
 [docs/QUOTE_MARKET_DATA_REVIEW.md](docs/QUOTE_MARKET_DATA_REVIEW.md),
 [docs/FEE_ECONOMICS.md](docs/FEE_ECONOMICS.md),
 [docs/FEASIBILITY_GATE.md](docs/FEASIBILITY_GATE.md) and

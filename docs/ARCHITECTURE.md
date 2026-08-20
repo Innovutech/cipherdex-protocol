@@ -116,9 +116,10 @@ precompile work in `eth_call`, including stored ciphertext onboarding. The
 factory-bound router can therefore perform exact best quoting only in a paid
 transaction. It validates one caller-bound encrypted input, reuses its GT value
 across initialized complete-key pools, selects the largest valid output in MPC
-and offboards only the winner. Paid per-pool quotes remain the only proven
-primary quote transport until the final router has fresh funded evidence. The
-router is also paid and is not a gasless main quote path.
+and offboards only the winner. Fresh funded mixed-class evidence now proves both
+the paid per-pool exact quote and the paid bounded best-quote router. The router
+is the preferred integration transport when its candidate model applies; direct
+per-pool quoting remains an exact supported path. Neither path is gasless.
 Public market data would be an intentional disclosure and belongs, if
 ever added, in a separately reviewed oracle or batch design rather than being
 inferred from settlement state.
