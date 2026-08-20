@@ -10,7 +10,6 @@ import {
   verifyFundedSuiteSources,
 } from "./funded-suite-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
-import { requiredFundedRecoveryDirectory } from "./funded-runtime-state";
 import {
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
@@ -28,10 +27,7 @@ async function main(): Promise<void> {
     }],
   );
   const sourceCommit = deployment.sourceCommit;
-  const runs = readRequiredFundedRuns(
-    sourceCommit,
-    resolve(requiredFundedRecoveryDirectory(), "evidence"),
-  );
+  const runs = readRequiredFundedRuns(sourceCommit);
   const suite = createFundedSuiteEvidence({
     sourceCommit,
     chainId: Number(deployment.chainId),

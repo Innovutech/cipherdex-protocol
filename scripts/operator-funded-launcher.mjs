@@ -32,6 +32,13 @@ const TRUSTED_GIT_CANDIDATES = Object.freeze(
 const GIT_CONFIG_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 const COMMIT = /^[0-9a-f]{40}$/iu;
 const TARGET = /^scripts\/[a-z0-9-]+\.ts$/u;
+const FUNDED_EVIDENCE_RUNNERS = Object.freeze([
+  "best-execution-feasibility",
+  "best-execution",
+  "fee-collection",
+  "launchpad",
+]);
+const MAX_FUNDED_EVIDENCE_BYTES = 10_000_000;
 const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 
 process.umask(0o077);
@@ -217,6 +224,57 @@ function persistentRecoveryRoot(repositoryRoot) {
   return restrictOperatorDirectory(repositoryRecoveryRoot);
 }
 
+function stageFundedEvidence(recoveryRoot, runtime, sourceCommit) {
+  const sourceRoot = resolve(recoveryRoot, "evidence");
+  const sourceRootStat = lstatSync(sourceRoot);
+  if (!sourceRootStat.isDirectory() || sourceRootStat.isSymbolicLink()) {
+    throw new Error("funded evidence root must be a real directory");
+  }
+  const canonicalSourceRoot = realpathSync(sourceRoot);
+  const stateRoot = resolve(runtime, ".testnet-state");
+  const destinationRoot = resolve(stateRoot, "evidence");
+  mkdirSync(stateRoot, { recursive: false, mode: 0o700 });
+  restrictOperatorDirectory(stateRoot);
+  mkdirSync(destinationRoot, { recursive: false, mode: 0o700 });
+  restrictOperatorDirectory(destinationRoot);
+
+  for (const runner of FUNDED_EVIDENCE_RUNNERS) {
+    const name = `${runner}-${sourceCommit}.json`;
+    const sourcePath = resolve(canonicalSourceRoot, name);
+    const original = lstatSync(sourcePath);
+    if (
+      !original.isFile() ||
+      original.isSymbolicLink() ||
+      original.nlink !== 1 ||
+      original.size <= 0 ||
+      original.size > MAX_FUNDED_EVIDENCE_BYTES
+    ) throw new Error(`funded evidence file is invalid: ${runner}`);
+    const canonicalSource = realpathSync(sourcePath);
+    const fromSourceRoot = relative(canonicalSourceRoot, canonicalSource);
+    if (!fromSourceRoot || fromSourceRoot.startsWith("..") || isAbsolute(fromSourceRoot)) {
+      throw new Error(`funded evidence file escaped its private root: ${runner}`);
+    }
+    const contents = readFileSync(canonicalSource);
+    let parsed;
+    try {
+      parsed = JSON.parse(contents.toString("utf8"));
+    } catch {
+      throw new Error(`funded evidence file is not valid JSON: ${runner}`);
+    }
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      parsed.runner !== runner ||
+      parsed.sourceCommit !== sourceCommit
+    ) throw new Error(`funded evidence identity mismatch: ${runner}`);
+    writeFileSync(resolve(destinationRoot, name), contents, {
+      mode: 0o600,
+      flag: "wx",
+    });
+  }
+}
+
 function materializeInternalFileLinks(root) {
   const canonicalRoot = realpathSync(root);
   const visit = (path) => {
@@ -295,7 +353,10 @@ async function main() {
       "status", "--porcelain=v1", "--untracked-files=all",
     ]) !== "") throw new Error("private funded runtime source is not clean");
 
-    run(process.execPath, [npmCli(), "ci", "--ignore-scripts"], {
+    const npmCache = resolve(runtime, ".git", "cipherdex-npm-cache");
+    mkdirSync(npmCache, { recursive: false, mode: 0o700 });
+    restrictOperatorDirectory(npmCache);
+    run(process.execPath, [npmCli(), "ci", "--ignore-scripts", "--cache", npmCache], {
       cwd: runtime,
       env: systemEnvironment,
       failure: "locked private funded dependency installation failed",
@@ -337,6 +398,9 @@ async function main() {
     });
     if (runtimeReceipt.sourceCommit !== input.commit) {
       throw new Error("reviewed funded build receipt has the wrong source commit");
+    }
+    if (input.target === "scripts/finalize-funded-evidence.ts") {
+      stageFundedEvidence(recoveryRoot, runtime, input.commit);
     }
     privateFilesystem.assertPrivateTree(runtime);
 

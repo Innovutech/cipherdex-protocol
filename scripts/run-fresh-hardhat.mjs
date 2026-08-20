@@ -91,7 +91,6 @@ const ALLOWED_TARGETS = new Map([
   ["scripts/finalize-funded-evidence.ts", {
     arguments: ["--network", "cotiTestnet"],
     reviewedRuntime: true,
-    fundedState: true,
     environment: ["COTI_DEPLOYMENT_RECORD"],
   }],
   ["scripts/verify-funded-suite-evidence.ts", {
@@ -294,7 +293,7 @@ async function main() {
   const executionRoot = realpathSync(resolve(process.cwd()));
   const publicRepositoryRoot = requiredCanonicalDirectory("CIPHERDEX_PUBLIC_REPOSITORY_ROOT");
   const buildReceiptRoot = requiredCanonicalDirectory("CIPHERDEX_BUILD_RECEIPT_ROOT");
-  const fundedStateRoot = targetPolicy.funded || targetPolicy.fundedState
+  const fundedStateRoot = targetPolicy.funded
     ? requiredCanonicalDirectory("CIPHERDEX_FUNDED_STATE_ROOT")
     : undefined;
   if (isInside(executionRoot, publicRepositoryRoot) || isInside(publicRepositoryRoot, executionRoot)) {
