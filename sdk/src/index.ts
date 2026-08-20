@@ -2879,12 +2879,12 @@ export async function verifyLaunchpadMigrationMetadata(
   if (migrationLogs.length !== 1) {
     throw new TypeError("Launchpad migration receipt has invalid migration evidence");
   }
-  const migrationLog = migrationLogs[0];
+  const migrationLog = migrationLogs[0]!;
   if (
     migrationLog.topics.length !== 4 ||
-    migrationLog.topics[1].toLowerCase() !== metadata.launchId.toLowerCase() ||
-    !sameAddress(topicAddress(migrationLog.topics[2]) ?? ZERO_ADDRESS, metadata.creator) ||
-    !sameAddress(topicAddress(migrationLog.topics[3]) ?? ZERO_ADDRESS, metadata.pool)
+    migrationLog.topics[1]!.toLowerCase() !== metadata.launchId.toLowerCase() ||
+    !sameAddress(topicAddress(migrationLog.topics[2]!) ?? ZERO_ADDRESS, metadata.creator) ||
+    !sameAddress(topicAddress(migrationLog.topics[3]!) ?? ZERO_ADDRESS, metadata.pool)
   ) {
     throw new TypeError("Launchpad migration event does not match metadata");
   }
@@ -2892,10 +2892,10 @@ export async function verifyLaunchpadMigrationMetadata(
   if (
     !migrationData ||
     !sameAddress(
-      addressFromAbiWord(migrationData[0].slice(2)) ?? ZERO_ADDRESS,
+      addressFromAbiWord(migrationData[0]!.slice(2)) ?? ZERO_ADDRESS,
       metadata.initializationStrategy,
     ) ||
-    migrationData[1].toLowerCase() !==
+    migrationData[1]!.toLowerCase() !==
       metadata.launchCommitmentHash.toLowerCase()
   ) {
     throw new TypeError("Launchpad migration event does not match commitment");
@@ -2921,16 +2921,16 @@ export async function verifyLaunchpadMigrationMetadata(
     throw new TypeError("Launchpad migration receipt has invalid disposition evidence");
   }
   if (usesDisposition) {
-    const dispositionLog = dispositionLogs[0];
+    const dispositionLog = dispositionLogs[0]!;
     const dispositionData = splitEventData(dispositionLog.data, 3);
     if (
       dispositionLog.topics.length !== 3 ||
       !dispositionData ||
-      !sameAddress(topicAddress(dispositionLog.topics[1]) ?? ZERO_ADDRESS, metadata.creator) ||
-      !sameAddress(topicAddress(dispositionLog.topics[2]) ?? ZERO_ADDRESS, metadata.pool) ||
-      decodedWord(dispositionData[0]) !== BigInt(metadata.disposition) ||
-      dispositionData[1].toLowerCase() !== metadata.lockId.toLowerCase() ||
-      decodedWord(dispositionData[2]) !== quantityAsBigInt(metadata.unlockTime)
+      !sameAddress(topicAddress(dispositionLog.topics[1]!) ?? ZERO_ADDRESS, metadata.creator) ||
+      !sameAddress(topicAddress(dispositionLog.topics[2]!) ?? ZERO_ADDRESS, metadata.pool) ||
+      decodedWord(dispositionData[0]!) !== BigInt(metadata.disposition) ||
+      dispositionData[1]!.toLowerCase() !== metadata.lockId.toLowerCase() ||
+      decodedWord(dispositionData[2]!) !== quantityAsBigInt(metadata.unlockTime)
     ) {
       throw new TypeError("Launchpad disposition event does not match metadata");
     }
@@ -2949,15 +2949,15 @@ export async function verifyLaunchpadMigrationMetadata(
     if (liquidityLogs.length !== 1) {
       throw new TypeError("Locked launchpad migration has invalid pool lock evidence");
     }
-    const liquidityLog = liquidityLogs[0];
+    const liquidityLog = liquidityLogs[0]!;
     const liquidityData = splitEventData(liquidityLog.data, 2);
     if (
       liquidityLog.topics.length !== 3 ||
       !liquidityData ||
-      liquidityLog.topics[1].toLowerCase() !== metadata.lockId.toLowerCase() ||
-      !sameAddress(topicAddress(liquidityLog.topics[2]) ?? ZERO_ADDRESS, metadata.creator) ||
-      decodedWord(liquidityData[0]) !== quantityAsBigInt(metadata.unlockTime) ||
-      decodedWord(liquidityData[1]) !==
+      liquidityLog.topics[1]!.toLowerCase() !== metadata.lockId.toLowerCase() ||
+      !sameAddress(topicAddress(liquidityLog.topics[2]!) ?? ZERO_ADDRESS, metadata.creator) ||
+      decodedWord(liquidityData[0]!) !== quantityAsBigInt(metadata.unlockTime) ||
+      decodedWord(liquidityData[1]!) !==
         BigInt(metadata.disposition === LP_DISPOSITION.PERMANENT_LOCK ? 1 : 0)
     ) {
       throw new TypeError("Pool lock event does not match launchpad metadata");
