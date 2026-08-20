@@ -583,6 +583,27 @@ const fundedRuntimeStateSource = await readFile(
   "scripts/funded-runtime-state.ts",
   "utf8",
 );
+const fundedEvidenceRecoverySource = await readFile(
+  "scripts/rematerialize-funded-evidence.ts",
+  "utf8",
+);
+for (const required of [
+  "journal.reconcileTransactions(ethers.provider)",
+  "journal.activeResources.length !== 0",
+  "journal.activeAllowanceObligations.length !== 0",
+  'journal.markRun("evidence-pending")',
+  "writePreparedFundedRunEvidence",
+  "reviewedSource.equals(currentSource)",
+]) {
+  if (!fundedEvidenceRecoverySource.includes(required)) {
+    throw new Error(`Funded evidence recovery omits required control: ${required}`);
+  }
+}
+if (/\b(?:sendTransaction|broadcastTransaction|withFundedTransactionEvidence)\b/u.test(
+  fundedEvidenceRecoverySource,
+)) {
+  throw new Error("Funded evidence recovery contains a transaction submission path");
+}
 if (!freshRunnerSource.includes('"CIPHERDEX_LAUNCH_AUTHORITY"')) {
   throw new Error("Fresh deployment runner strips the required launch authority");
 }
@@ -640,10 +661,13 @@ for (const required of [
   'resolve(runtime, "scripts", "resolve-hardhat-cli.mjs")',
   "materializeInternalFileLinks(runtime)",
   "stageFundedEvidence(recoveryRoot, runtime, input.commit)",
+  "promoteFundedEvidence(runtime, recoveryRoot, input.target, input.commit)",
   "FUNDED_EVIDENCE_RUNNERS",
   "MAX_FUNDED_EVIDENCE_BYTES",
   "parsed.runner !== runner",
   "parsed.sourceCommit !== sourceCommit",
+  "durable funded evidence changed after publication",
+  "privateKey|aesKey|signedTransaction|ciphertext",
   'resolve(runtime, ".git", "cipherdex-npm-cache")',
   "privateFilesystem.assertPrivateTree(runtime)",
   "recordReviewedBuild(runtime, input.commit, {",

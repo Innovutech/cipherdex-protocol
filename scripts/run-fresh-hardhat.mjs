@@ -101,6 +101,11 @@ const ALLOWED_TARGETS = new Map([
       "CIPHERDEX_FUNDED_EVIDENCE_RECORD",
     ],
   }],
+  ["scripts/rematerialize-funded-evidence.ts", {
+    arguments: ["--network", "cotiTestnet"],
+    funded: true,
+    environment: ["COTI_DEPLOYMENT_RECORD"],
+  }],
   ["scripts/testnet-preflight.ts", {
     arguments: ["--network", "cotiTestnet"],
     funded: true,

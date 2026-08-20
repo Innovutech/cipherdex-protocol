@@ -275,6 +275,68 @@ function stageFundedEvidence(recoveryRoot, runtime, sourceCommit) {
   }
 }
 
+function promoteFundedEvidence(runtime, recoveryRoot, target, authenticatedCommit) {
+  const sourceRoot = resolve(runtime, ".testnet-state", "evidence");
+  if (!existsSync(sourceRoot)) return;
+  const sourceRootStat = lstatSync(sourceRoot);
+  if (!sourceRootStat.isDirectory() || sourceRootStat.isSymbolicLink()) {
+    throw new Error("runtime funded evidence root must be a real directory");
+  }
+  const destinationRoot = resolve(recoveryRoot, "evidence");
+  mkdirSync(destinationRoot, { recursive: true, mode: 0o700 });
+  restrictOperatorDirectory(destinationRoot);
+  const permittedRunners = new Set(FUNDED_EVIDENCE_RUNNERS);
+  let promoted = 0;
+  for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error("runtime funded evidence contains a non-regular entry");
+    }
+    const sourcePath = resolve(sourceRoot, entry.name);
+    const sourceStat = lstatSync(sourcePath);
+    if (
+      sourceStat.nlink !== 1 ||
+      sourceStat.size <= 0 ||
+      sourceStat.size > MAX_FUNDED_EVIDENCE_BYTES
+    ) throw new Error("runtime funded evidence file is invalid");
+    const contents = readFileSync(sourcePath);
+    let parsed;
+    try {
+      parsed = JSON.parse(contents.toString("utf8"));
+    } catch {
+      throw new Error("runtime funded evidence is not valid JSON");
+    }
+    const runner = parsed?.runner;
+    const sourceCommit = parsed?.sourceCommit;
+    if (
+      typeof runner !== "string" ||
+      !permittedRunners.has(runner) ||
+      typeof sourceCommit !== "string" ||
+      !COMMIT.test(sourceCommit) ||
+      entry.name !== `${runner}-${sourceCommit.toLowerCase()}.json` ||
+      (target !== "scripts/rematerialize-funded-evidence.ts" &&
+        sourceCommit.toLowerCase() !== authenticatedCommit)
+    ) throw new Error("runtime funded evidence identity is invalid");
+    const serialized = contents.toString("utf8");
+    if (/"(?:privateKey|aesKey|signedTransaction|ciphertext)"\s*:/iu.test(serialized)) {
+      throw new Error("runtime funded evidence contains a forbidden private field");
+    }
+    const destinationPath = resolve(destinationRoot, entry.name);
+    if (existsSync(destinationPath)) {
+      const existing = readFileSync(destinationPath);
+      if (!existing.equals(contents)) {
+        throw new Error(`durable funded evidence changed after publication: ${runner}`);
+      }
+    } else {
+      writeFileSync(destinationPath, contents, { mode: 0o600, flag: "wx" });
+    }
+    promoted += 1;
+  }
+  const expectedCount = target === "scripts/rematerialize-funded-evidence.ts" ? 4 : 1;
+  if (promoted !== expectedCount) {
+    throw new Error("funded evidence promotion produced an unexpected record count");
+  }
+}
+
 function materializeInternalFileLinks(root) {
   const canonicalRoot = realpathSync(root);
   const visit = (path) => {
@@ -423,6 +485,9 @@ async function main() {
       env: childEnvironment,
       failure: "reviewed funded target failed",
     });
+    if (input.target !== "scripts/finalize-funded-evidence.ts") {
+      promoteFundedEvidence(runtime, recoveryRoot, input.target, input.commit);
+    }
   } finally {
     if (existsSync(runtime)) {
       assertManagedRuntime(realpathSync(runtimeRoot), runtime);

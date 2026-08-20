@@ -63,6 +63,10 @@ assert.doesNotThrow(() => assertEarlyHardhatRunSequence(
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const freshRunnerSource = readFileSync("scripts/run-fresh-hardhat.mjs", "utf8");
 const operatorLauncherSource = readFileSync("scripts/operator-funded-launcher.mjs", "utf8");
+const fundedEvidenceRecoverySource = readFileSync(
+  "scripts/rematerialize-funded-evidence.ts",
+  "utf8",
+);
 const hardhatResolverSource = readFileSync("scripts/resolve-hardhat-cli.mjs", "utf8");
 for (const script of [
   "testnet:harness",
@@ -103,10 +107,13 @@ for (const required of [
   'resolve(runtime, "scripts", "resolve-hardhat-cli.mjs")',
   "materializeInternalFileLinks(runtime)",
   "stageFundedEvidence(recoveryRoot, runtime, input.commit)",
+  "promoteFundedEvidence(runtime, recoveryRoot, input.target, input.commit)",
   "FUNDED_EVIDENCE_RUNNERS",
   "MAX_FUNDED_EVIDENCE_BYTES",
   "parsed.runner !== runner",
   "parsed.sourceCommit !== sourceCommit",
+  "durable funded evidence changed after publication",
+  "privateKey|aesKey|signedTransaction|ciphertext",
   'resolve(runtime, ".git", "cipherdex-npm-cache")',
   "privateFilesystem.assertPrivateTree(runtime)",
   "recordReviewedBuild(runtime, input.commit, {",
@@ -119,6 +126,10 @@ for (const required of [
   assert.ok(operatorLauncherSource.includes(required));
 }
 assert.doesNotMatch(operatorLauncherSource + freshRunnerSource, /hardhat\/internal\/cli\/cli\.js/);
+assert.doesNotMatch(
+  fundedEvidenceRecoverySource,
+  /\b(?:sendTransaction|broadcastTransaction|withFundedTransactionEvidence)\b/,
+);
 assert.match(hardhatResolverSource, /require\.resolve\("hardhat\/package\.json"\)/);
 assert.match(hardhatResolverSource, /manifest\.bin\?\.hardhat/);
 assert.match(hardhatResolverSource, /fromPackage\.startsWith\("\.\."\)/);
@@ -156,6 +167,7 @@ for (const required of [
   "FUNDED_NETWORK_ENVIRONMENT",
   "targetPolicy.funded",
   "targetPolicy.environment",
+  '"scripts/rematerialize-funded-evidence.ts"',
   "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git",
   'runtimeEnvironment.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE = "1"',
   "buildReviewedRuntimeEnvironment",
