@@ -1246,6 +1246,7 @@ for (const required of [
   "recordPreparedSignerTransaction",
   "recordPreparedSignerTransactionAbandoned",
   '"abandoned-prebroadcast"',
+  "TERMINAL_TRANSACTION_STATUSES.has(transaction.status)",
   "pre-broadcast abandonment requires its dedicated proof boundary",
   "funded signer nonce is already reserved by another transaction",
   "reconcile or identically rebroadcast it before another funded run",

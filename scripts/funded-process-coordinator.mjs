@@ -193,7 +193,7 @@ export async function reconcileSignerExecutionLeases(leases, inspectTransaction)
       lease.signer,
     );
     for (const transaction of state.transactions) {
-      if (transaction.status === "mined-success" || transaction.status === "mined-failure") {
+      if (TERMINAL_TRANSACTION_STATUSES.has(transaction.status)) {
         continue;
       }
       const inspection = await inspectTransaction(lease, transaction);

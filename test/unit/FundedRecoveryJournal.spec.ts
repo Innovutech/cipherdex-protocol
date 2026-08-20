@@ -31,6 +31,7 @@ import {
   ACTIVE_SIGNER_LEASES_ENVIRONMENT,
   acquireSignerExecutionLeases,
   readSignerTransactionState,
+  reconcileSignerExecutionLeases,
   recordPreparedSignerTransactionAbandoned,
   recordPreparedSignerTransaction,
   recordSignerTransactionStatus,
@@ -828,7 +829,7 @@ describe("funded recovery journal", function () {
     expect(journal.transactions[0]).to.include({ hash: TX1, status: "broadcast" });
   });
 
-  it("releases only a prepared signer reservation through the dedicated abandonment boundary", function () {
+  it("releases only a prepared signer reservation through the dedicated abandonment boundary", async function () {
     const previousCoordinatorRoot = process.env.CIPHERDEX_COORDINATOR_ROOT;
     process.env.CIPHERDEX_COORDINATOR_ROOT = join(directory, "coordinator-abandoned");
     const leases = acquireSignerExecutionLeases(31_337, [OWNER]);
@@ -865,6 +866,12 @@ describe("funded recovery journal", function () {
         TX1,
         "outcome-unknown",
       )).to.throw("terminal funded signer transaction status cannot change");
+      let inspections = 0;
+      await reconcileSignerExecutionLeases(leases, async () => {
+        inspections += 1;
+        throw new Error("terminal reservations must not reach RPC inspection");
+      });
+      expect(inspections).to.equal(0);
       expect(() => recordPreparedSignerTransaction({
         chainId: 31_337,
         signer: OWNER,
