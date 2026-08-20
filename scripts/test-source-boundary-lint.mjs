@@ -149,6 +149,7 @@ for (const required of [
   "NETWORK_ENVIRONMENT",
   "FUNDED_NETWORK_ENVIRONMENT",
   "targetPolicy.funded",
+  "targetPolicy.fundedState",
   "targetPolicy.environment",
   "runtimeEnvironment.CIPHERDEX_TRUSTED_GIT = git",
   'runtimeEnvironment.CIPHERDEX_OPERATOR_LAUNCHER_ACTIVE = "1"',
