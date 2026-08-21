@@ -395,6 +395,36 @@ they are not the supported integration surface.
 
 ### Fresh COTI testnet deployment
 
+Source commit `af9d65f88f9e78aaba34fe5979473c6311d59181` was deployed to
+COTI testnet after the permissionless private-token compatibility refactor. The
+complete 17-transaction deployment and binding record is
+`deployments/coti-testnet-af9d65f88f9e78aaba34fe5979473c6311d59181.json`.
+All transactions succeeded and consumed `23448875` gas in total. The new
+confidential factory constructor has six arguments and the manifest contains
+neither `reviewedPrivateTokens` nor `approvedPrivateTokenCodehashes`.
+
+- Fee vault: `0x41916Ee1fCacb21933AbE9d85F1A1989C4D795aB`.
+- Private LP-token factory: `0x3E4FA6E18F07dbaf71FD504A1A6c63Cc65d2ba68`.
+- Initialization-strategy registry:
+  `0x76470ffDe28a840CD5e669b3Ff18d52C724e6936`.
+- Confidential pool deployer:
+  `0x68338a5A722aa00DE980deb8e826c6fFf6F03C79`.
+- Confidential factory: `0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30`.
+- Launch initialization strategy:
+  `0x26989f2593Cf06aa0a5630F9C6d0CE612EF4B7f8`.
+- Launchpad migrator: `0xce11f4578ecC1d0A9c9054A7A7DD26830F1f9C96`.
+- Confidential best-execution router:
+  `0xa8EE19691Fc9Db3666635e2f409844e1B12A385f`.
+- Public factory: `0xbc6a22c8d58d8067488841A2AF1ba64696dF23d3`.
+- Public quoter: `0x006ed12889125eeF5d1B200309F1a7735901B998`.
+- Public router: `0xAa328e7C1Bb20d005d8A26E3bbfbe64B4eba62A6`.
+
+Funded compatibility, configured-router and configured-launchpad evidence for
+this deployment remains pending below. The preceding deployment is retained as
+historical complete-key evidence only.
+
+### Previous complete-key COTI testnet deployment
+
 Final reviewed source commit `ce11f2ed4b6f42d5eb656ea69c0dfb84d7206484`
 was deployed to COTI testnet chain `7082400`. The complete 17-transaction
 deployment and binding record is

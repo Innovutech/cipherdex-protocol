@@ -1,0 +1,535 @@
+{
+  "schemaVersion": 2,
+  "status": "complete",
+  "network": "cotiTestnet",
+  "chainId": "7082400",
+  "sourceCommit": "af9d65f88f9e78aaba34fe5979473c6311d59181",
+  "createdAt": "2026-08-21T01:39:54.904Z",
+  "updatedAt": "2026-08-21T01:54:02.420Z",
+  "stage": "deployment completion journal",
+  "compiler": {
+    "CipherDEXFeeVault": {
+      "contractName": "CipherDEXFeeVault",
+      "sourceName": "contracts/CipherDEXFeeVault.sol",
+      "runtimeCodehash": "0x417cc35a34319138452da6eefb4e27a3649788ac47090d3c0b9e110a6f556aab",
+      "compilerInputHash": "0xd290fa638a0c63b0c4168e127d244276f93da64e60547633706682d6aba0e4be",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 8,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 200
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "PrivateLPTokenFactory": {
+      "contractName": "PrivateLPTokenFactory",
+      "sourceName": "contracts/PrivateLPTokenFactory.sol",
+      "runtimeCodehash": "0x9c796ceca64fdb8f1b780ed50588dfce7d75b5674ef5faa06bc1d5d4f063a0de",
+      "compilerInputHash": "0xe5945ee4d42891d66ec7b3352a4fdbc4030c8af35dbff1baedab34c270497863",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 0,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 205
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "ConfidentialInitializationStrategyRegistry": {
+      "contractName": "ConfidentialInitializationStrategyRegistry",
+      "sourceName": "contracts/ConfidentialInitializationStrategyRegistry.sol",
+      "runtimeCodehash": "0x7bc7dc1aa4ded881e03c3cde281e29dd8183358e839bb3e52b03bc7b54df0ebc",
+      "compilerInputHash": "0x6ffc28bdcff3e1ef5e0a08490275d19663a521696a8c54e5ed59f4348a650cc7",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 0,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 1
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "ConfidentialCPMMDeployer": {
+      "contractName": "ConfidentialCPMMDeployer",
+      "sourceName": "contracts/ConfidentialCPMMDeployer.sol",
+      "runtimeCodehash": "0xa7f71a39c863e2b36bc68eb6644c4416616d52b506841c839c24d622443293b6",
+      "compilerInputHash": "0x2ffef493de3509e7aed8c53501277c7574dd153d2dbec6191b059ab67ca15165",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 0,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 1
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "ConfidentialCPMMFactory": {
+      "contractName": "ConfidentialCPMMFactory",
+      "sourceName": "contracts/ConfidentialCPMMFactory.sol",
+      "runtimeCodehash": "0x098f874578d4b2d667fc5af9de512cd9ddcf779d9ff318df7cd7603e48064c8e",
+      "compilerInputHash": "0x5d95b18b9b93e5c1f1286d37ce204a7b31a2ed0c2ce9241b937ac68e4f4fe774",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 18,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 1
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "ConfidentialLaunchInitializationStrategy": {
+      "contractName": "ConfidentialLaunchInitializationStrategy",
+      "sourceName": "contracts/ConfidentialLaunchInitializationStrategy.sol",
+      "runtimeCodehash": "0x335fc04d96c84bee1a26c771a6b114f8dac1854270d3d9c9714a3b75a7c20b99",
+      "compilerInputHash": "0x46b010ad8861d10e9ad595bf059d18a485eea1b787129d500bf6ccca3685abd4",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 0,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 1
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "ConfidentialLaunchpadMigrator": {
+      "contractName": "ConfidentialLaunchpadMigrator",
+      "sourceName": "contracts/ConfidentialLaunchpadMigrator.sol",
+      "runtimeCodehash": "0x67226d2f3835c571a5167d106d2d87839006620ef11abd953d3e5d72bf55a00d",
+      "compilerInputHash": "0x6cf66b73d65c3097229a59b8b3cafb93027fb965ea29a180cf85d9dc3e28a56f",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 26,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 1
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "ConfidentialBestExecutionRouter": {
+      "contractName": "ConfidentialBestExecutionRouter",
+      "sourceName": "contracts/ConfidentialBestExecutionRouter.sol",
+      "runtimeCodehash": "0x31c3c39f2cde3690860a232d55cbc071b7c9cf6a6803500e39db1a984ad447f7",
+      "compilerInputHash": "0xaa069269b480365bcb70940a0633088de3980c79691ac036b4b705d3031199b4",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 0,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 211
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "PublicCPMMFactory": {
+      "contractName": "PublicCPMMFactory",
+      "sourceName": "contracts/PublicCPMMFactory.sol",
+      "runtimeCodehash": "0xb193a6f9c70d287a2cbc80f34e7c493d01b4c29ed205668d6e184928a7fa2749",
+      "compilerInputHash": "0x0023253c0ef8edeb122faabc309ab9d6ace37e0eef81fd6e49b944cc09119453",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 2,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": false,
+        "optimizer": {
+          "enabled": true,
+          "runs": 200
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "PublicCPMMQuoter": {
+      "contractName": "PublicCPMMQuoter",
+      "sourceName": "contracts/PublicCPMMQuoter.sol",
+      "runtimeCodehash": "0x42fb4c122ce5ba14dc8d925502456d5bbee5ad8f47ed33fb3051baf5b37140d0",
+      "compilerInputHash": "0xb2b4b2cd95b53c9896e944d944b3ce2ebd3671d753a1e7e4a6917e76880c9a64",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 2,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": false,
+        "optimizer": {
+          "enabled": true,
+          "runs": 206
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "PublicCPMMRouter": {
+      "contractName": "PublicCPMMRouter",
+      "sourceName": "contracts/PublicCPMMRouter.sol",
+      "runtimeCodehash": "0x763ea412156a132bdaed09137fa8073709681f7b67f97008b6220d28e3917b40",
+      "compilerInputHash": "0x006f8c220261ca5609a737a020b5df58cf5dfea4d4f356f2db7416311b2969da",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 2,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": false,
+        "optimizer": {
+          "enabled": true,
+          "runs": 207
+        },
+        "metadataBytecodeHash": "none"
+      }
+    }
+  },
+  "contracts": {
+    "feeVault": {
+      "address": "0x41916Ee1fCacb21933AbE9d85F1A1989C4D795aB",
+      "runtimeCodehash": "0x417cc35a34319138452da6eefb4e27a3649788ac47090d3c0b9e110a6f556aab",
+      "deploymentTx": "0xf02c7d4643ddb2c5953f1fc5d7dc1ff1e20f2259b80e14edc92a2edb5fe2cbea",
+      "gasUsed": "1841820",
+      "beneficiary": "0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff",
+      "constructorArgs": [
+        "0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff"
+      ]
+    },
+    "confidentialLpTokenFactory": {
+      "address": "0x3E4FA6E18F07dbaf71FD504A1A6c63Cc65d2ba68",
+      "runtimeCodehash": "0x9c796ceca64fdb8f1b780ed50588dfce7d75b5674ef5faa06bc1d5d4f063a0de",
+      "deploymentTx": "0xe8e1dda798fc0e84c689cfb96b0082afc90cfe7c42aeb62e91a04c40f197f448",
+      "gasUsed": "2991054",
+      "constructorArgs": []
+    },
+    "confidentialInitializationStrategyRegistry": {
+      "address": "0x76470ffDe28a840CD5e669b3Ff18d52C724e6936",
+      "runtimeCodehash": "0x7bc7dc1aa4ded881e03c3cde281e29dd8183358e839bb3e52b03bc7b54df0ebc",
+      "deploymentTx": "0xd76d420032e707d707ffc580cf88682d101baa7ef1c73a080c932b334e049a32",
+      "gasUsed": "1091793",
+      "reviewedStrategyCodehashes": [
+        "0x335fc04d96c84bee1a26c771a6b114f8dac1854270d3d9c9714a3b75a7c20b99"
+      ],
+      "constructorArgs": [
+        [
+          "0x335fc04d96c84bee1a26c771a6b114f8dac1854270d3d9c9714a3b75a7c20b99"
+        ]
+      ]
+    },
+    "confidentialPoolDeployer": {
+      "address": "0x68338a5A722aa00DE980deb8e826c6fFf6F03C79",
+      "runtimeCodehash": "0xa7f71a39c863e2b36bc68eb6644c4416616d52b506841c839c24d622443293b6",
+      "deploymentTx": "0x2813172cd0f61998ab46b7f75c1a0790afd72b3acfe938464334aa396a39f11e",
+      "gasUsed": "4445207",
+      "constructorArgs": []
+    },
+    "confidentialFactory": {
+      "address": "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30",
+      "runtimeCodehash": "0x098f874578d4b2d667fc5af9de512cd9ddcf779d9ff318df7cd7603e48064c8e",
+      "deploymentTx": "0x49e3015e3d503c00886313d370ca705b2374836931b0e3a09c06930686512cc3",
+      "gasUsed": "2176979",
+      "constructorArgs": [
+        "0x41916Ee1fCacb21933AbE9d85F1A1989C4D795aB",
+        "0x3E4FA6E18F07dbaf71FD504A1A6c63Cc65d2ba68",
+        "0x68338a5A722aa00DE980deb8e826c6fFf6F03C79",
+        "0xa7f71a39c863e2b36bc68eb6644c4416616d52b506841c839c24d622443293b6",
+        "0x76470ffDe28a840CD5e669b3Ff18d52C724e6936",
+        "0x7bc7dc1aa4ded881e03c3cde281e29dd8183358e839bb3e52b03bc7b54df0ebc"
+      ]
+    },
+    "confidentialFeeVaultBinding": {
+      "address": "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30",
+      "target": "0x41916Ee1fCacb21933AbE9d85F1A1989C4D795aB",
+      "function": "setConfidentialFactory",
+      "args": [
+        "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30"
+      ],
+      "transaction": "0xfb0bf762626b39dc95039cc850e7d6651d393ee6a38734c6e73a46d5f12c1d23",
+      "gasUsed": "48573"
+    },
+    "confidentialPoolDeployerBinding": {
+      "address": "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30",
+      "target": "0x68338a5A722aa00DE980deb8e826c6fFf6F03C79",
+      "function": "bindFactory",
+      "args": [
+        "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30"
+      ],
+      "transaction": "0x368fe926ba18fd2a934f5e00758a6461fe85da7966eba9033cf83876730c9a3f",
+      "gasUsed": "50400"
+    },
+    "confidentialStrategyRegistryBinding": {
+      "address": "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30",
+      "target": "0x76470ffDe28a840CD5e669b3Ff18d52C724e6936",
+      "function": "bindFactory",
+      "args": [
+        "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30"
+      ],
+      "transaction": "0x2e403dfafdda1fef2d312544fab749e8279836be392ad2904c8ee215da43d2a9",
+      "gasUsed": "52478"
+    },
+    "confidentialLaunchInitializationStrategy": {
+      "address": "0x26989f2593Cf06aa0a5630F9C6d0CE612EF4B7f8",
+      "runtimeCodehash": "0x335fc04d96c84bee1a26c771a6b114f8dac1854270d3d9c9714a3b75a7c20b99",
+      "deploymentTx": "0xc96bef1719ecb6f19a1721ec65cba68c74d8bafa2f567eca39db17177e6455dc",
+      "gasUsed": "4286439",
+      "launchAuthority": "0x503860ABBFE4910594D648d223FF70bE9A6b6D44",
+      "constructorArgs": [
+        "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30",
+        "0x76470ffDe28a840CD5e669b3Ff18d52C724e6936",
+        "0x503860ABBFE4910594D648d223FF70bE9A6b6D44"
+      ]
+    },
+    "launchpadMigrator": {
+      "address": "0xce11f4578ecC1d0A9c9054A7A7DD26830F1f9C96",
+      "runtimeCodehash": "0x67226d2f3835c571a5167d106d2d87839006620ef11abd953d3e5d72bf55a00d",
+      "deploymentTx": "0xc96bef1719ecb6f19a1721ec65cba68c74d8bafa2f567eca39db17177e6455dc",
+      "gasUsed": "4286439",
+      "creationKind": "strategy-constructor-child",
+      "creationParent": "0x26989f2593Cf06aa0a5630F9C6d0CE612EF4B7f8",
+      "constructorArgs": [
+        "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30",
+        "0x26989f2593Cf06aa0a5630F9C6d0CE612EF4B7f8"
+      ]
+    },
+    "confidentialStrategyRegistration": {
+      "address": "0x26989f2593Cf06aa0a5630F9C6d0CE612EF4B7f8",
+      "target": "0x76470ffDe28a840CD5e669b3Ff18d52C724e6936",
+      "function": "registerInitializationStrategy",
+      "args": [
+        "0x26989f2593Cf06aa0a5630F9C6d0CE612EF4B7f8"
+      ],
+      "transaction": "0x56473a21cfed53926f916b73a5f9ca80304273afde7f738aa6b6d2b8a95d0d84",
+      "gasUsed": "191735"
+    },
+    "confidentialStrategyRegistryFinalization": {
+      "target": "0x76470ffDe28a840CD5e669b3Ff18d52C724e6936",
+      "function": "finalize",
+      "args": [],
+      "transaction": "0x93dad17bf9120469a4d997ef1e520523596ea8b2c70ee1e9c95a0b3ff6f09886",
+      "gasUsed": "31645"
+    },
+    "confidentialBestExecutionRouter": {
+      "address": "0xa8EE19691Fc9Db3666635e2f409844e1B12A385f",
+      "runtimeCodehash": "0x31c3c39f2cde3690860a232d55cbc071b7c9cf6a6803500e39db1a984ad447f7",
+      "deploymentTx": "0x30c8ad6eb82cdef3e8b8e8b41f70edbdb5aad92e3d84d25cc6b83167ab35e4da",
+      "gasUsed": "2182401",
+      "protocolVersion": "2",
+      "factory": "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30",
+      "constructorArgs": [
+        "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30"
+      ]
+    },
+    "bestExecutionRouterBinding": {
+      "address": "0xa8EE19691Fc9Db3666635e2f409844e1B12A385f",
+      "target": "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30",
+      "function": "setBestExecutionRouter",
+      "args": [
+        "0xa8EE19691Fc9Db3666635e2f409844e1B12A385f"
+      ],
+      "transaction": "0x97fe02ea70367d19dd3bfcdfae98fc2d54627af738bcd6b7ee038ffcd8fd6de1",
+      "gasUsed": "58817"
+    },
+    "publicFactory": {
+      "address": "0xbc6a22c8d58d8067488841A2AF1ba64696dF23d3",
+      "runtimeCodehash": "0xb193a6f9c70d287a2cbc80f34e7c493d01b4c29ed205668d6e184928a7fa2749",
+      "deploymentTx": "0x52ea3866b84e0f224a1bca74efd2d8d8d88f864e30da657cdc0079f09acdf8f9",
+      "gasUsed": "3037572",
+      "constructorArgs": [
+        "0x41916Ee1fCacb21933AbE9d85F1A1989C4D795aB"
+      ]
+    },
+    "publicFeeVaultBinding": {
+      "address": "0xbc6a22c8d58d8067488841A2AF1ba64696dF23d3",
+      "target": "0x41916Ee1fCacb21933AbE9d85F1A1989C4D795aB",
+      "function": "setPublicFactory",
+      "args": [
+        "0xbc6a22c8d58d8067488841A2AF1ba64696dF23d3"
+      ],
+      "transaction": "0x68da24b110d31b34d6acc5cdf93193cef90eee4fc567ac0f10428ed503122a3f",
+      "gasUsed": "48524"
+    },
+    "publicQuoter": {
+      "address": "0x006ed12889125eeF5d1B200309F1a7735901B998",
+      "runtimeCodehash": "0x42fb4c122ce5ba14dc8d925502456d5bbee5ad8f47ed33fb3051baf5b37140d0",
+      "deploymentTx": "0x055785a596a374684123eaad3140637889cb4d18136a785383d5833cfe8845f9",
+      "gasUsed": "193643",
+      "constructorArgs": [
+        "0xbc6a22c8d58d8067488841A2AF1ba64696dF23d3"
+      ]
+    },
+    "publicRouter": {
+      "address": "0xAa328e7C1Bb20d005d8A26E3bbfbe64B4eba62A6",
+      "runtimeCodehash": "0x763ea412156a132bdaed09137fa8073709681f7b67f97008b6220d28e3917b40",
+      "deploymentTx": "0xc719d190e34a50e01b661a7f7f20dc47669dc92f1fd9e20dc309f5b4d538f6ed",
+      "gasUsed": "719795",
+      "constructorArgs": [
+        "0xbc6a22c8d58d8067488841A2AF1ba64696dF23d3"
+      ]
+    }
+  },
+  "transactions": [
+    {
+      "label": "CipherDEXFeeVault deployment",
+      "transactionHash": "0xf02c7d4643ddb2c5953f1fc5d7dc1ff1e20f2259b80e14edc92a2edb5fe2cbea",
+      "outcome": "mined-success",
+      "gasUsed": "1841820",
+      "contractAddress": "0x41916Ee1fCacb21933AbE9d85F1A1989C4D795aB"
+    },
+    {
+      "label": "PrivateLPTokenFactory deployment",
+      "transactionHash": "0xe8e1dda798fc0e84c689cfb96b0082afc90cfe7c42aeb62e91a04c40f197f448",
+      "outcome": "mined-success",
+      "gasUsed": "2991054",
+      "contractAddress": "0x3E4FA6E18F07dbaf71FD504A1A6c63Cc65d2ba68"
+    },
+    {
+      "label": "ConfidentialInitializationStrategyRegistry deployment",
+      "transactionHash": "0xd76d420032e707d707ffc580cf88682d101baa7ef1c73a080c932b334e049a32",
+      "outcome": "mined-success",
+      "gasUsed": "1091793",
+      "contractAddress": "0x76470ffDe28a840CD5e669b3Ff18d52C724e6936"
+    },
+    {
+      "label": "ConfidentialCPMMDeployer deployment",
+      "transactionHash": "0x2813172cd0f61998ab46b7f75c1a0790afd72b3acfe938464334aa396a39f11e",
+      "outcome": "mined-success",
+      "gasUsed": "4445207",
+      "contractAddress": "0x68338a5A722aa00DE980deb8e826c6fFf6F03C79"
+    },
+    {
+      "label": "ConfidentialCPMMFactory deployment",
+      "transactionHash": "0x49e3015e3d503c00886313d370ca705b2374836931b0e3a09c06930686512cc3",
+      "outcome": "mined-success",
+      "gasUsed": "2176979",
+      "contractAddress": "0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30"
+    },
+    {
+      "label": "confidential fee-vault factory binding",
+      "transactionHash": "0xfb0bf762626b39dc95039cc850e7d6651d393ee6a38734c6e73a46d5f12c1d23",
+      "outcome": "mined-success",
+      "gasUsed": "48573"
+    },
+    {
+      "label": "confidential pool-deployer factory binding",
+      "transactionHash": "0x368fe926ba18fd2a934f5e00758a6461fe85da7966eba9033cf83876730c9a3f",
+      "outcome": "mined-success",
+      "gasUsed": "50400"
+    },
+    {
+      "label": "confidential strategy-registry factory binding",
+      "transactionHash": "0x2e403dfafdda1fef2d312544fab749e8279836be392ad2904c8ee215da43d2a9",
+      "outcome": "mined-success",
+      "gasUsed": "52478"
+    },
+    {
+      "label": "ConfidentialLaunchInitializationStrategy deployment",
+      "transactionHash": "0xc96bef1719ecb6f19a1721ec65cba68c74d8bafa2f567eca39db17177e6455dc",
+      "outcome": "mined-success",
+      "gasUsed": "4286439",
+      "contractAddress": "0x26989f2593Cf06aa0a5630F9C6d0CE612EF4B7f8"
+    },
+    {
+      "label": "confidential initialization-strategy registration",
+      "transactionHash": "0x56473a21cfed53926f916b73a5f9ca80304273afde7f738aa6b6d2b8a95d0d84",
+      "outcome": "mined-success",
+      "gasUsed": "191735"
+    },
+    {
+      "label": "confidential strategy-registry finalization",
+      "transactionHash": "0x93dad17bf9120469a4d997ef1e520523596ea8b2c70ee1e9c95a0b3ff6f09886",
+      "outcome": "mined-success",
+      "gasUsed": "31645"
+    },
+    {
+      "label": "ConfidentialBestExecutionRouter deployment",
+      "transactionHash": "0x30c8ad6eb82cdef3e8b8e8b41f70edbdb5aad92e3d84d25cc6b83167ab35e4da",
+      "outcome": "mined-success",
+      "gasUsed": "2182401",
+      "contractAddress": "0xa8EE19691Fc9Db3666635e2f409844e1B12A385f"
+    },
+    {
+      "label": "confidential best-execution router binding",
+      "transactionHash": "0x97fe02ea70367d19dd3bfcdfae98fc2d54627af738bcd6b7ee038ffcd8fd6de1",
+      "outcome": "mined-success",
+      "gasUsed": "58817"
+    },
+    {
+      "label": "PublicCPMMFactory deployment",
+      "transactionHash": "0x52ea3866b84e0f224a1bca74efd2d8d8d88f864e30da657cdc0079f09acdf8f9",
+      "outcome": "mined-success",
+      "gasUsed": "3037572",
+      "contractAddress": "0xbc6a22c8d58d8067488841A2AF1ba64696dF23d3"
+    },
+    {
+      "label": "public fee-vault factory binding",
+      "transactionHash": "0x68da24b110d31b34d6acc5cdf93193cef90eee4fc567ac0f10428ed503122a3f",
+      "outcome": "mined-success",
+      "gasUsed": "48524"
+    },
+    {
+      "label": "PublicCPMMQuoter deployment",
+      "transactionHash": "0x055785a596a374684123eaad3140637889cb4d18136a785383d5833cfe8845f9",
+      "outcome": "mined-success",
+      "gasUsed": "193643",
+      "contractAddress": "0x006ed12889125eeF5d1B200309F1a7735901B998"
+    },
+    {
+      "label": "PublicCPMMRouter deployment",
+      "transactionHash": "0xc719d190e34a50e01b661a7f7f20dc47669dc92f1fd9e20dc309f5b4d538f6ed",
+      "outcome": "mined-success",
+      "gasUsed": "719795",
+      "contractAddress": "0xAa328e7C1Bb20d005d8A26E3bbfbe64B4eba62A6"
+    }
+  ],
+  "feePolicy": {
+    "approvedTotalFeeBps": [
+      5,
+      30,
+      100
+    ],
+    "protocolFeeShare": {
+      "numerator": 1,
+      "denominator": 6
+    },
+    "confidentialCollection": {
+      "minimumPoolSwaps": 8,
+      "minimumPoolDelaySeconds": 3600,
+      "minimumVaultSweepDelaySeconds": 86400,
+      "vaultEpochSeconds": 86400,
+      "minimumVaultAggregatedSwaps": 8,
+      "vaultResidenceEpochs": 2
+    }
+  },
+  "limitations": [
+    "testnet-only",
+    "not externally audited",
+    "no mainnet deployment",
+    "public and confidential modes are separate canonical registries",
+    "confidential exact best quotes require paid MPC transactions on the tested runtime",
+    "confidential best execution is single-hop across the bounded v3 fee-and-strategy namespace only",
+    "no PoD synchronous pool adapter"
+  ]
+}
