@@ -19,6 +19,7 @@ import { artifacts } from "../hardhat/runtime.js";
 import {
   CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI,
   CONFIDENTIAL_CPMM_ABI,
+  CONFIDENTIAL_CPMM_FACTORY_ABI,
   CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI,
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
   LAUNCH_COMMITMENT_EIP712_TYPES,
@@ -63,8 +64,10 @@ const NESTED_CREATION_CONTRACTS = new Set([
 const RUNNER_SOURCES = Object.freeze<Record<string, string>>({
   "best-execution-feasibility": "scripts/testnet-best-execution-feasibility.ts",
   "best-execution": "scripts/testnet-best-execution.ts",
+  "configured-compatibility": "scripts/testnet-best-execution.ts",
   "fee-collection": "scripts/testnet-fee-collection.ts",
   "launchpad": "scripts/testnet-launchpad.ts",
+  "configured-launchpad": "scripts/testnet-launchpad.ts",
   "evidence-test": "test/unit/FundedRunEvidence.spec.ts",
 });
 function requireSelector(abi: readonly string[], functionName: string): string {
@@ -85,7 +88,9 @@ const SELECTOR = Object.freeze({
     CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI,
     "swapBestExactInputWithCandidates",
   ),
+  createConfidentialPool: requireSelector(CONFIDENTIAL_CPMM_FACTORY_ABI, "createPool"),
   addLiquidity: requireSelector(CONFIDENTIAL_CPMM_ABI, "addLiquidity"),
+  directQuote: requireSelector(CONFIDENTIAL_CPMM_ABI, "requestQuoteExactInput"),
   collectProtocolFees: requireSelector(CONFIDENTIAL_CPMM_ABI, "collectProtocolFees"),
   confidentialSwap: requireSelector(CONFIDENTIAL_CPMM_ABI, "swapExactInput"),
   removeLiquidity: requireSelector(CONFIDENTIAL_CPMM_ABI, "removeLiquidity"),
@@ -208,6 +213,35 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       { label: /^reverse three-candidate quote-plus-swap$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestSwap] },
     ],
   },
+  "configured-compatibility": {
+    configurationKeys: [
+      "chainId", "factory", "router", "tokenA", "tokenB", "tokenACodehash",
+      "tokenBCodehash", "referenceToken", "referenceTokenCodehash", "maximumBalanceBps",
+    ],
+    assertions: [
+      "reference and differing runtime tokens passed structural compatibility",
+      "configured factory created canonical pools without token approval",
+      "balance-derived liquidity stayed within one tenth of one percent",
+      "configured router quote and atomic swap preserved parity",
+      "router escrow and pool allowances returned to zero",
+      "configured compatibility pools exited with zero residue",
+    ],
+    artifacts: {
+      ConfidentialCPMMFactory: 1,
+      ConfidentialBestExecutionRouter: 1,
+      ConfidentialCPMM: 2,
+      PrivateLPToken: 2,
+    },
+    requiredTransactions: [
+      { label: /^create canonical 100 bps pool$/, status: 1, targetArtifactLabel: "configured confidential factory", selectors: [SELECTOR.createConfidentialPool] },
+      { label: /^duplicate canonical reference pool$/, status: 0, targetArtifactLabel: "configured confidential factory", selectors: [SELECTOR.createConfidentialPool] },
+      { label: /^create canonical 30 bps pool$/, status: 1, targetArtifactLabel: "configured confidential factory", selectors: [SELECTOR.createConfidentialPool] },
+      { label: /^initialize canonical 30 bps pool$/, status: 1, targetArtifactLabel: "configured compatibility pool", selectors: [SELECTOR.addLiquidity] },
+      { label: /^configured compatibility best quote$/, status: 1, targetArtifactLabel: "configured best-execution router", selectors: [SELECTOR.bestQuote] },
+      { label: /^configured compatibility best swap$/, status: 1, targetArtifactLabel: "configured best-execution router", selectors: [SELECTOR.bestSwap] },
+      { label: /^full cleanup exit for 30 bps pool$/, status: 1, targetArtifactLabel: "configured compatibility pool", selectors: [SELECTOR.removeLiquidity] },
+    ],
+  },
   "fee-collection": {
     configurationKeys: [
       "chainId", "collectionDelaySeconds", "collectionReadyAt", "confidentialPoolVersion", "feeBeneficiary",
@@ -251,6 +285,8 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       "launchpad migration used canonical pool",
       "LP disposition and lock state verified",
       "replay protection rolled back atomically",
+      "direct private quote and swap preserved exact balance and allowance deltas",
+      "partial and full LP removal succeeded",
       "completed protected pool remained permissionless after a full exit and ordinary re-seed",
       "private balances and allowances recovered",
       "disposable launchpad pool recovered with zero residue",
@@ -271,9 +307,53 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       { label: /^rejected launchpad price-bound probe$/, status: 0, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
       { label: /^atomic launchpad migration$/, status: 1, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
       { label: /^launchpad replay probe$/, status: 0, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
+      { label: /^launchpad pool direct paid quote$/, status: 1, targetArtifactLabel: "disposable launchpad pool", selectors: [SELECTOR.directQuote] },
+      { label: /^launchpad pool direct private swap$/, status: 1, targetArtifactLabel: "disposable launchpad pool", selectors: [SELECTOR.confidentialSwap] },
+      { label: /^protected launchpad pool partial exit$/, status: 1, targetArtifactLabel: "disposable launchpad pool", selectors: [SELECTOR.removeLiquidity] },
       { label: /^protected launchpad pool first full exit$/, status: 1, targetArtifactLabel: "disposable launchpad pool", selectors: [SELECTOR.removeLiquidity] },
       { label: /^protected pool ordinary re-seed$/, status: 1, targetArtifactLabel: "disposable launchpad pool", selectors: [SELECTOR.addLiquidity] },
       { label: /^full disposable launchpad-pool exit$/, status: 1, targetArtifactLabel: "disposable launchpad pool", selectors: [SELECTOR.removeLiquidity] },
+    ],
+  },
+  "configured-launchpad": {
+    configurationKeys: [
+      "chainId", "confidentialPoolVersion", "disposition", "factory", "feeBeneficiary",
+      "feeBps", "initializationStrategy", "initializationStrategyVersion",
+      "launchpadMigrator", "launchpadMigratorVersion", "maximumBalanceBps", "privacyMode",
+      "tokenA", "tokenACodehash", "tokenB", "tokenBCodehash",
+    ],
+    assertions: [
+      "empty protected pool slot verified",
+      "dual-authorized launch commitment created one uninitialized protected pool",
+      "failed signed alternate-bound launch request rolled back atomically",
+      "launchpad migration used canonical pool",
+      "LP disposition and lock state verified",
+      "replay protection rolled back atomically",
+      "direct private quote and swap preserved exact balance and allowance deltas",
+      "partial and full LP removal succeeded",
+      "completed protected pool remained permissionless after a full exit and ordinary re-seed",
+      "private balances and allowances recovered",
+      "configured launchpad pool recovered with zero residue",
+    ],
+    artifacts: {
+      CipherDEXFeeVault: 1,
+      ConfidentialCPMMFactory: 1,
+      ConfidentialLaunchInitializationStrategy: 1,
+      ConfidentialLaunchpadMigrator: 1,
+      ConfidentialCPMM: 1,
+      PrivateLPToken: 1,
+    },
+    requiredTransactions: [
+      { label: /^launch commitment$/, status: 1, targetArtifactLabel: "configured launch initialization strategy", selectors: [SELECTOR.commitLaunch] },
+      { label: /^rejected launchpad price-bound probe$/, status: 0, targetArtifactLabel: "configured launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
+      { label: /^atomic launchpad migration$/, status: 1, targetArtifactLabel: "configured launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
+      { label: /^launchpad replay probe$/, status: 0, targetArtifactLabel: "configured launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
+      { label: /^launchpad pool direct paid quote$/, status: 1, targetArtifactLabel: "configured launchpad pool", selectors: [SELECTOR.directQuote] },
+      { label: /^launchpad pool direct private swap$/, status: 1, targetArtifactLabel: "configured launchpad pool", selectors: [SELECTOR.confidentialSwap] },
+      { label: /^protected launchpad pool partial exit$/, status: 1, targetArtifactLabel: "configured launchpad pool", selectors: [SELECTOR.removeLiquidity] },
+      { label: /^protected launchpad pool first full exit$/, status: 1, targetArtifactLabel: "configured launchpad pool", selectors: [SELECTOR.removeLiquidity] },
+      { label: /^protected pool ordinary re-seed$/, status: 1, targetArtifactLabel: "configured launchpad pool", selectors: [SELECTOR.addLiquidity] },
+      { label: /^full configured launchpad-pool exit$/, status: 1, targetArtifactLabel: "configured launchpad pool", selectors: [SELECTOR.removeLiquidity] },
     ],
   },
   "evidence-test": {
@@ -1827,7 +1907,20 @@ export function requireOnchainSemanticBindings(
     }
   }
 
-  if (runner === "launchpad") {
+  if (runner === "launchpad" || runner === "configured-launchpad") {
+    const configuredLaunchpad = runner === "configured-launchpad";
+    const strategyArtifactLabel = configuredLaunchpad
+      ? "configured launch initialization strategy"
+      : "disposable launch initialization strategy";
+    const factoryArtifactLabel = configuredLaunchpad
+      ? "configured launchpad confidential factory"
+      : "disposable launchpad confidential factory";
+    const migratorArtifactLabel = configuredLaunchpad
+      ? "configured launchpad migrator"
+      : "disposable launchpad migrator";
+    const poolArtifactLabel = configuredLaunchpad
+      ? "configured launchpad pool"
+      : "disposable launchpad pool";
     const expectedTokens = new Set([
       getAddress(String(configuration.tokenA)).toLowerCase(),
       getAddress(String(configuration.tokenB)).toLowerCase(),
@@ -1838,14 +1931,14 @@ export function requireOnchainSemanticBindings(
     });
     const initializationStrategy = artifactAddress(
       artifacts,
-      "disposable launch initialization strategy",
+      strategyArtifactLabel,
     );
     const commitment = requireLaunchCommitmentBinding({
       transactionLabel: "launch commitment",
       expectedFeeBps: Number(configuration.feeBps),
-      expectedFactoryArtifactLabel: "disposable launchpad confidential factory",
-      expectedMigratorArtifactLabel: "disposable launchpad migrator",
-      expectedPoolArtifactLabel: "disposable launchpad pool",
+      expectedFactoryArtifactLabel: factoryArtifactLabel,
+      expectedMigratorArtifactLabel: migratorArtifactLabel,
+      expectedPoolArtifactLabel: poolArtifactLabel,
       configuration,
       transactions,
       artifacts,
@@ -1894,6 +1987,22 @@ export function requireOnchainSemanticBindings(
       replay.transaction.to !== migrated.transaction.to
     ) throw new Error("funded launchpad replay is not an exact replay of migration");
 
+    const directQuote = requireUniqueTransaction(
+      transactions,
+      "launchpad pool direct paid quote",
+      1,
+    );
+    const directSwap = requireUniqueTransaction(
+      transactions,
+      "launchpad pool direct private swap",
+      1,
+    );
+    const partialExit = requireUniqueTransaction(
+      transactions,
+      "protected launchpad pool partial exit",
+      1,
+    );
+
     const firstExit = requireUniqueTransaction(
       transactions,
       "protected launchpad pool first full exit",
@@ -1904,20 +2013,30 @@ export function requireOnchainSemanticBindings(
       "protected pool ordinary re-seed",
       1,
     );
+    const finalExitLabel = configuredLaunchpad
+      ? "full configured launchpad-pool exit"
+      : "full disposable launchpad-pool exit";
     const finalExit = requireUniqueTransaction(
       transactions,
-      "full disposable launchpad-pool exit",
+      finalExitLabel,
       1,
     );
-    const poolAddress = artifactAddress(artifacts, "disposable launchpad pool");
+    const poolAddress = artifactAddress(artifacts, poolArtifactLabel);
     if (
       commitment.launchId !== String(migrated.request[0]).toLowerCase() ||
       commitment.commitmentHash !== String(migrated.request[1]).toLowerCase() ||
       commitment.creator !== migrated.transaction.from ||
       commitment.pool !== poolAddress ||
+      directQuote.to !== poolAddress ||
+      directSwap.to !== poolAddress ||
+      partialExit.to !== poolAddress ||
       firstExit.to !== poolAddress ||
       reseed.to !== poolAddress ||
-      finalExit.to !== poolAddress
+      finalExit.to !== poolAddress ||
+      !isStrictlyAfter(directQuote, replay.transaction) ||
+      !isStrictlyAfter(directSwap, directQuote) ||
+      !isStrictlyAfter(partialExit, directSwap) ||
+      !isStrictlyAfter(firstExit, partialExit)
     ) throw new Error("funded protected-pool lifecycle is not bound to the committed pool");
     requireProtectedPoolLifecycleOrder({
       poolAddress,

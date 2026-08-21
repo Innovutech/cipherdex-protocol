@@ -1634,11 +1634,17 @@ if (!launchpadSource.includes("verifyRecoveryResourceCreation(")) {
 }
 for (const literal of [
   "full disposable launchpad-pool exit",
+  "full configured launchpad-pool exit",
   "successful launch commitment has no canonical pool to recover",
   "launchpad pool recovery canonical provenance changed",
   "launchpad recovery cannot uniquely prove canonical pool creation",
   "factory.filters.PoolCreated(token0Address, token1Address)",
   "atomic launchpad migration recovery",
+  "launchpad pool direct paid quote",
+  "launchpad pool direct private swap",
+  "protected launchpad pool partial exit",
+  "direct private quote and swap preserved exact balance and allowance deltas",
+  "partial and full LP removal succeeded",
   "protected pool ordinary re-seed",
   "completed protected pool remained permissionless after a full exit and ordinary re-seed",
   "prepareEvidence({",
@@ -1656,6 +1662,8 @@ for (const fragment of [
   "tokenBRead.decimals()",
   "onchainDecimalsA !== decimalsA",
   "onchainDecimalsB !== decimalsB",
+  "deriveFundedTestAmount(",
+  "minimumInputWithProtocolFee(feeBps)",
   "exitAllLaunchpadShares(",
   "pool.protectedInitializationCompleted()",
   "pool.addLiquidity(",
@@ -1839,11 +1847,11 @@ for (const required of [
 const bestExecutionRunnerRaw = await readFile("scripts/testnet-best-execution.ts", "utf8");
 const bestExecutionRunner = maskSourceCommentsAndLiterals(bestExecutionRunnerRaw);
 for (const required of [
-  "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN0",
-  "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN1",
-  "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN0",
-  "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN1",
-  "optionalBoundedAmount(",
+  "fundedScenarioCap(balanceA)",
+  "fundedScenarioCap(balanceB)",
+  "minimumInputWithProtocolFee(5)",
+  "requiredA > scenarioCapA",
+  "requiredB > scenarioCapB",
   "reviewedFeeVault.beneficiary()",
 ]) {
   if (!bestExecutionRunnerRaw.includes(required)) {

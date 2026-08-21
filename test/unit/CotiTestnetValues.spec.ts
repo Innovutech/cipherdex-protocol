@@ -1,6 +1,10 @@
 import { expect } from "chai";
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { decryptPrivateValue256 } from "../../scripts/coti-testnet-values";
+import {
+  deriveFundedTestAmount,
+  fundedScenarioCap,
+} from "../../scripts/funded-balance-budget";
 import { assertCompatiblePrivateTokens } from "../../scripts/private-token-compatibility";
 
 async function expectRejected(promise: Promise<unknown>, message: string): Promise<void> {
@@ -80,5 +84,20 @@ describe("private-token structural compatibility policy", function () {
       ),
       "not technically compatible",
     );
+  });
+});
+
+describe("funded private-balance budgeting", function () {
+  it("prefers one basis point and never exceeds one tenth of one percent", function () {
+    const budget = deriveFundedTestAmount(10_000_000n, 1n);
+    expect(budget.amount).to.equal(1_000n);
+    expect(budget.cap).to.equal(10_000n);
+    expect(fundedScenarioCap(10_000_000n)).to.equal(10_000n);
+  });
+
+  it("uses the smallest safe minimum only while it remains inside the cap", function () {
+    expect(deriveFundedTestAmount(10_000_000n, 2_000n).amount).to.equal(2_000n);
+    expect(() => deriveFundedTestAmount(10_000_000n, 10_001n))
+      .to.throw("within the 0.1% cap");
   });
 });

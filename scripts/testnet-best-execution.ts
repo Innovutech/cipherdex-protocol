@@ -27,6 +27,11 @@ import {
 } from "./funded-run-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
 import {
+  deriveFundedTestAmount,
+  fundedScenarioCap,
+  minimumInputWithProtocolFee,
+} from "./funded-balance-budget";
+import {
   FundedCotiWallet as CotiWallet,
   openFundedRecoveryJournal,
   withFundedTransactionEvidence,
@@ -74,6 +79,13 @@ const UINT64_MAX = (1n << 64n) - 1n;
 const FEE_TIERS = [5, 30, 100] as const;
 const MIXED_TWO_CANDIDATE_BITMAP = 0b001_010_000;
 const MIXED_THREE_CANDIDATE_BITMAP = 0b001_010_001;
+const STANDARD_30_BPS_CANDIDATE_BITMAP = 0b000_001_000;
+const REFERENCE_PRIVATE_TOKEN = "0x6cE8907414986E73De9e7D28d62Ea2080F8E88E1";
+const REFERENCE_PARTNER_TOKEN = "0xcef137e96edf68ee99d4cdea7085f154d74895cd";
+const OLD_REFERENCE_CODEHASHES = new Set([
+  "0xcd4b4b3329cd64190c49fdfbe7feb3b2a81cfcb50c36f50d4d603c76906589b2",
+  "0xf5ce6496ad15db187e8fe1516468c34ed3740a2aab043fcec60be7b05a4a161c",
+]);
 let stage = "configuration";
 let requestNonce = 0;
 let recoveryJournal: FundedRecoveryJournal | undefined;
@@ -169,17 +181,6 @@ function requiredAddress(name: string): string {
 function journal(): FundedRecoveryJournal {
   if (!recoveryJournal) throw new Error("funded recovery journal is not initialized");
   return recoveryJournal;
-}
-
-function optionalBoundedAmount(name: string, fallback: bigint, maximum: bigint): bigint {
-  const raw = process.env[name]?.trim();
-  if (fallback <= 0n || fallback > maximum) throw new Error(`${name} fallback exceeds its reviewed cap`);
-  if (!raw) return fallback;
-  if (!/^\d+$/.test(raw)) throw new Error(`${name} must be a positive integer`);
-  const value = BigInt(raw);
-  if (value === 0n) throw new Error(`${name} must be a positive integer`);
-  if (value > maximum) throw new Error(`${name} exceeds its reviewed cap`);
-  return value;
 }
 
 function nextRequestId(label: string): string {
@@ -1506,6 +1507,11 @@ async function main(): Promise<void> {
   const factoryAddress = requiredAddress("COTI_FACTORY");
   const feeVaultAddress = requiredAddress("COTI_FEE_VAULT");
   const routerAddress = requiredAddress("COTI_BEST_EXECUTION_ROUTER");
+  const configuredProofValue = process.env.CIPHERDEX_CONFIGURED_COMPATIBILITY_PROOF?.trim();
+  if (configuredProofValue && configuredProofValue !== "1") {
+    throw new Error("CIPHERDEX_CONFIGURED_COMPATIBILITY_PROOF must be 1 when set");
+  }
+  const configuredProof = configuredProofValue === "1";
 
   stage = "wallet and network initialization";
   const network = await ethers.provider.getNetwork();
@@ -1553,6 +1559,12 @@ async function main(): Promise<void> {
     tokenAAddress,
     tokenBAddress,
   ]);
+  if (configuredProof) {
+    await assertCompatiblePrivateTokens(configuredFactory, [
+      REFERENCE_PRIVATE_TOKEN,
+      REFERENCE_PARTNER_TOKEN,
+    ]);
+  }
   const reviewedFeeVault = await ethers.getContractAt(
     "CipherDEXFeeVault",
     feeVaultAddress,
@@ -1561,9 +1573,42 @@ async function main(): Promise<void> {
   const feeBeneficiary = ethersLibrary.getAddress(
     String(await reviewedFeeVault.beneficiary()),
   );
+  let configuredTokenACodehash = "";
+  let configuredTokenBCodehash = "";
+  let referenceTokenCodehash = "";
+  if (configuredProof) {
+    const [tokenACode, tokenBCode, referenceCode] = await Promise.all([
+      ethers.provider.getCode(tokenAAddress),
+      ethers.provider.getCode(tokenBAddress),
+      ethers.provider.getCode(REFERENCE_PRIVATE_TOKEN),
+    ]);
+    configuredTokenACodehash = ethersLibrary.keccak256(tokenACode).toLowerCase();
+    configuredTokenBCodehash = ethersLibrary.keccak256(tokenBCode).toLowerCase();
+    referenceTokenCodehash = ethersLibrary.keccak256(referenceCode).toLowerCase();
+    if (
+      OLD_REFERENCE_CODEHASHES.has(configuredTokenACodehash) ||
+      OLD_REFERENCE_CODEHASHES.has(configuredTokenBCodehash) ||
+      !OLD_REFERENCE_CODEHASHES.has(referenceTokenCodehash) ||
+      configuredTokenACodehash === configuredTokenBCodehash
+    ) {
+      throw new Error("configured compatibility proof does not cover distinct non-reference runtimes");
+    }
+  }
+  const runnerName = configuredProof ? "configured-compatibility" : "best-execution";
   const evidenceConfiguration = preflightFundedRunConfiguration(
-    "best-execution",
-    {
+    runnerName,
+    configuredProof ? {
+      chainId: Number(EXPECTED_CHAIN_ID),
+      factory: factoryAddress,
+      router: routerAddress,
+      tokenA: tokenAAddress,
+      tokenB: tokenBAddress,
+      tokenACodehash: configuredTokenACodehash,
+      tokenBCodehash: configuredTokenBCodehash,
+      referenceToken: REFERENCE_PRIVATE_TOKEN,
+      referenceTokenCodehash,
+      maximumBalanceBps: 10,
+    } : {
       chainId: Number(EXPECTED_CHAIN_ID),
       confidentialPoolVersion: 3,
       routerVersion: 2,
@@ -1579,7 +1624,7 @@ async function main(): Promise<void> {
   );
   const sourceCommit = deploymentRecord.sourceCommit;
   recoveryJournal = openFundedRecoveryJournal(primaryKey, {
-    runner: "best-execution",
+    runner: runnerName,
     sourceCommit,
     chainId: Number(network.chainId),
     owner: primaryAddress,
@@ -1630,36 +1675,220 @@ async function main(): Promise<void> {
     decimalsA > 18 ||
     decimalsB > 18
   ) throw new Error("unsupported private token decimals");
-  const unitA = 10n ** BigInt(decimalsA);
-  const unitB = 10n ** BigInt(decimalsB);
-  const maximumSwapA = unitA / 100n > 20_000n ? unitA / 100n : 20_000n;
-  const maximumSwapB = unitB / 100n > 20_000n ? unitB / 100n : 20_000n;
-  const swapA = optionalBoundedAmount(
-    "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN0",
-    unitA / 1_000n > 20_000n ? unitA / 1_000n : 20_000n,
-    maximumSwapA,
-  );
-  const swapB = optionalBoundedAmount(
-    "COTI_BEST_EXECUTION_SWAP_AMOUNT_TOKEN1",
-    unitB / 1_000n > 20_000n ? unitB / 1_000n : 20_000n,
-    maximumSwapB,
-  );
-  const maximumProtocolFeeA = modeledProtocolFee(maximumSwapA, 100);
-  const maximumProtocolFeeB = 3n * modeledProtocolFee(maximumSwapB, 100);
-  const protocolFeeBudgetA = optionalBoundedAmount(
-    "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN0",
-    maximumProtocolFeeA,
-    maximumProtocolFeeA,
-  );
-  const protocolFeeBudgetB = optionalBoundedAmount(
-    "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN1",
-    maximumProtocolFeeB,
-    maximumProtocolFeeB,
-  );
-  if (
-    modeledProtocolFee(swapA, 100) > protocolFeeBudgetA ||
-    3n * modeledProtocolFee(swapB, 100) > protocolFeeBudgetB
-  ) throw new Error("funded best-execution protocol fee budget is insufficient");
+  const [balanceA, balanceB] = await Promise.all([
+    privateBalance(tokenA, primary, primaryAddress),
+    privateBalance(tokenB, primary, primaryAddress),
+  ]);
+  const scenarioCapA = fundedScenarioCap(balanceA);
+  const scenarioCapB = fundedScenarioCap(balanceB);
+  if (configuredProof) {
+    const factory = configuredFactory.connect(primary) as any;
+    const referenceToken = new Contract(
+      REFERENCE_PRIVATE_TOKEN,
+      PRIVATE_ERC20_TESTNET_ABI,
+      primary,
+    );
+    const referencePartner = new Contract(
+      REFERENCE_PARTNER_TOKEN,
+      PRIVATE_ERC20_TESTNET_ABI,
+      primary,
+    );
+    const [referenceDecimals, referencePartnerDecimals] = await Promise.all([
+      referenceToken.decimals(),
+      referencePartner.decimals(),
+    ]);
+    const referencePool = await createPool(
+      factory,
+      primary,
+      REFERENCE_PRIVATE_TOKEN,
+      REFERENCE_PARTNER_TOKEN,
+      Number(referenceDecimals),
+      Number(referencePartnerDecimals),
+      100,
+    );
+    await expectFailure(
+      "duplicate canonical reference pool",
+      () => factory.createPool(
+        REFERENCE_PRIVATE_TOKEN,
+        REFERENCE_PARTNER_TOKEN,
+        Number(referenceDecimals),
+        Number(referencePartnerDecimals),
+        100,
+        { gasLimit: CREATE_POOL_GAS_LIMIT },
+      ),
+    );
+    if (await referencePool.pool.initialized()) {
+      throw new Error("reference compatibility pool unexpectedly initialized");
+    }
+    await recoverJournalPools();
+
+    const minimumFocusedInput = minimumInputWithProtocolFee(30);
+    const focusedLiquidityA = deriveFundedTestAmount(
+      balanceA,
+      minimumFocusedInput * 20n,
+    ).amount;
+    const focusedLiquidityB = deriveFundedTestAmount(
+      balanceB,
+      minimumFocusedInput * 20n,
+    ).amount;
+    const focusedSwap = deriveFundedTestAmount(
+      balanceA,
+      minimumFocusedInput,
+    ).amount;
+    if (
+      focusedLiquidityA + focusedSwap > scenarioCapA ||
+      focusedLiquidityB > scenarioCapB
+    ) {
+      throw new Error("configured compatibility proof exceeds its balance-derived cap");
+    }
+    const compatibilityPool = await createPool(
+      factory,
+      primary,
+      tokenAAddress,
+      tokenBAddress,
+      decimalsA,
+      decimalsB,
+      30,
+    );
+    await initializePool(
+      compatibilityPool,
+      primary,
+      tokenAAddress,
+      focusedLiquidityA,
+      focusedLiquidityB,
+    );
+    const configuredQuote = await requestBestQuote(
+      routerAddress,
+      quoteWallet,
+      tokenAAddress,
+      tokenBAddress,
+      focusedSwap,
+      "configured compatibility best quote",
+      [compatibilityPool],
+      STANDARD_30_BPS_CANDIDATE_BITMAP,
+    );
+    await swapWithRollbackProof(
+      routerAddress,
+      primary,
+      tokenAAddress,
+      tokenBAddress,
+      focusedSwap,
+      configuredQuote,
+      30,
+      [compatibilityPool],
+      "configured compatibility best swap",
+      STANDARD_30_BPS_CANDIDATE_BITMAP,
+    );
+    const exitHash = await removeAllLiquidity(compatibilityPool, primary);
+    recoveryJournal.markRecovered("pool-30", [exitHash]);
+    const [finalBalanceA, finalBalanceB, routerAllowance, poolAllowance] =
+      await Promise.all([
+        privateBalance(tokenA, primary, primaryAddress),
+        privateBalance(tokenB, primary, primaryAddress),
+        privateAllowance(tokenA, primary, primaryAddress, routerAddress),
+        privateAllowance(tokenA, primary, primaryAddress, compatibilityPool.address),
+      ]);
+    if (
+      finalBalanceA !== balanceA - modeledProtocolFee(focusedSwap, 30) ||
+      finalBalanceB !== balanceB ||
+      routerAllowance !== 0n ||
+      poolAllowance !== 0n
+    ) {
+      throw new Error("configured compatibility cleanup left unexplained balance or allowance state");
+    }
+
+    const factoryRecord = deploymentRecord.contracts.confidentialFactory;
+    const routerRecord = deploymentRecord.contracts.confidentialBestExecutionRouter;
+    const factoryDeploymentTx = String(factoryRecord?.deploymentTx ?? "");
+    const routerDeploymentTx = String(routerRecord?.deploymentTx ?? "");
+    const factoryConstructorArgs = factoryRecord?.constructorArgs;
+    const routerConstructorArgs = routerRecord?.constructorArgs;
+    if (
+      !/^0x[0-9a-fA-F]{64}$/.test(factoryDeploymentTx) ||
+      !/^0x[0-9a-fA-F]{64}$/.test(routerDeploymentTx) ||
+      !Array.isArray(factoryConstructorArgs) ||
+      !Array.isArray(routerConstructorArgs)
+    ) {
+      throw new Error("configured deployment manifest omits canonical constructor evidence");
+    }
+    const referenceResource = recoveryJournal.resources.find(
+      (resource) => resource.id === "pool-100",
+    );
+    const compatibilityResource = recoveryJournal.resources.find(
+      (resource) => resource.id === "pool-30",
+    );
+    if (!referenceResource || !compatibilityResource) {
+      throw new Error("configured compatibility resources are missing from recovery evidence");
+    }
+    const [referenceLPToken, compatibilityLPToken] = await Promise.all([
+      referencePool.pool.lpToken(),
+      compatibilityPool.pool.lpToken(),
+    ]);
+    recoveryJournal.prepareEvidence({
+      participants: [primaryAddress, quoteAddress],
+      configuration: evidenceConfiguration,
+      artifacts: [
+        {
+          label: "configured confidential factory",
+          contractName: "ConfidentialCPMMFactory",
+          address: factoryAddress,
+          creationTransactionHash: factoryDeploymentTx,
+          constructorArguments: factoryConstructorArgs as any,
+        },
+        {
+          label: "configured best-execution router",
+          contractName: "ConfidentialBestExecutionRouter",
+          address: routerAddress,
+          creationTransactionHash: routerDeploymentTx,
+          constructorArguments: routerConstructorArgs as any,
+        },
+        {
+          label: "configured reference pool",
+          contractName: "ConfidentialCPMM",
+          address: referencePool.address,
+        },
+        {
+          label: "configured reference private LP token",
+          contractName: "PrivateLPToken",
+          address: ethersLibrary.getAddress(String(referenceLPToken)),
+        },
+        {
+          label: "configured compatibility pool",
+          contractName: "ConfidentialCPMM",
+          address: compatibilityPool.address,
+        },
+        {
+          label: "configured compatibility private LP token",
+          contractName: "PrivateLPToken",
+          address: ethersLibrary.getAddress(String(compatibilityLPToken)),
+        },
+      ],
+      assertions: [
+        "reference and differing runtime tokens passed structural compatibility",
+        "configured factory created canonical pools without token approval",
+        "balance-derived liquidity stayed within one tenth of one percent",
+        "configured router quote and atomic swap preserved parity",
+        "router escrow and pool allowances returned to zero",
+        "configured compatibility pools exited with zero residue",
+      ],
+    });
+    const finalEvidence = await writePreparedFundedRunEvidence({
+      journal: recoveryJournal,
+      provider: ethers.provider,
+      attestationSigner: primary,
+    });
+    console.log(`configuredCompatibilityEvidence=${finalEvidence.path}`);
+    console.log("Configured compatibility proof completed without printing private values.");
+    return;
+  }
+  const unitA = scenarioCapA / 64n;
+  const unitB = scenarioCapB / 32n;
+  const minimumSwap = minimumInputWithProtocolFee(5);
+  const swapA = unitA / 1_000n > minimumSwap ? unitA / 1_000n : minimumSwap;
+  const swapB = unitB / 1_000n > minimumSwap ? unitB / 1_000n : minimumSwap;
+  if (unitA === 0n || unitB === 0n || swapA > scenarioCapA || swapB > scenarioCapB) {
+    throw new Error("private balances are too small for the bounded best-execution proof");
+  }
 
   const pool5LiquidityA = 2n * unitA;
   const pool5LiquidityB = unitB;
@@ -1702,14 +1931,15 @@ async function main(): Promise<void> {
     ) >= tiedOutput
   ) throw new Error("funded tier-selection witness is inconsistent");
 
-  const [balanceA, balanceB] = await Promise.all([
-    privateBalance(tokenA, primary, primaryAddress),
-    privateBalance(tokenB, primary, primaryAddress),
-  ]);
   const requiredA = pool5LiquidityA + pool30LiquidityA + pool100LiquidityA + 3n * swapA;
   const requiredB = pool5LiquidityB + pool30LiquidityB + pool100LiquidityB + 5n * swapB;
-  if (balanceA < requiredA || balanceB < requiredB) {
-    throw new Error("primary test identity lacks the required private liquidity");
+  if (
+    balanceA < requiredA ||
+    balanceB < requiredB ||
+    requiredA > scenarioCapA ||
+    requiredB > scenarioCapB
+  ) {
+    throw new Error("best-execution proof exceeds its balance-derived 0.1% cap");
   }
 
   stage = "disposable best-execution stack deployment";
