@@ -298,8 +298,8 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         IConfidentialCPMMFactory canonicalFactory =
             IConfidentialCPMMFactory(factory);
         if (
-            !canonicalFactory.isApprovedPrivateToken(tokenIn) ||
-            !canonicalFactory.isApprovedPrivateToken(tokenOut)
+            !canonicalFactory.isCompatiblePrivateToken(tokenIn) ||
+            !canonicalFactory.isCompatiblePrivateToken(tokenOut)
         ) revert UnsupportedPrivateToken();
 
         uint8 tokenInDecimals = _readTokenDecimals(tokenIn);

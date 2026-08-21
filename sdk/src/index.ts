@@ -115,10 +115,7 @@ export const CONFIDENTIAL_CPMM_FACTORY_ABI = [
   "function initializationStrategyClass(address) view returns (uint8)",
   "function initializationStrategyRuntimeCodehash(address) view returns (bytes32)",
   "function initializationStrategyRegistration(address) view returns (bytes32)",
-  "function isApprovedPrivateTokenCodehash(bytes32) view returns (bool)",
-  "function isApprovedPrivateToken(address) view returns (bool)",
-  "function approvedPrivateTokenCodehashesLength() view returns (uint256)",
-  "function approvedPrivateTokenCodehash(uint256) view returns (bytes32)",
+  "function isCompatiblePrivateToken(address) view returns (bool)",
   "function isApprovedFeeTier(uint256) pure returns (bool)",
   "function bootstrapConfigurator() view returns (address)",
   "function bestExecutionRouter() view returns (address)",
@@ -1331,7 +1328,7 @@ export interface ConfidentialPoolVerificationAdapter {
     lpToken: string,
     issuer: string,
   ): Promise<boolean>;
-  isFactoryPrivateTokenApproved(factory: string, token: string): Promise<boolean>;
+  isFactoryPrivateTokenCompatible(factory: string, token: string): Promise<boolean>;
   isFactoryPool(factory: string, pool: string): Promise<boolean>;
   readFactoryInitializationStrategyClass(
     factory: string,
@@ -2208,8 +2205,8 @@ export async function verifyConfidentialPoolDiscovery(
   let factoryLPTokenFactory: string;
   let factoryLPTokenFactoryRuntimeCodehash: string;
   let lpTokenFactoryCode: string;
-  let token0Approved: boolean;
-  let token1Approved: boolean;
+  let token0Compatible: boolean;
+  let token1Compatible: boolean;
   let factoryRecognizesPool: boolean;
   let factoryStrategyClassValue: number | bigint;
   let factoryStrategyRuntimeCodehash: string;
@@ -2227,8 +2224,8 @@ export async function verifyConfidentialPoolDiscovery(
       factoryLPTokenFactory,
       factoryLPTokenFactoryRuntimeCodehash,
       lpTokenFactoryCode,
-      token0Approved,
-      token1Approved,
+      token0Compatible,
+      token1Compatible,
       factoryRecognizesPool,
       factoryStrategyClassValue,
       factoryStrategyRuntimeCodehash,
@@ -2243,8 +2240,8 @@ export async function verifyConfidentialPoolDiscovery(
       adapter.readFactoryLPTokenFactory(policySnapshot.expectedFactory),
       adapter.readFactoryLPTokenFactoryRuntimeCodehash(policySnapshot.expectedFactory),
       adapter.getCode(policySnapshot.expectedLPTokenFactory),
-      adapter.isFactoryPrivateTokenApproved(policySnapshot.expectedFactory, discovery.token0),
-      adapter.isFactoryPrivateTokenApproved(policySnapshot.expectedFactory, discovery.token1),
+      adapter.isFactoryPrivateTokenCompatible(policySnapshot.expectedFactory, discovery.token0),
+      adapter.isFactoryPrivateTokenCompatible(policySnapshot.expectedFactory, discovery.token1),
       adapter.isFactoryPool(policySnapshot.expectedFactory, discovery.pool),
       adapter.readFactoryInitializationStrategyClass(
         policySnapshot.expectedFactory,
@@ -2307,8 +2304,8 @@ export async function verifyConfidentialPoolDiscovery(
     !hasDeployedCode(lpTokenFactoryCode) ||
     adapter.hashRuntimeCode(lpTokenFactoryCode).toLowerCase() !==
       policySnapshot.expectedLPTokenFactoryRuntimeCodehash.toLowerCase() ||
-    !token0Approved ||
-    !token1Approved ||
+    !token0Compatible ||
+    !token1Compatible ||
     !factoryRecognizesPool ||
     !strategyProvenanceValid ||
     factoryVersion !== policySnapshot.expectedProtocolVersion ||

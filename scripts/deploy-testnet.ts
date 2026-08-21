@@ -8,7 +8,6 @@ import {
   type MinedDeploymentEvidence,
   upsertMinedDeploymentTransaction,
 } from "./deployment-record";
-import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 import {
   verifyDeployedRuntimeArtifactWithProvenance,
   type RuntimeArtifactProvenance,
@@ -391,18 +390,6 @@ async function main(): Promise<void> {
   if (!launchAuthority || !ethers.isAddress(launchAuthority)) {
     throw new Error("CIPHERDEX_LAUNCH_AUTHORITY must be a valid dedicated authority address");
   }
-  const reviewedPrivateTokens = ["COTI_TOKEN0", "COTI_TOKEN1"].map((name) => {
-    const address = process.env[name]?.trim();
-    if (!address || !ethers.isAddress(address)) {
-      throw new Error(`${name} must identify a reviewed deployed private token`);
-    }
-    return address;
-  });
-  const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
-    ethers.provider,
-    reviewedPrivateTokens,
-  );
-
   stage = "CipherDEXFeeVault deployment";
   const feeVaultFactory = await ethers.getContractFactory("CipherDEXFeeVault", deployer);
   const feeVaultDeployment = await deployAndReport<FeeVaultHandle>(
@@ -477,20 +464,16 @@ async function main(): Promise<void> {
     privateLpTokenFactoryDeployment.address,
     poolDeployerDeployment.address,
     poolDeployerDeployment.artifact.runtimeCodehash,
-    privateTokenCodehashes,
     strategyRegistryDeployment.address,
     strategyRegistryDeployment.artifact.runtimeCodehash,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.confidentialFactory },
   );
   await recordDeployment("confidentialFactory", factoryDeployment, {
-    reviewedPrivateTokens,
-    approvedPrivateTokenCodehashes: privateTokenCodehashes,
     constructorArgs: [
       feeVaultDeployment.address,
       privateLpTokenFactoryDeployment.address,
       poolDeployerDeployment.address,
       poolDeployerDeployment.artifact.runtimeCodehash,
-      privateTokenCodehashes,
       strategyRegistryDeployment.address,
       strategyRegistryDeployment.artifact.runtimeCodehash,
     ],

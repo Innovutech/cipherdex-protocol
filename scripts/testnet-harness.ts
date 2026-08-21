@@ -14,7 +14,7 @@ import {
   CONFIDENTIAL_POOL_TESTNET_ABI,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
-import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
+import { assertCompatiblePrivateTokens } from "./private-token-compatibility";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
   requiredTestnetDeploymentRecordPath,
@@ -201,21 +201,12 @@ async function main(): Promise<void> {
     ],
   );
   await verifyDeployedRuntimeArtifact("ConfidentialCPMM", poolAddress, provider);
-  const reviewedTokens = deploymentRecord.contracts.confidentialFactory.reviewedPrivateTokens;
-  if (
-    !Array.isArray(reviewedTokens) ||
-    ![tokenA, tokenB].every((token) => reviewedTokens.some(
-      (candidate) => typeof candidate === "string" &&
-        candidate.toLowerCase() === token.toLowerCase(),
-    ))
-  ) {
-    throw new Error("configured private tokens are absent from the reviewed deployment record");
-  }
   const factory = new Contract(
     factoryAddress,
     CONFIDENTIAL_FACTORY_TESTNET_ABI,
     provider,
   );
+  await assertCompatiblePrivateTokens(factory, [tokenA, tokenB]);
   const validationPool = new Contract(poolAddress, CONFIDENTIAL_POOL_TESTNET_ABI, provider);
   stage = "canonical deployment validation";
   const [expectedToken0, expectedToken1, expectedDecimals0, expectedDecimals1] =
@@ -297,21 +288,16 @@ async function main(): Promise<void> {
     normalizedFeeBps,
     ZeroAddress,
   );
-  const [canonicalPool, token0Approved, token1Approved, codehashes] = await Promise.all([
+  const [canonicalPool, token0Compatible, token1Compatible] = await Promise.all([
     factory.getPool(canonicalKey),
-    factory.isApprovedPrivateToken(expectedToken0),
-    factory.isApprovedPrivateToken(expectedToken1),
-    resolvePrivateTokenCodehashes(provider, [expectedToken0, expectedToken1]),
+    factory.isCompatiblePrivateToken(expectedToken0),
+    factory.isCompatiblePrivateToken(expectedToken1),
   ]);
-  const codehashApprovals = await Promise.all(
-    codehashes.map((codehash) => factory.isApprovedPrivateTokenCodehash(codehash)),
-  );
   if (
     getAddress(String(canonicalPool)) !== poolAddress ||
-    !token0Approved ||
-    !token1Approved ||
-    codehashApprovals.some((approved) => !approved)
-  ) throw new Error("COTI_POOL is not the factory's canonical approved private-token pool");
+    !token0Compatible ||
+    !token1Compatible
+  ) throw new Error("COTI_POOL is not the factory's canonical compatible private-token pool");
 
   const wallet = new CotiWallet(privateKey, provider, { aesKey });
   wallet.setAesKey(aesKey);

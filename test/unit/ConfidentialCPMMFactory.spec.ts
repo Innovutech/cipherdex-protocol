@@ -7,7 +7,7 @@ import {
 } from "../helpers/deployConfidentialFactory";
 
 describe("ConfidentialCPMMFactory", function () {
-  it("requires reviewed immutable deployment dependencies", async function () {
+  it("requires authenticated immutable deployment dependencies", async function () {
     const [, outsider] = await ethers.getSigners();
     const deployment = await deployConfidentialFactory();
     const factoryFactory = await ethers.getContractFactory(
@@ -27,7 +27,6 @@ describe("ConfidentialCPMMFactory", function () {
       ethers.ZeroAddress,
       poolDeployer,
       deployment.poolDeployerRuntimeCodehash,
-      deployment.approvedCodehashes,
       registry,
       deployment.strategyRegistryRuntimeCodehash,
     ))
@@ -37,7 +36,6 @@ describe("ConfidentialCPMMFactory", function () {
       lpTokenFactory,
       outsider.address,
       deployment.poolDeployerRuntimeCodehash,
-      deployment.approvedCodehashes,
       registry,
       deployment.strategyRegistryRuntimeCodehash,
     ))
@@ -47,17 +45,6 @@ describe("ConfidentialCPMMFactory", function () {
       lpTokenFactory,
       poolDeployer,
       deployment.poolDeployerRuntimeCodehash,
-      [],
-      registry,
-      deployment.strategyRegistryRuntimeCodehash,
-    ))
-      .to.be.revertedWithCustomError(factoryFactory, "InvalidPrivateTokenCodehash");
-    await expect(factoryFactory.deploy(
-      vault,
-      lpTokenFactory,
-      poolDeployer,
-      deployment.poolDeployerRuntimeCodehash,
-      deployment.approvedCodehashes,
       outsider.address,
       deployment.strategyRegistryRuntimeCodehash,
     ))
@@ -115,8 +102,8 @@ describe("ConfidentialCPMMFactory", function () {
     expect(await factory.isApprovedFeeTier(30)).to.equal(true);
     expect(await factory.isApprovedFeeTier(100)).to.equal(true);
     expect(await factory.isApprovedFeeTier(25)).to.equal(false);
-    expect(await factory.isApprovedPrivateToken(tokenAAddress)).to.equal(true);
-    expect(await factory.isApprovedPrivateToken(tokenBAddress)).to.equal(true);
+    expect(await factory.isCompatiblePrivateToken(tokenAAddress)).to.equal(true);
+    expect(await factory.isCompatiblePrivateToken(tokenBAddress)).to.equal(true);
     expect(await factory.initializationStrategyRegistryFinalized()).to.equal(true);
     expect(await factory.initializationStrategiesLength()).to.equal(1n);
     expect(await factory.initializationStrategyAt(0)).to.equal(ethers.ZeroAddress);
@@ -163,6 +150,102 @@ describe("ConfidentialCPMMFactory", function () {
         2n,
       ),
     ).to.be.revertedWithCustomError(factory, "InitializationStrategyUnauthorized");
+  });
+
+  it("admits compatible private-token runtimes without prior bytecode approval", async function () {
+    const deployment = await deployConfidentialFactory();
+    const { factory, representativeTokens } = deployment;
+    const variant = await (
+      await ethers.getContractFactory("MockTokenMetadataVariant")
+    ).deploy(8, ethers.id("independent-private-token-implementation"));
+    await variant.waitForDeployment();
+    const tokenA = await representativeTokens[0].getAddress();
+    const tokenB = await variant.getAddress();
+    const [baseCode, variantCode] = await Promise.all([
+      ethers.provider.getCode(tokenA),
+      ethers.provider.getCode(tokenB),
+    ]);
+
+    expect(ethers.keccak256(baseCode)).to.not.equal(ethers.keccak256(variantCode));
+    expect(await factory.isCompatiblePrivateToken(tokenA)).to.equal(true);
+    expect(await factory.isCompatiblePrivateToken(tokenB)).to.equal(true);
+    await expect(factory.createPool(tokenB, tokenA, 8, 18, 30))
+      .to.emit(factory, "PoolCreated");
+  });
+
+  it("rejects structurally incompatible tokens and invalid decimal metadata", async function () {
+    const [, noCode] = await ethers.getSigners();
+    const deployment = await deployConfidentialFactory();
+    const { factory, representativeTokens } = deployment;
+    const compatible = await representativeTokens[0].getAddress();
+    const publicToken = await (
+      await ethers.getContractFactory("MockERC20")
+    ).deploy("Public", "PUB", 18);
+    const invalidDecimals = await (
+      await ethers.getContractFactory("MockTokenMetadataVariant")
+    ).deploy(19, ethers.id("invalid-decimals"));
+    await Promise.all([publicToken.waitForDeployment(), invalidDecimals.waitForDeployment()]);
+
+    expect(await factory.isCompatiblePrivateToken(noCode.address)).to.equal(false);
+    expect(await factory.isCompatiblePrivateToken(await publicToken.getAddress()))
+      .to.equal(false);
+    expect(await factory.isCompatiblePrivateToken(await invalidDecimals.getAddress()))
+      .to.equal(false);
+    await expect(factory.createPool(compatible, noCode.address, 18, 18, 30))
+      .to.be.revertedWithCustomError(factory, "UnsupportedPrivateToken");
+    await expect(
+      factory.createPool(compatible, await publicToken.getAddress(), 18, 18, 30),
+    ).to.be.revertedWithCustomError(factory, "UnsupportedPrivateToken");
+    await expect(
+      factory.createPool(compatible, await invalidDecimals.getAddress(), 18, 19, 30),
+    ).to.be.revertedWithCustomError(factory, "InvalidTokenDecimals");
+    await expect(
+      factory.createPool(
+        compatible,
+        await representativeTokens[1].getAddress(),
+        18,
+        18,
+        30,
+      ),
+    ).to.be.revertedWithCustomError(factory, "InvalidTokenDecimals");
+  });
+
+  it("commits launch-protected pools for compatible unlisted token runtimes", async function () {
+    const [authority, creator] = await ethers.getSigners();
+    const deployment = await deployConfidentialFactory();
+    const launch = await configureConfidentialLaunch(deployment, authority.address);
+    const variant = await (
+      await ethers.getContractFactory("MockTokenMetadataVariant")
+    ).deploy(8, ethers.id("launch-private-token-implementation"));
+    await variant.waitForDeployment();
+    const tokenA = await deployment.representativeTokens[0].getAddress();
+    const tokenB = await variant.getAddress();
+    const signed = await signLaunchCommitment({
+      authority,
+      creator,
+      factory: deployment.factory,
+      migrator: launch.migrator,
+      strategy: launch.strategy,
+      tokenA,
+      tokenB,
+      decimalsA: 18,
+      decimalsB: 8,
+    });
+
+    await expect(launch.strategy.commitLaunch(
+      signed.commitment,
+      signed.creatorAuthorization,
+      signed.authorityAuthorization,
+    )).to.emit(launch.strategy, "LaunchCommitted");
+    const key = await deployment.factory.poolKey(
+      tokenA,
+      tokenB,
+      18,
+      8,
+      30,
+      await launch.strategy.getAddress(),
+    );
+    expect(await deployment.factory.getPool(key)).to.not.equal(ethers.ZeroAddress);
   });
 
   it("binds canonical identity to the complete pool key", async function () {
@@ -349,7 +432,7 @@ describe("ConfidentialCPMMFactory", function () {
         mismatchedMetadata.creatorAuthorization,
         mismatchedMetadata.authorityAuthorization,
       ),
-    ).to.be.revertedWithCustomError(factory, "InvalidCanonicalPool");
+    ).to.be.revertedWithCustomError(factory, "InvalidTokenDecimals");
     await launch.strategy.commitLaunch(
       replacement.commitment,
       replacement.creatorAuthorization,

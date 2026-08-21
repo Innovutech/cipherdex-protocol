@@ -7,11 +7,12 @@ import {
   LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
 } from "../sdk/src/index";
 import {
+  CONFIDENTIAL_FACTORY_TESTNET_ABI,
   CONFIDENTIAL_POOL_TESTNET_ABI,
   PRIVATE_ERC20_TESTNET_ABI,
 } from "./coti-testnet-abi";
 import { decryptPrivateValue256 } from "./coti-testnet-values";
-import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
+import { assertCompatiblePrivateTokens } from "./private-token-compatibility";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
   type FundedRecoveryJournal,
@@ -32,7 +33,6 @@ import {
   setRecoverablePrivateAllowance,
 } from "./funded-private-allowance";
 import {
-  assertReviewedPrivateTokens,
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
@@ -630,11 +630,12 @@ async function main(): Promise<void> {
       },
     ],
   );
-  assertReviewedPrivateTokens(deploymentRecord, [tokenA, tokenB]);
-  const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
+  const configuredFactoryContract = new Contract(
+    configuredFactory,
+    CONFIDENTIAL_FACTORY_TESTNET_ABI,
     hardhatEthers.provider,
-    [tokenA, tokenB],
   );
+  await assertCompatiblePrivateTokens(configuredFactoryContract, [tokenA, tokenB]);
   const decimalsA = requiredUInt("COTI_TOKEN0_DECIMALS");
   const decimalsB = requiredUInt("COTI_TOKEN1_DECIMALS");
   stage = "onchain private-token decimal validation";
@@ -808,7 +809,6 @@ async function main(): Promise<void> {
       lpTokenFactoryDeployment.address,
       poolDeployerDeployment.address,
       poolDeployerRuntimeCodehash,
-      privateTokenCodehashes,
       strategyRegistryDeployment.address,
       strategyRegistryRuntimeCodehash,
       { gasLimit: CONFIDENTIAL_FACTORY_DEPLOY_GAS_LIMIT },
@@ -1459,7 +1459,6 @@ async function main(): Promise<void> {
           lpTokenFactoryDeployment.address,
           poolDeployerDeployment.address,
           poolDeployerRuntimeCodehash,
-          privateTokenCodehashes,
           strategyRegistryDeployment.address,
           strategyRegistryRuntimeCodehash,
         ],

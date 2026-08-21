@@ -278,22 +278,57 @@ if (
 if (bootstrapLiquidityBody.includes("_requirePrivatePoolBalance(")) {
   throw new Error("Confidential bootstrap can be griefed by an unmanaged preexisting balance");
 }
-if (!confidentialSource.includes("_supportsPrivateToken(token0_)") ||
-    !confidentialSource.includes("_supportsPrivateToken(token1_)")) {
+if (!confidentialSource.includes("PrivateTokenCompatibility.supportsPrivateToken(token0_)") ||
+    !confidentialSource.includes("PrivateTokenCompatibility.supportsPrivateToken(token1_)") ||
+    !confidentialSource.includes("PrivateTokenCompatibility.tryReadDecimals(token0_)")) {
   throw new Error("ConfidentialCPMM does not enforce the private-token interface at construction");
 }
 
 const factorySource = maskSourceCommentsAndLiterals(
   await readFile("contracts/ConfidentialCPMMFactory.sol", "utf8"),
 );
+const privateTokenCompatibilityRawSource = await readFile(
+  "contracts/libraries/PrivateTokenCompatibility.sol",
+  "utf8",
+);
+const privateTokenCompatibilitySource = maskSourceCommentsAndLiterals(
+  privateTokenCompatibilityRawSource,
+);
+for (const fragment of [
+  "token.code.length == 0",
+  "type(IPrivateERC20).interfaceId",
+  "IERC165(token).supportsInterface(",
+  "value > 18",
+]) {
+  if (!privateTokenCompatibilitySource.includes(fragment)) {
+    throw new Error("Canonical private-token compatibility checks are incomplete");
+  }
+}
+if (!privateTokenCompatibilityRawSource.includes('abi.encodeWithSignature("decimals()")')) {
+  throw new Error("Canonical private-token compatibility omits decimals introspection");
+}
 if (/\bdelegatecall\b|\bselfdestruct\b/.test(factorySource)) {
   throw new Error("Confidential factory contains an unsafe execution primitive");
 }
-if (
-  !factorySource.includes("isApprovedPrivateTokenCodehash[tokenA.codehash]") ||
-  !factorySource.includes("isApprovedPrivateTokenCodehash[tokenB.codehash]")
-) {
-  throw new Error("Confidential factory does not enforce immutable token implementation provenance");
+for (const forbidden of [
+  "isApprovedPrivateTokenCodehash",
+  "approvedPrivateTokenCodehashes",
+  "privateTokenCodehashes_",
+]) {
+  if (factorySource.includes(forbidden)) {
+    throw new Error("Confidential factory reintroduced external-token implementation admission");
+  }
+}
+for (const required of [
+  "PrivateTokenCompatibility.supportsPrivateToken(tokenA)",
+  "PrivateTokenCompatibility.supportsPrivateToken(tokenB)",
+  "PrivateTokenCompatibility.tryReadDecimals(tokenA)",
+  "actualDecimalsA != decimalsA",
+  "actualDecimalsB != decimalsB",
+]) {
+  if (!factorySource.includes(required)) {
+    throw new Error("Confidential factory does not enforce structural token compatibility");
+  }
 }
 for (const fragment of [
   "lpTokenFactory_.codehash != PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH",
@@ -991,8 +1026,8 @@ for (const fragment of [
   "factory.isPool(poolAddress)",
   "factory.poolKey(",
   "factory.getPool(canonicalKey)",
-  "factory.isApprovedPrivateToken(expectedToken0)",
-  "factory.isApprovedPrivateTokenCodehash(codehash)",
+  "factory.isCompatiblePrivateToken(expectedToken0)",
+  "factory.isCompatiblePrivateToken(expectedToken1)",
   "getAddress(String(bootstrapper)) !== factoryAddress",
   "matches.length !== 1",
 ]) {
@@ -1169,7 +1204,7 @@ for (const file of [
   const source = await readFile(file, "utf8");
   for (const fragment of [
     "verifyConfiguredTestnetDeployment(",
-    "assertReviewedPrivateTokens(deploymentRecord",
+    "assertCompatiblePrivateTokens(",
     "log.address.toLowerCase()",
     "matches.length !== 1",
   ]) {
@@ -1179,10 +1214,10 @@ for (const file of [
   }
   const mainBody = functionBody(source, "main");
   if (
-    mainBody.indexOf("assertReviewedPrivateTokens(deploymentRecord") >
-    mainBody.indexOf("new Contract(")
+    mainBody.indexOf("assertCompatiblePrivateTokens(") >
+    mainBody.indexOf("PRIVATE_ERC20_TESTNET_ABI")
   ) {
-    throw new Error(`${file}: token interaction precedes exact reviewed-token authorization`);
+    throw new Error(`${file}: token interaction precedes structural compatibility validation`);
   }
 }
 const fundedEvidenceRawSource = await readFile("scripts/funded-run-evidence.ts", "utf8");
@@ -1540,14 +1575,14 @@ const launchpadSource = maskSourceCommentsAndLiterals(launchpadRawSource);
 const launchpadMainBody = functionBody(launchpadSource, "main");
 for (const fragment of [
   "verifyConfiguredTestnetDeployment(",
-  "assertReviewedPrivateTokens(deploymentRecord",
+  "assertCompatiblePrivateTokens(",
   "verifyDeployedRuntimeArtifact(",
   "openFundedRecoveryJournal(privateKey, {",
   "recoverLaunchpadResources()",
   "writePreparedFundedRunEvidence({",
 ]) {
   if (!launchpadMainBody.includes(fragment)) {
-    throw new Error("Launchpad funded runner bypasses reviewed source or token provenance");
+    throw new Error("Launchpad funded runner bypasses source or token compatibility provenance");
   }
 }
 for (const contractName of [
@@ -1612,9 +1647,9 @@ for (const literal of [
     throw new Error("Launchpad funded runner omits required recovery evidence");
   }
 }
-if (launchpadMainBody.indexOf("assertReviewedPrivateTokens(deploymentRecord") >
-    launchpadMainBody.indexOf("getContractFactory(")) {
-  throw new Error("Launchpad funded runner validates provenance after deployment begins");
+if (launchpadMainBody.indexOf("assertCompatiblePrivateTokens(") >
+    launchpadMainBody.indexOf("tokenARead = new Contract")) {
+  throw new Error("Launchpad funded runner validates compatibility after token interaction begins");
 }
 for (const fragment of [
   "tokenARead.decimals()",
@@ -1695,8 +1730,8 @@ const bestExecutionProductionMain = functionBody(
   "main",
   "scripts/testnet-best-execution.ts",
 );
-if (!bestExecutionProductionSource.includes("assertReviewedPrivateTokens(deploymentRecord")) {
-  throw new Error("Best-execution funded runner accepts unreviewed private-token instances");
+if (!bestExecutionProductionSource.includes("assertCompatiblePrivateTokens(")) {
+  throw new Error("Best-execution funded runner accepts technically incompatible private tokens");
 }
 for (const contractName of [
   "CipherDEXFeeVault",

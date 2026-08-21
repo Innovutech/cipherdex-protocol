@@ -86,7 +86,6 @@ describe("deployment transaction provenance", function () {
       "PrivateLPTokenFactory",
       [],
     );
-    const privateCodehash = `0x${"11".repeat(32)}`;
     const strategyArtifact = await artifacts.readArtifact(
       "ConfidentialLaunchInitializationStrategy",
     );
@@ -119,7 +118,6 @@ describe("deployment transaction provenance", function () {
         lpFactory.record.address,
         poolDeployer.record.address,
         poolDeployer.record.runtimeCodehash,
-        [privateCodehash],
         strategyRegistry.record.address,
         strategyRegistry.record.runtimeCodehash,
       ],
@@ -127,11 +125,9 @@ describe("deployment transaction provenance", function () {
       lpFactory.record.address,
       poolDeployer.record.address,
       poolDeployer.record.runtimeCodehash,
-      [privateCodehash],
       strategyRegistry.record.address,
       strategyRegistry.record.runtimeCodehash,
     );
-    confidentialFactory.record.approvedPrivateTokenCodehashes = [privateCodehash];
     const vaultBinding = await bound(
       "confidential fee-vault factory binding",
       "confidentialFeeVaultBinding",

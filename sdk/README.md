@@ -87,13 +87,14 @@ the complete key `(ordered pair, fee tier, privacy mode, protocol version,
 initialization strategy)`. Only verified, initialized records may enter quote
 selection.
 
-The confidential factory also exposes its immutable approved private-token
-runtime codehashes. Deployment and integration policy must verify both token
-addresses with `isApprovedPrivateToken` on that exact factory; the confidential
-discovery verifier requires this adapter check. The allowlist is an
-implementation trust boundary, not token discovery metadata: do not approve mutable proxy or
-metamorphic code, and deploy a reviewed new factory to support another token
-implementation.
+The confidential factory exposes `isCompatiblePrivateToken` as a structural
+check over deployed code, the official COTI `IPrivateERC20` ERC-165 identifier
+and supported decimals. The discovery verifier requires the adapter's
+`isFactoryPrivateTokenCompatible` check for both assets. This is not a token
+approval, reputation or economic-safety signal: any compatible external token
+may create a pool, while malicious or broken semantics remain an external-token
+trust risk. Exact runtime-codehash verification remains required for
+CipherDEX-owned helpers, factories, routers and initialization strategies.
 
 Current COTI nodes reject MPC precompile execution under `eth_call`; raw stored
 ciphertext `OnBoard` is the first isolated failing primitive, and pre-stored

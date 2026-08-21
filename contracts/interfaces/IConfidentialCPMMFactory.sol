@@ -35,10 +35,7 @@ interface IConfidentialCPMMFactory {
     function initializationStrategyRegistration(address strategy) external view returns (bytes32);
     function getPool(bytes32 key) external view returns (address);
     function isPool(address pool) external view returns (bool);
-    function isApprovedPrivateTokenCodehash(bytes32 codehash) external view returns (bool);
-    function isApprovedPrivateToken(address token) external view returns (bool);
-    function approvedPrivateTokenCodehashesLength() external view returns (uint256);
-    function approvedPrivateTokenCodehash(uint256 index) external view returns (bytes32);
+    function isCompatiblePrivateToken(address token) external view returns (bool);
     function createPool(
         address tokenA,
         address tokenB,

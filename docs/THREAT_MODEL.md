@@ -68,12 +68,11 @@
 - MEV based on public participant, direction, timing or encrypted transaction
   ciphertext metadata;
 - endpoint/RPC observers correlating private transactions and ciphertexts;
-- defects or compromise in a reviewed PrivateERC20 implementation admitted by
-  the immutable factory codehash policy. Canonical pools reject other runtime
-  codehashes, verify the private-token interface and enforce exact encrypted
-  balance deltas, but those checks cannot prove the economics of an approved
-  implementation. Mutable proxy and metamorphic implementations must not be
-  approved;
+- defects, malicious behavior or upgrades in an external private-token
+  implementation. Pool creation is permissionless for contracts that report the
+  required interface and valid decimals. Canonical pools enforce exact encrypted
+  balance deltas, but structural compatibility cannot prove token economics or
+  honest semantics;
 - compromise or misuse of COTI MPC/precompile/operator infrastructure;
 - hidden recipient identity under the standard token event/interface;
 - asynchronous PoD callback failures or cross-chain settlement;

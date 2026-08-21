@@ -20,14 +20,12 @@ is no mainnet deployment script or mainnet network entry.
    Set `CIPHERDEX_LAUNCH_AUTHORITY` to a distinct immutable launch-review
    authority. It must not be the deployer/creator identity used by funded launch
    tests.
-4. Set `COTI_TOKEN0` and `COTI_TOKEN1` to reviewed deployed COTI
-   PrivateERC20-compatible implementations. The deployment derives their runtime
-   codehashes and installs those hashes as the confidential factory's immutable
-   token-implementation policy. `CIPHERDEX_PRIVATE_TOKEN_CODEHASHES` may add an
-   explicitly reviewed comma-separated set, but it must include both configured
-   token hashes. Do not approve mutable proxy or metamorphic implementations.
-   Supporting a new implementation requires a reviewed fresh factory deployment;
-   existing pools and factories are never mutated.
+4. Confidential factory deployment does not require sample token addresses or an
+   external-token codehash policy. Set `COTI_TOKEN0` and `COTI_TOKEN1` only for
+   funded test scenarios. Pool creation accepts any deployed contract that
+   reports the official COTI `IPrivateERC20` interface and valid matching
+   decimals. This is structural compatibility, not protocol approval or an
+   economic-safety guarantee.
 5. Set `COTI_DEPLOYMENT_RECORD=deployments/coti-testnet-<full-git-commit>.json`,
    replacing the placeholder with the exact clean 40-character `HEAD` being
    deployed. The deploy command fails before network access if the path is
@@ -106,9 +104,9 @@ minimum confirmation depth are all independently corroborated.
    binding calldata, requires unique successful hashes and gas values, and reads
    the resulting on-chain relationships. The path is restricted to
    `deployments/*.json`. Do not commit
-   private keys or private ciphertexts. The public record includes the reviewed
-   token addresses and approved runtime codehashes so integrations can audit the
-   factory boundary. A reviewed, sanitized authoritative testnet record may be
+   private keys or private ciphertexts. The factory constructor and public record
+   contain no sample-token addresses or external-token runtime codehashes. A
+   reviewed, sanitized authoritative testnet record may be
    force-added to source control so SDK consumers share one provenance record;
    never add an unreviewed generated record.
 
@@ -178,6 +176,7 @@ and launch strategy report version 1. Integration allowlists must pin the
 deployed factory, fee vault, pool deployer/codehash, finalized strategy registry,
 registered strategy/codehash, migrator, configured router, all versions and the
 complete canonical pool mapping. They should also verify that each confidential
-token's current runtime codehash is approved by that exact factory and that every
-pool LP token was issued by the recorded reviewed helper for that pool and
-canonical factory.
+token passes `isCompatiblePrivateToken` on that exact factory and that every pool
+LP token was issued by the recorded reviewed helper for that pool and canonical
+factory. Compatibility is not token reputation; external token semantics remain
+a pool-level trust decision.

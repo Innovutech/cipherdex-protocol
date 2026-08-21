@@ -69,13 +69,16 @@ amount-confidential/private-LP mode. A future fully confidential mode is not
 represented as an enabled value; recipient and participant addresses remain
 public under the official PrivateERC20 interface.
 
-The pool is a non-custodial pair of reviewed COTI PrivateERC20-compatible assets.
-The canonical factory accepts only immutable deployment-time runtime codehashes,
-and each pool also verifies the expected private-token interface and exact
-encrypted transfer balance deltas. Approving mutable proxy or metamorphic token
-code is outside the supported policy because its behavior can change without a
-codehash change at the proxy address. Adding another implementation requires a
-new reviewed factory deployment and protocol allowlist.
+The pool is a non-custodial pair of technically compatible COTI private-token
+assets. The canonical factory requires deployed code, the official
+`IPrivateERC20` ERC-165 identifier, valid decimals no greater than 18 and exact
+agreement with the supplied decimals. It does not admit assets by address,
+deployer or runtime codehash. This makes pool creation permissionless for
+structurally compatible implementations. Interface compatibility cannot prove
+honest token semantics, so malicious or broken assets remain a pool-level trust
+risk. Every pool retains exact encrypted transfer balance-delta validation.
+CipherDEX-owned helpers, deployers, routers and initialization strategies keep
+their exact runtime-codehash provenance boundaries.
 
 The pool maintains encrypted protocol-accounting reserves rather than a public
 reserve ledger or a raw-balance price oracle. Compatible token transfers revert

@@ -36,11 +36,10 @@ import {
   recoverPrivateAllowanceObligations,
   setRecoverablePrivateAllowance,
 } from "./funded-private-allowance";
-import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
+import { assertCompatiblePrivateTokens } from "./private-token-compatibility";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import { confidentialLiquidityBounds, minimumWithSlippage } from "./testnet-slippage";
 import {
-  assertReviewedPrivateTokens,
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
@@ -1546,7 +1545,14 @@ async function main(): Promise<void> {
       },
     ],
   );
-  assertReviewedPrivateTokens(deploymentRecord, [tokenAAddress, tokenBAddress]);
+  const configuredFactory = await ethers.getContractAt(
+    "ConfidentialCPMMFactory",
+    factoryAddress,
+  );
+  await assertCompatiblePrivateTokens(configuredFactory, [
+    tokenAAddress,
+    tokenBAddress,
+  ]);
   const reviewedFeeVault = await ethers.getContractAt(
     "CipherDEXFeeVault",
     feeVaultAddress,
@@ -1707,10 +1713,6 @@ async function main(): Promise<void> {
   }
 
   stage = "disposable best-execution stack deployment";
-  const codehashes = await resolvePrivateTokenCodehashes(
-    ethers.provider,
-    [tokenAAddress, tokenBAddress],
-  );
   const feeVaultDeployment = await deployContract(
     "CipherDEXFeeVault",
     primary,
@@ -1755,7 +1757,6 @@ async function main(): Promise<void> {
       lpFactoryDeployment.address,
       poolDeployerDeployment.address,
       poolDeployerRuntimeCodehash,
-      codehashes,
       strategyRegistryDeployment.address,
       strategyRegistryRuntimeCodehash,
     ],
@@ -1845,8 +1846,8 @@ async function main(): Promise<void> {
     registryFinalized,
     configuredStrategy,
     configuredMigrator,
-    tokenAApproved,
-    tokenBApproved,
+    tokenACompatible,
+    tokenBCompatible,
   ] = await Promise.all([
     factory.feeVault(),
     factory.bestExecutionRouter(),
@@ -1859,8 +1860,8 @@ async function main(): Promise<void> {
     factory.initializationStrategyRegistryFinalized(),
     factory.initializationStrategyAt(1),
     strategyDeployment.contract.migrator(),
-    factory.isApprovedPrivateToken(tokenAAddress),
-    factory.isApprovedPrivateToken(tokenBAddress),
+    factory.isCompatiblePrivateToken(tokenAAddress),
+    factory.isCompatiblePrivateToken(tokenBAddress),
   ]);
   if (
     ethersLibrary.getAddress(String(configuredVault)) !== feeVaultDeployment.address ||
@@ -1878,8 +1879,8 @@ async function main(): Promise<void> {
       strategyDeployment.address ||
     ethersLibrary.getAddress(String(configuredMigrator)) !==
       migratorDeployment.address ||
-    !tokenAApproved ||
-    !tokenBApproved
+    !tokenACompatible ||
+    !tokenBCompatible
   ) throw new Error("canonical deployment binding verification failed");
 
   const pool30 = await initializeProtectedPool(
@@ -2154,7 +2155,6 @@ async function main(): Promise<void> {
           lpFactoryDeployment.address,
           poolDeployerDeployment.address,
           poolDeployerRuntimeCodehash,
-          codehashes,
           strategyRegistryDeployment.address,
           strategyRegistryRuntimeCodehash,
         ],

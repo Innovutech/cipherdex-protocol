@@ -24,14 +24,11 @@ const ALLOWED_TARGETS = new Map([
       "COTI_DEPLOYMENT_RECORD",
       "CIPHERDEX_FEE_BENEFICIARY",
       "CIPHERDEX_LAUNCH_AUTHORITY",
-      "COTI_TOKEN0",
-      "COTI_TOKEN1",
-      "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
     ],
   }],
   ["scripts/measure-deployment-gas.ts", {
     arguments: [],
-    environment: ["CIPHERDEX_PRIVATE_TOKEN_CODEHASHES"],
+    environment: [],
   }],
   ["scripts/testnet-best-execution-feasibility.ts", {
     arguments: ["--network", "cotiTestnet"],
@@ -45,7 +42,6 @@ const ALLOWED_TARGETS = new Map([
       "COTI_BEST_EXECUTION_ROUTER",
       "COTI_BEST_EXECUTION_TEST_AMOUNT_IN",
       "COTI_DEPLOYMENT_RECORD",
-      "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
     ],
   }],
   ["scripts/testnet-best-execution.ts", {
@@ -68,7 +64,6 @@ const ALLOWED_TARGETS = new Map([
       "COTI_BEST_EXECUTION_MAX_PROTOCOL_FEE_TOKEN1",
       "COTI_BEST_EXECUTION_GAS_LIMIT",
       "COTI_DEPLOYMENT_RECORD",
-      "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
     ],
   }],
   ["scripts/testnet-fee-collection.ts", {
@@ -85,7 +80,6 @@ const ALLOWED_TARGETS = new Map([
       "COTI_FEE_TEST_SWAP0",
       "COTI_FEE_TEST_SWAP1",
       "COTI_DEPLOYMENT_RECORD",
-      "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
     ],
   }],
   ["scripts/finalize-funded-evidence.ts", {
@@ -152,7 +146,6 @@ const ALLOWED_TARGETS = new Map([
       "COTI_LAUNCHPAD_DISPOSITION",
       "COTI_LAUNCHPAD_UNLOCK_TIME",
       "COTI_DEPLOYMENT_RECORD",
-      "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
     ],
   }],
   ["scripts/testnet-harness.ts", {
@@ -170,7 +163,6 @@ const ALLOWED_TARGETS = new Map([
       "COTI_TEST_AMOUNT_IN",
       "COTI_TESTNET_SLIPPAGE_BPS",
       "COTI_DEPLOYMENT_RECORD",
-      "CIPHERDEX_PRIVATE_TOKEN_CODEHASHES",
     ],
   }],
 ]);

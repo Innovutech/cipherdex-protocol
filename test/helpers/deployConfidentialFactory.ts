@@ -9,14 +9,6 @@ export async function deployConfidentialFactory() {
     representativeFactory.deploy(6),
   ]);
   await Promise.all(representativeTokens.map((token) => token.waitForDeployment()));
-  const representativeCodes = await Promise.all(
-    representativeTokens.map(async (token) =>
-      ethers.provider.getCode(await token.getAddress())),
-  );
-  const approvedCodehashes = [
-    ...new Set(representativeCodes.map((code) => ethers.keccak256(code))),
-  ];
-  const approvedCodehash = approvedCodehashes[0];
   const lpTokenFactory = await (
     await ethers.getContractFactory("PrivateLPTokenFactory")
   ).deploy();
@@ -50,7 +42,6 @@ export async function deployConfidentialFactory() {
     await lpTokenFactory.getAddress(),
     await poolDeployer.getAddress(),
     poolDeployerRuntimeCodehash,
-    approvedCodehashes,
     await strategyRegistry.getAddress(),
     strategyRegistryRuntimeCodehash,
   );
@@ -60,8 +51,6 @@ export async function deployConfidentialFactory() {
   await strategyRegistry.bindFactory(await factory.getAddress());
 
   return {
-    approvedCodehash,
-    approvedCodehashes,
     factory,
     lpTokenFactory,
     poolDeployer,

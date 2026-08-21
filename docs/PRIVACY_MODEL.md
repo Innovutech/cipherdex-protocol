@@ -70,13 +70,14 @@ set.
 ## Trust assumptions
 
 The design relies on COTI's MPC precompile, consensus, operator/key-management
-model, reviewed token implementations admitted by the factory's immutable
-runtime-codehash policy, the reviewed LP-token helper runtime and its on-chain
-issuance attestations, client-side AES key handling and the COTI SDK's
-authenticated encrypted-input format. Interface and exact-balance checks reduce
-integration mistakes but do not prove the behavior of an approved implementation.
-Mutable proxy and metamorphic implementations are unsupported. These are trust
-assumptions, not cryptographic proofs produced by this repository.
+model, external private-token semantics, the reviewed LP-token helper runtime
+and its on-chain issuance attestations, client-side AES key handling and the
+COTI SDK's authenticated encrypted-input format. The factory admits any deployed
+token that reports the official `IPrivateERC20` interface and valid decimals.
+Those structural checks do not prove honest token behavior. Exact encrypted
+balance-delta validation limits accounting drift, but malicious or broken token
+implementations remain a token/pool trust risk. These are trust assumptions, not
+cryptographic proofs produced by this repository.
 
 Launch privacy does not hide that a launch-protected market was committed or
 initialized. Dual EIP-712 authorization protects who may claim and consume the

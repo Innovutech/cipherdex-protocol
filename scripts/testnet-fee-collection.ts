@@ -28,10 +28,9 @@ import {
   FeeCollectionPendingError,
   requireFeeCollectionMature,
 } from "./testnet-fee-collection-readiness";
-import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
+import { assertCompatiblePrivateTokens } from "./private-token-compatibility";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
-  assertReviewedPrivateTokens,
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
@@ -499,10 +498,10 @@ async function validateStackResource(
     strategyRegistryAddress,
     wallet,
   );
-  const [canonicalPool, token0Code, token1Code] = await Promise.all([
+  const [canonicalPool, token0Compatible, token1Compatible] = await Promise.all([
     factory.getPool(key),
-    ethers.provider.getCode(token0Address),
-    ethers.provider.getCode(token1Address),
+    factory.isCompatiblePrivateToken(token0Address),
+    factory.isCompatiblePrivateToken(token1Address),
   ]);
   if (
     !(await factory.isPool(poolAddress)) ||
@@ -521,8 +520,8 @@ async function validateStackResource(
     BigInt(await pool.feeBps()) !== FEE_BPS ||
     BigInt(await pool.PROTOCOL_VERSION()) !== 3n ||
     BigInt(await pool.PRIVACY_MODE()) !== 1n ||
-    !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token0Code))) ||
-    !(await factory.isApprovedPrivateTokenCodehash(ethers.keccak256(token1Code)))
+    !token0Compatible ||
+    !token1Compatible
   ) throw new Error("disposable fee stack canonical binding validation failed");
 
   return {
@@ -555,10 +554,9 @@ async function createDisposableStack(
 ): Promise<DisposableStack> {
   const tokenA = new Contract(tokenAAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
   const tokenB = new Contract(tokenBAddress, PRIVATE_ERC20_TESTNET_ABI, wallet);
-  const [decimalsA, decimalsB, codehashes] = await Promise.all([
+  const [decimalsA, decimalsB] = await Promise.all([
     tokenA.decimals(),
     tokenB.decimals(),
-    resolvePrivateTokenCodehashes(ethers.provider, [tokenAAddress, tokenBAddress]),
   ]);
   const feeVault = await deployContract("CipherDEXFeeVault", wallet, [beneficiary]);
   const lpFactory = await deployContract("PrivateLPTokenFactory", wallet, []);
@@ -592,7 +590,6 @@ async function createDisposableStack(
       lpFactory.address,
       poolDeployer.address,
       poolDeployerRuntimeCodehash,
-      codehashes,
       strategyRegistry.address,
       strategyRegistryRuntimeCodehash,
     ],
@@ -788,7 +785,15 @@ async function main(): Promise<void> {
       },
     ],
   );
-  assertReviewedPrivateTokens(deploymentRecord, [tokenAAddress, tokenBAddress]);
+  const configuredFactory = new Contract(
+    reviewedFactoryAddress,
+    CONFIDENTIAL_FACTORY_TESTNET_ABI,
+    ethers.provider,
+  );
+  await assertCompatiblePrivateTokens(configuredFactory, [
+    tokenAAddress,
+    tokenBAddress,
+  ]);
   const reviewedVault = await ethers.getContractAt("CipherDEXFeeVault", reviewedFeeVaultAddress);
   const feeBeneficiary = ethers.getAddress(await reviewedVault.beneficiary());
   const reviewedAddresses = new Set(
@@ -1152,12 +1157,7 @@ async function main(): Promise<void> {
   );
   recoveryJournal.markRecovered(RESOURCE_ID, [terminalExit.transactionHash]);
   const lpTokenAddress = ethers.getAddress(await stack.pool.lpToken());
-  const [privateTokenCodehashes, poolDeployerCode, strategyRegistryCode,
-    reviewedStrategyArtifact] = await Promise.all([
-      resolvePrivateTokenCodehashes(
-        ethers.provider,
-        [stack.token0Address, stack.token1Address],
-      ),
+  const [poolDeployerCode, strategyRegistryCode, reviewedStrategyArtifact] = await Promise.all([
       ethers.provider.getCode(stack.poolDeployerAddress),
       ethers.provider.getCode(stack.strategyRegistryAddress),
       artifacts.readArtifact("ConfidentialLaunchInitializationStrategy"),
@@ -1206,7 +1206,6 @@ async function main(): Promise<void> {
           stack.lpFactoryAddress,
           stack.poolDeployerAddress,
           poolDeployerRuntimeCodehash,
-          privateTokenCodehashes,
           stack.strategyRegistryAddress,
           strategyRegistryRuntimeCodehash,
         ],

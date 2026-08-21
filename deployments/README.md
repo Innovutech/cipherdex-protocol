@@ -20,6 +20,13 @@ latency only. A release record should include:
 - ABI/schema version and source commit;
 - known limitations and independent-review status.
 
+New confidential-factory records contain no external-token address list or
+token runtime-codehash list. Historical testnet manifests retain those fields
+only because they are exact evidence for superseded factories whose constructor
+did enforce that policy; rewriting their recorded constructor arguments would
+invalidate the evidence. They are not a current admission policy or supported
+deployment surface.
+
 Generated deployment records remain ignored until they have been reviewed and
 sanitized for publication. Funded verification commands must not trust that
 mutable generated file. After review:

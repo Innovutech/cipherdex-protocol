@@ -64,9 +64,10 @@ Run the funded production-router gate through that launcher:
 --target scripts/testnet-best-execution.ts -- --network cotiTestnet
 ```
 
-The runner first verifies the complete commit-bound deployment provenance,
-on-chain bindings and reviewed private-token instances from
-`COTI_DEPLOYMENT_RECORD`. It does not mutate those configured contracts. It then
+The runner first verifies the complete commit-bound deployment provenance and
+on-chain bindings, then checks both configured assets through the factory's
+technical private-token compatibility predicate. It does not mutate those
+configured contracts. It then
 deploys runtime-verified disposable instances of the same fee vault, LP-token
 factory, pool deployer, initialization-strategy registry, launch strategy,
 migrator, confidential factory and production `ConfidentialBestExecutionRouter`.
@@ -101,7 +102,8 @@ probe proving transaction-scoped GT lifetime across contracts. It is not a
 deployable router or a substitute for the production gate. Because the probe
 moves funded private assets, it runs only after the clean source deployment and
 separate evidence commit. It verifies the complete tracked deployment and exact
-reviewed token instances before constructing token contracts or deploying probes.
+technical token compatibility before constructing token contracts or deploying
+probes.
 
 ## Launchpad bootstrap
 
@@ -112,7 +114,8 @@ Run the atomic canonical bootstrap proof separately through that launcher:
 ```
 
 It first verifies the tracked deployment, clean source/evidence state, and exact
-reviewed token instances. It then deploys and runtime-verifies a disposable fresh
+technical compatibility of both private tokens. It then deploys and
+runtime-verifies a disposable fresh
 pool deployer, strategy registry, factory, dual-authorized launch strategy and
 migrator. The commitment creates the protected complete pool key before any
 assets move. Exact encrypted creator allowances and normalized price bounds are

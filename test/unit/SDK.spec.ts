@@ -194,7 +194,8 @@ describe("stable SDK surface", function () {
     expect(factory.getFunction("bestExecutionRouter")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPool")).to.not.equal(null);
     expect(factory.getFunction("bootstrapPoolWithDisposition")).to.not.equal(null);
-    expect(factory.getFunction("isApprovedPrivateToken")).to.not.equal(null);
+    expect(factory.getFunction("isCompatiblePrivateToken")).to.not.equal(null);
+    expect(factory.getFunction("isApprovedPrivateToken")).to.equal(null);
     expect(factory.getEvent("PoolCreated")).to.not.equal(null);
     expect(factory.getEvent("PrivateLPTokenCreated")).to.not.equal(null);
     expect(factory.getEvent("BestExecutionRouterConfigured")).to.not.equal(null);
@@ -1431,7 +1432,7 @@ describe("stable SDK surface", function () {
       readFactoryLPTokenFactory: async () => lpTokenFactory,
       readFactoryLPTokenFactoryRuntimeCodehash: async () => lpTokenFactoryRuntimeCodehash,
       isLPTokenIssued: async () => true,
-      isFactoryPrivateTokenApproved: async () => true,
+      isFactoryPrivateTokenCompatible: async () => true,
       isFactoryPool: async () => true,
       readFactoryInitializationStrategyClass: async () => 0,
       readFactoryInitializationStrategyRuntimeCodehash: async () => ZeroHash,
@@ -1517,7 +1518,7 @@ describe("stable SDK surface", function () {
 
     for (const overrides of [
       { readChainId: async () => BigInt(chainId + 1) },
-      { isFactoryPrivateTokenApproved: async () => false },
+      { isFactoryPrivateTokenCompatible: async () => false },
       { isFactoryPool: async () => false },
       { readFactoryLPTokenFactory: async () => "0x0000000000000000000000000000000000000077" },
       { readFactoryLPTokenFactoryRuntimeCodehash: async () => `0x${"77".repeat(32)}` },

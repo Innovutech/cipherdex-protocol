@@ -3,12 +3,12 @@ pragma solidity ^0.8.20;
 
 import "@coti-io/coti-contracts/contracts/token/PrivateERC20/IPrivateERC20.sol";
 import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
-import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "./interfaces/IPrivateLPToken.sol";
 import "./interfaces/IPrivateLPTokenFactory.sol";
 import "./interfaces/IConfidentialFeeVault.sol";
 import "./interfaces/IConfidentialBestExecution.sol";
 import "./interfaces/IConfidentialCPMMFactory.sol";
+import "./libraries/PrivateTokenCompatibility.sol";
 import "./CipherDEXFeePolicy.sol";
 
 /**
@@ -167,11 +167,22 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         if (!isApprovedFeeTier(feeBps_)) revert InvalidFee();
         if (feeVault_.code.length == 0) revert InvalidFeeVault();
         if (bootstrapper_.code.length == 0) revert BootstrapUnauthorized();
-        if (!_supportsPrivateToken(token0_) || !_supportsPrivateToken(token1_)) {
+        if (
+            !PrivateTokenCompatibility.supportsPrivateToken(token0_) ||
+            !PrivateTokenCompatibility.supportsPrivateToken(token1_)
+        ) {
             revert UnsupportedPrivateToken();
         }
-        if (_readTokenDecimals(token0_) != token0Decimals_) revert InvalidDecimals();
-        if (_readTokenDecimals(token1_) != token1Decimals_) revert InvalidDecimals();
+        (bool validDecimals0, uint8 actualDecimals0) =
+            PrivateTokenCompatibility.tryReadDecimals(token0_);
+        (bool validDecimals1, uint8 actualDecimals1) =
+            PrivateTokenCompatibility.tryReadDecimals(token1_);
+        if (!validDecimals0 || actualDecimals0 != token0Decimals_) {
+            revert InvalidDecimals();
+        }
+        if (!validDecimals1 || actualDecimals1 != token1Decimals_) {
+            revert InvalidDecimals();
+        }
 
         token0 = token0_;
         token1 = token1_;
@@ -1329,25 +1340,6 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
 
     function _requireCanonicalLPToken() internal view {
         if (lpToken == address(0)) revert CanonicalLPTokenRequired();
-    }
-
-    function _readTokenDecimals(address token) internal view returns (uint8) {
-        (bool ok, bytes memory data) = token.staticcall(
-            abi.encodeWithSignature("decimals()")
-        );
-        if (!ok || data.length != 32) revert InvalidDecimals();
-        uint256 value = abi.decode(data, (uint256));
-        if (value > 18) revert InvalidDecimals();
-        return uint8(value);
-    }
-
-    function _supportsPrivateToken(address token) internal view returns (bool) {
-        if (token.code.length == 0) return false;
-        try IERC165(token).supportsInterface(type(IPrivateERC20).interfaceId) returns (bool supported) {
-            return supported;
-        } catch {
-            return false;
-        }
     }
 
     function _requireBestExecutionRouter() internal view {

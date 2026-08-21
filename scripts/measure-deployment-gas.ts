@@ -1,6 +1,5 @@
 import { BaseContract, ContractFactory } from "ethers";
 import { artifacts, ethers } from "../hardhat/runtime.js";
-import { resolvePrivateTokenCodehashes } from "./private-token-codehashes";
 
 async function deployAndMeasure(
   label: string,
@@ -46,10 +45,6 @@ async function main(): Promise<void> {
     await ethers.getContractFactory("MockTokenMetadata"),
     6,
   );
-  const privateTokenCodehashes = await resolvePrivateTokenCodehashes(
-    ethers.provider,
-    [await tokenA.getAddress(), await tokenB.getAddress()],
-  );
   const strategyArtifact = await artifacts.readArtifact(
     "ConfidentialLaunchInitializationStrategy",
   );
@@ -75,7 +70,6 @@ async function main(): Promise<void> {
     await privateLpTokenFactory.getAddress(),
     await poolDeployer.getAddress(),
     poolDeployerCodehash,
-    privateTokenCodehashes,
     await strategyRegistry.getAddress(),
     strategyRegistryCodehash,
   );

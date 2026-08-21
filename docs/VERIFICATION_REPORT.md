@@ -1,14 +1,14 @@
 # Verification Report
 
-Date: 2026-08-20
+Date: 2026-08-21
 
 ## Status
 
 This report tracks the complete-key and launch-protected confidential-pool
-refactor. The contract, SDK, runner and documentation changes have passed the
-complete local verification cycle after the latest security remediations. Both
-the post-remediation diff scan and final full-repository Codex Security scan are
-complete with zero findings. The runner-only fee-recovery change, the testnet
+refactor. That preceding contract, SDK, runner and documentation source passed
+the complete local verification cycle after its security remediations. Its
+post-remediation diff scan and final full-repository Codex Security scan
+completed with zero findings. The runner-only fee-recovery change, the testnet
 factory-ABI fix, the launchpad deadline/revert-evidence hardening and the
 deployment-evidence provenance handoff passed the complete local suite and
 focused Codex Security diff reviews with zero findings.
@@ -18,6 +18,20 @@ final reviewed commit was deployed through a new commit-bound public manifest.
 Superseded deployments remain diagnostic evidence only. The latest deployment
 has passed funded feasibility, best execution, fee collection, launchpad
 migration, quote-call capability probing and independent suite verification.
+
+The current source additionally removes the confidential factory's external-token
+runtime-codehash admission list. Standard and launch-protected pool creation now
+share one structural compatibility rule: deployed code, the official COTI
+`IPrivateERC20` ERC-165 identifier, supported decimals and exact supplied/on-chain
+decimal agreement. The factory constructor, SDK and deployment manifest schema
+no longer carry external-token approvals. This policy change passed the focused
+59-case factory/router/launchpad/SDK/provenance suite and the complete local test
+suite. The protocol version remains 3 because pool identity, math and execution
+ABI are unchanged; the separately published SDK package moves to 4.0.0 because
+its verification-adapter method is intentionally renamed from approval to
+compatibility semantics. Existing testnet factories still implement their
+immutable historical admission policy and are disposable; no migration or
+current-source deployment claim is made here.
 
 Historical testnet addresses, transaction hashes and gas observations from
 superseded pool identities are diagnostic only and are not evidence for this
@@ -40,15 +54,16 @@ No dependency was added for this refactor.
 
 - production dependency audit: passed with zero advisories at every severity
 - production dependency graph: passed with no missing required dependency
-- clean privacy-boundary build: passed, 29 Solidity files, 72 typings and 42
+- clean privacy-boundary build: passed, 31 Solidity compilation units and 44
   compiler-AST privacy checks
-- normal Solidity compile and TypeChain generation: passed, 29 Solidity files
-  and 72 typings
+- normal Solidity compile and TypeChain generation: passed, 31 Solidity
+  compilation units
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
 - full local suite: 214 passing, 1 intentionally gated funded-network
   integration placeholder; the Hardhat aggregate reported 215 Mocha cases
+- focused admission-policy suite: 59 passing
 - diff whitespace validation: passed
 
 Fresh deployment gas was measured against the source-commit-bound testnet

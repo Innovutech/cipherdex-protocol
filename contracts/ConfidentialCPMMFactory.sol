@@ -10,6 +10,7 @@ import "./interfaces/IConfidentialInitializationStrategy.sol";
 import "./interfaces/IConfidentialInitializationStrategyRegistry.sol";
 import "./interfaces/IPrivateLPTokenFactory.sol";
 import "./interfaces/IConfidentialFeeVault.sol";
+import "./libraries/PrivateTokenCompatibility.sol";
 
 /**
  * @title ConfidentialCPMMFactory
@@ -21,12 +22,10 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     bytes32 public constant PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH =
         hex"9c796ceca64fdb8f1b780ed50588dfce7d75b5674ef5faa06bc1d5d4f063a0de";
     bytes32 public constant BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH =
-        hex"f8f712e62c5d0dd59498ab1f09891ac023b25f9295ccbc3750ea1eccab8e5ac9";
+        hex"31c3c39f2cde3690860a232d55cbc071b7c9cf6a6803500e39db1a984ad447f7";
 
     mapping(bytes32 => address) public getPool;
     mapping(address => bool) public isPool;
-    mapping(bytes32 => bool) public isApprovedPrivateTokenCodehash;
-    bytes32[] private approvedPrivateTokenCodehashes;
     address[] private pools;
 
     address public immutable lpTokenFactory;
@@ -43,9 +42,9 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     error InvalidFeeVault();
     error InvalidLPTokenFactory();
     error InvalidPoolDeployer();
-    error InvalidPrivateTokenCodehash();
     error InvalidInitializationStrategyRegistry();
-    error UnsupportedPrivateTokenImplementation();
+    error UnsupportedPrivateToken();
+    error InvalidTokenDecimals();
     error PoolAlreadyExists();
     error UnknownPool();
     error BestExecutionRouterUnauthorized();
@@ -61,7 +60,6 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         address lpTokenFactory_,
         address poolDeployer_,
         bytes32 poolDeployerCodehash_,
-        bytes32[] memory privateTokenCodehashes_,
         address initializationStrategyRegistry_,
         bytes32 initializationStrategyRegistryCodehash_
     ) {
@@ -75,9 +73,6 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
             poolDeployer_.codehash != poolDeployerCodehash_ ||
             IConfidentialCPMMDeployer(poolDeployer_).DEPLOYER_VERSION() != 1
         ) revert InvalidPoolDeployer();
-        if (privateTokenCodehashes_.length == 0) {
-            revert InvalidPrivateTokenCodehash();
-        }
         if (
             initializationStrategyRegistry_.code.length == 0 ||
             initializationStrategyRegistryCodehash_ == bytes32(0) ||
@@ -87,14 +82,6 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
                 initializationStrategyRegistry_
             ).REGISTRY_VERSION() != 1
         ) revert InvalidInitializationStrategyRegistry();
-        for (uint256 index = 0; index < privateTokenCodehashes_.length; index++) {
-            bytes32 codehash = privateTokenCodehashes_[index];
-            if (codehash == bytes32(0)) revert InvalidPrivateTokenCodehash();
-            if (!isApprovedPrivateTokenCodehash[codehash]) {
-                isApprovedPrivateTokenCodehash[codehash] = true;
-                approvedPrivateTokenCodehashes.push(codehash);
-            }
-        }
         bootstrapConfigurator = msg.sender;
         lpTokenFactory = lpTokenFactory_;
         poolDeployer = poolDeployer_;
@@ -218,9 +205,19 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         }
         if (!isApprovedFeeTier(feeBps)) revert InvalidFee();
         if (
-            !isApprovedPrivateTokenCodehash[tokenA.codehash] ||
-            !isApprovedPrivateTokenCodehash[tokenB.codehash]
-        ) revert UnsupportedPrivateTokenImplementation();
+            !PrivateTokenCompatibility.supportsPrivateToken(tokenA) ||
+            !PrivateTokenCompatibility.supportsPrivateToken(tokenB)
+        ) revert UnsupportedPrivateToken();
+        (bool validDecimalsA, uint8 actualDecimalsA) =
+            PrivateTokenCompatibility.tryReadDecimals(tokenA);
+        (bool validDecimalsB, uint8 actualDecimalsB) =
+            PrivateTokenCompatibility.tryReadDecimals(tokenB);
+        if (
+            !validDecimalsA ||
+            !validDecimalsB ||
+            actualDecimalsA != decimalsA ||
+            actualDecimalsB != decimalsB
+        ) revert InvalidTokenDecimals();
         return tokenA < tokenB
             ? (tokenA, tokenB, decimalsA, decimalsB)
             : (tokenB, tokenA, decimalsB, decimalsA);
@@ -500,17 +497,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         return pools[index];
     }
 
-    function approvedPrivateTokenCodehashesLength() external view returns (uint256) {
-        return approvedPrivateTokenCodehashes.length;
-    }
-
-    function approvedPrivateTokenCodehash(uint256 index) external view returns (bytes32) {
-        return approvedPrivateTokenCodehashes[index];
-    }
-
-    function isApprovedPrivateToken(address token) external view returns (bool) {
-        return
-            token.code.length != 0 &&
-            isApprovedPrivateTokenCodehash[token.codehash];
+    function isCompatiblePrivateToken(address token) external view returns (bool) {
+        return PrivateTokenCompatibility.isCompatible(token);
     }
 }

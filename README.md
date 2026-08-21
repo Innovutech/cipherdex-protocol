@@ -59,6 +59,14 @@ After a completed protected pool later reaches a true full exit, ordinary
 permissionless `addLiquidity` may re-seed it. The consumed launch commitment and
 strategy can never bootstrap it again.
 
+Confidential pool creation is permissionless for deployed contracts that report
+the official COTI `IPrivateERC20` interface and valid matching decimals. CipherDEX
+does not curate external token addresses or runtime bytecode. Interface support
+proves structural compatibility, not honest token economics; malformed or
+malicious tokens remain a pool-level trust risk. Pools retain exact encrypted
+balance-delta checks around every token movement as defense in depth. Exact
+runtime-codehash authentication remains limited to CipherDEX-owned infrastructure.
+
 Public pools expose a factory-gated exact-input router and gasless quoter.
 Confidential pools retain direct execution and additionally expose a
 factory-bound `ConfidentialBestExecutionRouter`. Users encrypt inputs for that

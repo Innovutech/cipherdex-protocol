@@ -8,10 +8,8 @@ import { promisify } from "node:util";
 
 import type { RuntimeArtifactProvenance } from "../../scripts/runtime-artifact";
 import {
-  assertReviewedPrivateTokens,
   listTouchedPathsAcrossCommitRange,
   verifyConfiguredTestnetDeployment,
-  type VerifiedTestnetDeploymentRecord,
 } from "../../scripts/testnet-deployment-provenance";
 import { createFundedDeploymentBinding } from "../../scripts/funded-deployment-binding";
 
@@ -21,7 +19,6 @@ describe("configured testnet deployment provenance", function () {
   const sourceCommit = "ab".repeat(20);
   const evidenceCommit = "cd".repeat(20);
   const address = `0x${"12".repeat(20)}`;
-  const reviewedToken = `0x${"78".repeat(20)}`;
   const runtimeCodehash = `0x${"34".repeat(32)}`;
   const canonicalDeployments = Object.freeze([Object.freeze({
     key: "confidentialFactory",
@@ -54,7 +51,6 @@ describe("configured testnet deployment provenance", function () {
         confidentialFactory: {
           address,
           runtimeCodehash,
-          reviewedPrivateTokens: [reviewedToken],
         },
       },
       compiler: {
@@ -174,34 +170,6 @@ describe("configured testnet deployment provenance", function () {
         manifestCommit: evidenceCommit,
         sourceCommit,
       });
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("fails closed when a funded runner selects an unreviewed private-token instance", async function () {
-    const { cwd, relativePath } = await fixture();
-    try {
-      const record = await verify(cwd, relativePath) as VerifiedTestnetDeploymentRecord;
-      expect(() => assertReviewedPrivateTokens(record, [reviewedToken.toUpperCase()]))
-        .to.not.throw();
-      expect(() => assertReviewedPrivateTokens(record, [`0x${"90".repeat(20)}`]))
-        .to.throw("absent from the reviewed deployment record");
-      expect(() => assertReviewedPrivateTokens(record, []))
-        .to.throw("requires at least one token");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects malformed reviewed private-token lists", async function () {
-    const { cwd, relativePath } = await fixture((record) => {
-      record.contracts.confidentialFactory.reviewedPrivateTokens = ["not-an-address"];
-    });
-    try {
-      const record = await verify(cwd, relativePath) as VerifiedTestnetDeploymentRecord;
-      expect(() => assertReviewedPrivateTokens(record, [reviewedToken]))
-        .to.throw("must be a non-empty address list");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

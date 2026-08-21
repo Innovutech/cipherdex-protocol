@@ -1,8 +1,7 @@
 import { expect } from "chai";
-import { ethers } from "../../hardhat/runtime.js";
 import { Wallet as CotiWallet } from "@coti-io/coti-ethers";
 import { decryptPrivateValue256 } from "../../scripts/coti-testnet-values";
-import { resolvePrivateTokenCodehashes } from "../../scripts/private-token-codehashes";
+import { assertCompatiblePrivateTokens } from "../../scripts/private-token-compatibility";
 
 async function expectRejected(promise: Promise<unknown>, message: string): Promise<void> {
   let observed: unknown;
@@ -47,62 +46,39 @@ describe("COTI testnet encrypted-value normalization", function () {
   });
 });
 
-describe("private-token runtime-codehash policy", function () {
+describe("private-token structural compatibility policy", function () {
   const tokenA = "0x0000000000000000000000000000000000000011";
   const tokenB = "0x0000000000000000000000000000000000000022";
-  const originalPolicy = process.env.CIPHERDEX_PRIVATE_TOKEN_CODEHASHES;
 
-  afterEach(function () {
-    if (originalPolicy === undefined) {
-      delete process.env.CIPHERDEX_PRIVATE_TOKEN_CODEHASHES;
-    } else {
-      process.env.CIPHERDEX_PRIVATE_TOKEN_CODEHASHES = originalPolicy;
-    }
+  it("accepts every address the canonical factory reports as compatible", async function () {
+    const observed: string[] = [];
+    await assertCompatiblePrivateTokens({
+      isCompatiblePrivateToken: async (token: string) => {
+        observed.push(token);
+        return true;
+      },
+    }, [tokenA, tokenB]);
+    expect(observed).to.deep.equal([tokenA, tokenB]);
   });
 
-  it("derives sorted unique hashes from reviewed deployed runtime code", async function () {
-    delete process.env.CIPHERDEX_PRIVATE_TOKEN_CODEHASHES;
-    const code = "0x60006000";
-    const expected = ethers.keccak256(code).toLowerCase();
-    const result = await resolvePrivateTokenCodehashes(
-      { getCode: async () => code },
-      [tokenA, tokenB],
-    );
-    expect(result).to.deep.equal([expected]);
-  });
-
-  it("requires explicit policy to include every reviewed token implementation", async function () {
-    const codeA = "0x60006000";
-    const codeB = "0x60016000";
-    const hashA = ethers.keccak256(codeA).toLowerCase();
-    const hashB = ethers.keccak256(codeB).toLowerCase();
-    process.env.CIPHERDEX_PRIVATE_TOKEN_CODEHASHES = hashA;
-    const provider = {
-      getCode: async (address: string) => address === tokenA ? codeA : codeB,
-    };
+  it("fails closed for invalid addresses and factory-reported incompatibility", async function () {
     await expectRejected(
-      resolvePrivateTokenCodehashes(provider, [tokenA, tokenB]),
-      "excludes a reviewed token",
-    );
-
-    process.env.CIPHERDEX_PRIVATE_TOKEN_CODEHASHES = `${hashB},${hashA},${hashB}`;
-    expect(await resolvePrivateTokenCodehashes(provider, [tokenA, tokenB]))
-      .to.deep.equal([hashA, hashB].sort());
-  });
-
-  it("fails closed for invalid addresses and missing deployed code", async function () {
-    delete process.env.CIPHERDEX_PRIVATE_TOKEN_CODEHASHES;
-    await expectRejected(
-      resolvePrivateTokenCodehashes({ getCode: async () => "0x" }, []),
-      "at least one reviewed private token",
+      assertCompatiblePrivateTokens({ isCompatiblePrivateToken: async () => true }, []),
+      "requires deployed token addresses",
     );
     await expectRejected(
-      resolvePrivateTokenCodehashes({ getCode: async () => "0x" }, ["invalid"]),
-      "invalid private token address",
+      assertCompatiblePrivateTokens(
+        { isCompatiblePrivateToken: async () => true },
+        ["invalid"],
+      ),
+      "requires deployed token addresses",
     );
     await expectRejected(
-      resolvePrivateTokenCodehashes({ getCode: async () => "0x" }, [tokenA]),
-      "no deployed bytecode",
+      assertCompatiblePrivateTokens(
+        { isCompatiblePrivateToken: async (token: string) => token !== tokenB },
+        [tokenA, tokenB],
+      ),
+      "not technically compatible",
     );
   });
 });

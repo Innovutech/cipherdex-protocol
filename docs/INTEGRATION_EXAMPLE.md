@@ -73,9 +73,9 @@ deployed code, factory protocol version, `isPool`, the complete canonical
 `poolKey` mapping and all immutable pool fields, including strategy class,
 strategy runtime codehash and initialized state. The key is ordered pair, fee,
 privacy mode, protocol version and initialization strategy. It must also compare
-each token's current
-runtime implementation with `isApprovedPrivateToken` on that exact immutable
-factory. For LP-token provenance it verifies the factory's immutable helper,
+each token with `isCompatiblePrivateToken` on that exact immutable factory. This
+proves deployed interface/decimal compatibility, not approval or economic
+honesty. For LP-token provenance it verifies the factory's immutable helper,
 the helper's reviewed runtime codehash and factory constant, deployed LP-token
 code, and the helper's exact `(pool, lpToken, canonicalFactory)` issuance
 attestation. Only verified discoveries may enter candidate selection. The SDK

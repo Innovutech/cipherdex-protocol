@@ -205,16 +205,6 @@ function expectedConstructorArgs(contracts: JsonRecord): Readonly<Record<string,
     "contracts.confidentialFactory",
   );
   const publicFactoryAddress = requireAddress(publicFactory, "address", "contracts.publicFactory");
-  const reviewedCodehashes = asArray(
-    confidentialFactory.approvedPrivateTokenCodehashes,
-    "contracts.confidentialFactory.approvedPrivateTokenCodehashes",
-  );
-  if (
-    reviewedCodehashes.length === 0 ||
-    reviewedCodehashes.some((value) => typeof value !== "string" || !HASH_PATTERN.test(value))
-  ) {
-    throw new Error("confidential factory approved private-token codehashes are invalid");
-  }
   const reviewedStrategyCodehashes = asArray(
     strategyRegistry.reviewedStrategyCodehashes,
     "contracts.confidentialInitializationStrategyRegistry.reviewedStrategyCodehashes",
@@ -269,7 +259,6 @@ function expectedConstructorArgs(contracts: JsonRecord): Readonly<Record<string,
       requireAddress(lpFactory, "address", "contracts.confidentialLpTokenFactory"),
       poolDeployerAddress,
       poolDeployerRuntimeCodehash,
-      reviewedCodehashes,
       strategyRegistryAddress,
       strategyRegistryRuntimeCodehash,
     ],

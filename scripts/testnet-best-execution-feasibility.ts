@@ -7,6 +7,7 @@ import {
 import { ethers } from "../hardhat/runtime.js";
 
 import {
+  CONFIDENTIAL_FACTORY_TESTNET_ABI,
   CT_UINT256,
   IT_UINT256,
   PRIVATE_ERC20_TESTNET_ABI,
@@ -28,9 +29,9 @@ import {
   withFundedTransactionEvidence,
 } from "./funded-transaction-wallet";
 import { requiredFundedRecoveryDirectory } from "./funded-runtime-state";
+import { assertCompatiblePrivateTokens } from "./private-token-compatibility";
 import { verifyDeployedRuntimeArtifact } from "./runtime-artifact";
 import {
-  assertReviewedPrivateTokens,
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
 } from "./testnet-deployment-provenance";
@@ -347,7 +348,15 @@ async function main(): Promise<void> {
       },
     ],
   );
-  assertReviewedPrivateTokens(deploymentRecord, [tokenInAddress, tokenOutAddress]);
+  const compatibilityFactory = new Contract(
+    factoryAddress,
+    CONFIDENTIAL_FACTORY_TESTNET_ABI,
+    ethers.provider,
+  );
+  await assertCompatiblePrivateTokens(compatibilityFactory, [
+    tokenInAddress,
+    tokenOutAddress,
+  ]);
 
   const wallet = new CotiWallet(privateKey, ethers.provider, { aesKey });
   wallet.setAesKey(aesKey);

@@ -377,33 +377,6 @@ export function requiredTestnetDeploymentRecordPath(): string {
   return value;
 }
 
-export function assertReviewedPrivateTokens(
-  record: VerifiedTestnetDeploymentRecord,
-  tokenAddresses: readonly string[],
-): void {
-  if (tokenAddresses.length === 0) {
-    throw new Error("reviewed private-token verification requires at least one token");
-  }
-  const factoryRecord = asRecord(
-    record.contracts.confidentialFactory,
-    "deployment record contracts.confidentialFactory",
-  );
-  const reviewed = factoryRecord.reviewedPrivateTokens;
-  if (
-    !Array.isArray(reviewed) ||
-    reviewed.length === 0 ||
-    reviewed.some((entry) => typeof entry !== "string" || !ADDRESS_PATTERN.test(entry))
-  ) {
-    throw new Error("deployment record reviewedPrivateTokens must be a non-empty address list");
-  }
-  const reviewedAddresses = new Set(reviewed.map((entry) => entry.toLowerCase()));
-  for (const tokenAddress of tokenAddresses) {
-    if (!ADDRESS_PATTERN.test(tokenAddress) || !reviewedAddresses.has(tokenAddress.toLowerCase())) {
-      throw new Error(`configured private token is absent from the reviewed deployment record: ${tokenAddress}`);
-    }
-  }
-}
-
 export async function verifyConfiguredTestnetDeployment(
   configuredPath: string,
   provider: RuntimeCodeProvider,
