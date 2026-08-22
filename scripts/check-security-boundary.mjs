@@ -1577,6 +1577,7 @@ for (const file of [
 const launchpadRawSource = await readFile("scripts/testnet-launchpad.ts", "utf8");
 const launchpadSource = maskSourceCommentsAndLiterals(launchpadRawSource);
 const launchpadMainBody = functionBody(launchpadSource, "main");
+const launchpadRecoveryBody = functionBody(launchpadSource, "recoverLaunchpadResources");
 for (const fragment of [
   "verifyConfiguredTestnetDeployment(",
   "assertCompatiblePrivateTokens(",
@@ -1635,6 +1636,9 @@ if (
 }
 if (!launchpadSource.includes("verifyRecoveryResourceCreation(")) {
   throw new Error("Launchpad funded recovery does not authenticate resource creation");
+}
+if (!launchpadRecoveryBody.includes("recoverPrivateAllowanceObligations({")) {
+  throw new Error("Launchpad funded recovery does not terminalize allowance obligations");
 }
 for (const literal of [
   "full disposable launchpad-pool exit",

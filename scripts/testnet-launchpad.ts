@@ -417,6 +417,12 @@ function encryptedQuoteFromReceipt(
 
 async function recoverLaunchpadResources(): Promise<void> {
   if (!recoveryJournal || !recoveryWallet || !recoveryOwner) return;
+  await recoverPrivateAllowanceObligations({
+    journal: recoveryJournal,
+    wallets: [recoveryWallet],
+    overrides: { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },
+    submit,
+  });
   const stack = recoveryJournal.activeResources.find((resource) =>
     resource.id === STACK_RESOURCE_ID
   );

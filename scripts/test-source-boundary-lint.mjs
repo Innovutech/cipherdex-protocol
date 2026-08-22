@@ -67,6 +67,9 @@ const fundedEvidenceRecoverySource = readFileSync(
   "scripts/rematerialize-funded-evidence.ts",
   "utf8",
 );
+const launchpadSource = maskSourceCommentsAndLiterals(
+  readFileSync("scripts/testnet-launchpad.ts", "utf8"),
+);
 const hardhatResolverSource = readFileSync("scripts/resolve-hardhat-cli.mjs", "utf8");
 for (const script of [
   "testnet:harness",
@@ -136,6 +139,10 @@ assert.doesNotMatch(operatorLauncherSource + freshRunnerSource, /hardhat\/intern
 assert.doesNotMatch(
   fundedEvidenceRecoverySource,
   /\b(?:sendTransaction|broadcastTransaction|withFundedTransactionEvidence)\b/,
+);
+assert.match(
+  uniqueFunctionBody(launchpadSource, "recoverLaunchpadResources"),
+  /recoverPrivateAllowanceObligations\s*\(\s*\{/,
 );
 assert.match(hardhatResolverSource, /require\.resolve\("hardhat\/package\.json"\)/);
 assert.match(hardhatResolverSource, /manifest\.bin\?\.hardhat/);
