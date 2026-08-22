@@ -1226,6 +1226,9 @@ for (const file of [
 }
 const fundedEvidenceRawSource = await readFile("scripts/funded-run-evidence.ts", "utf8");
 const fundedEvidenceSource = maskSourceCommentsAndLiterals(fundedEvidenceRawSource);
+if (!fundedEvidenceSource.includes("input.expectedStrategyArtifactLabel")) {
+  throw new Error("Funded launch commitment evidence hardcodes one strategy artifact label");
+}
 const fundedRecoveryRawSource = await readFile(
   "scripts/funded-recovery-journal.ts",
   "utf8",

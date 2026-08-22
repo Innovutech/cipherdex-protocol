@@ -1513,6 +1513,7 @@ export function requireProtectedPoolLifecycleOrder(input: Readonly<{
 function requireLaunchCommitmentBinding(input: Readonly<{
   transactionLabel: string;
   expectedFeeBps: number;
+  expectedStrategyArtifactLabel: string;
   expectedFactoryArtifactLabel: string;
   expectedMigratorArtifactLabel: string;
   expectedPoolArtifactLabel: string;
@@ -1528,7 +1529,7 @@ function requireLaunchCommitmentBinding(input: Readonly<{
   );
   const strategy = artifactAddress(
     input.artifacts,
-    "disposable launch initialization strategy",
+    input.expectedStrategyArtifactLabel,
   );
   if (
     transaction.to !== strategy ||
@@ -1724,6 +1725,7 @@ export function requireOnchainSemanticBindings(
     requireLaunchCommitmentBinding({
       transactionLabel: "commit protected 30 bps launch",
       expectedFeeBps: 30,
+      expectedStrategyArtifactLabel: "disposable launch initialization strategy",
       expectedFactoryArtifactLabel: "disposable confidential factory",
       expectedMigratorArtifactLabel: "disposable launchpad migrator",
       expectedPoolArtifactLabel: "30 bps launch-protected canonical pool",
@@ -1938,6 +1940,7 @@ export function requireOnchainSemanticBindings(
     const commitment = requireLaunchCommitmentBinding({
       transactionLabel: "launch commitment",
       expectedFeeBps: Number(configuration.feeBps),
+      expectedStrategyArtifactLabel: strategyArtifactLabel,
       expectedFactoryArtifactLabel: factoryArtifactLabel,
       expectedMigratorArtifactLabel: migratorArtifactLabel,
       expectedPoolArtifactLabel: poolArtifactLabel,
