@@ -44,6 +44,16 @@ const ALLOWED_TARGETS = new Map([
       "COTI_DEPLOYMENT_RECORD",
     ],
   }],
+  ["scripts/testnet-batch-authorization-probe.ts", {
+    arguments: ["--network", "cotiTestnet"],
+    funded: true,
+    environment: [
+      "COTI_QUOTE_PRIVATE_KEY",
+      "COTI_QUOTE_AES_KEY",
+      "COTI_FACTORY",
+      "COTI_DEPLOYMENT_RECORD",
+    ],
+  }],
   ["scripts/testnet-best-execution.ts", {
     arguments: ["--network", "cotiTestnet"],
     funded: true,

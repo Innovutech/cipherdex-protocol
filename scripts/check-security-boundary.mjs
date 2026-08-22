@@ -51,6 +51,32 @@ for (const [file, functions] of requiredNonReentrant) {
 const confidentialSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/ConfidentialCPMM.sol", "utf8"),
 );
+const inputBatchSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/CipherDEXInputBatch.sol", "utf8"),
+);
+const batchProbeSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/mocks/MpcBatchAuthorizationProbe.sol", "utf8"),
+);
+for (const required of [
+  "authorization.protocolVersion != expectedProtocolVersion",
+  "authorization.schemaHash != expectedSchemaHash",
+  "authorization.deadline < block.timestamp",
+  "inputBatchNonceUsed[msg.sender][authorization.nonce]",
+  "SignatureValidation.isValidSignatureNow(",
+  "inputBatchCiphertextsHash(ciphertexts)",
+  "MpcCore.onBoard(ciphertexts[i])",
+]) {
+  if (!inputBatchSource.includes(required)) {
+    throw new Error(`CipherDEX input-batch authorization omits required binding: ${required}`);
+  }
+}
+for (const functionName of ["probeTwo", "probeFive"]) {
+  if (!functionBody(batchProbeSource, functionName).includes(
+    "_authorizeAndOnboardInputBatch(",
+  )) {
+    throw new Error(`COTI MPC batch probe bypasses authorization: ${functionName}`);
+  }
+}
 const publicSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicCPMM.sol", "utf8"),
 );

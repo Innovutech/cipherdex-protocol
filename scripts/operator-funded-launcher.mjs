@@ -40,6 +40,7 @@ const FINALIZED_FUNDED_EVIDENCE_RUNNERS = Object.freeze([
 ]);
 const PROMOTABLE_FUNDED_EVIDENCE_RUNNERS = Object.freeze([
   ...FINALIZED_FUNDED_EVIDENCE_RUNNERS,
+  "batch-authorization-feasibility",
   "configured-compatibility",
   "configured-launchpad",
 ]);
