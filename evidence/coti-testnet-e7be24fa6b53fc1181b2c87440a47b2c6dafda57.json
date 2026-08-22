@@ -1,0 +1,1062 @@
+{
+  "schema": "cipherdex.configured-funded-evidence/v1",
+  "schemaVersion": 1,
+  "network": "cotiTestnet",
+  "chainId": 7082400,
+  "sourceCommit": "e7be24fa6b53fc1181b2c87440a47b2c6dafda57",
+  "deploymentRecord": "deployments/coti-testnet-e7be24fa6b53fc1181b2c87440a47b2c6dafda57.json",
+  "generatedAt": "2026-08-22T10:11:33.758Z",
+  "runs": [
+    {
+      "schema": "cipherdex.funded-run-evidence/v6",
+      "runner": "configured-compatibility",
+      "sourceCommit": "e7be24fa6b53fc1181b2c87440a47b2c6dafda57",
+      "chainId": 7082400,
+      "owner": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+      "startedAt": "2026-08-22T09:16:54.170Z",
+      "deployment": {
+        "recordPath": "deployments/coti-testnet-e7be24fa6b53fc1181b2c87440a47b2c6dafda57.json",
+        "recordSha256": "fb96c04567ecc1f53f82da497f2bb2921954cede463447e7767549f083ae3b0d",
+        "manifestCommit": "8388923dead96313cb4be9dc478d7c479ebbb5f0",
+        "sourceCommit": "e7be24fa6b53fc1181b2c87440a47b2c6dafda57"
+      },
+      "runnerSource": "scripts/testnet-best-execution.ts",
+      "runnerSourceSha256": "ba787d4109527c6361aea5046d4dff7a3d101f5834ebdd32d081fdb6d0764e9f",
+      "generatedAt": "2026-08-22T09:28:32.815Z",
+      "participants": [
+        "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+        "0x503860ABBFE4910594D648d223FF70bE9A6b6D44"
+      ],
+      "configuration": {
+        "chainId": 7082400,
+        "factory": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+        "maximumBalanceBps": 10,
+        "referenceToken": "0x6cE8907414986E73De9e7D28d62Ea2080F8E88E1",
+        "referenceTokenCodehash": "0xcd4b4b3329cd64190c49fdfbe7feb3b2a81cfcb50c36f50d4d603c76906589b2",
+        "router": "0x93775fc40311E655E386D04Fbb73D4304923e386",
+        "tokenA": "0x1503b02a4Aa27812306c65116FD23b733603F142",
+        "tokenACodehash": "0xc20a798d468089168d3a741d9ebd87877c86200c66615fa2232bbaee8caa115e",
+        "tokenB": "0xF009BADb181d471995a1CFF406C3Db7B180F64eA",
+        "tokenBCodehash": "0x4d0e1851f5ad83578a9b502ea2adc88f9a96fe3ab4bccf92a94befa97d458ec9"
+      },
+      "configurationHash": "0x74589bcfc9993e180801712e73bb5cb095fb5cb9c7ef24331827dba9272270a7",
+      "artifacts": [
+        {
+          "label": "configured private LP factory",
+          "address": "0x85cd7727867ceA45216d3a4Cc3551CaC08b18fcb",
+          "contractName": "PrivateLPTokenFactory",
+          "sourceName": "contracts/PrivateLPTokenFactory.sol",
+          "runtimeCodehash": "0x9c796ceca64fdb8f1b780ed50588dfce7d75b5674ef5faa06bc1d5d4f063a0de",
+          "compilerInputHash": "0xe5945ee4d42891d66ec7b3352a4fdbc4030c8af35dbff1baedab34c270497863",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 0,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 205
+            },
+            "metadataBytecodeHash": "none"
+          },
+          "creationTransactionHash": "0xc3dfb999a2e67c49f729600883f76b7d7a876e9a7ed72e312f6b0532c23a3dd4",
+          "constructorArguments": []
+        },
+        {
+          "label": "configured confidential factory",
+          "address": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+          "contractName": "ConfidentialCPMMFactory",
+          "sourceName": "contracts/ConfidentialCPMMFactory.sol",
+          "runtimeCodehash": "0x1d5bda64a519d11a81f52b785e6bb11cb3bd90cfda6aba452c37b8debffa3311",
+          "compilerInputHash": "0x5d95b18b9b93e5c1f1286d37ce204a7b31a2ed0c2ce9241b937ac68e4f4fe774",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 18,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 1
+            },
+            "metadataBytecodeHash": "none"
+          },
+          "creationTransactionHash": "0xbdc04e40c1b0cda216484d95c841316ed546ae72f6b6283152b1f44aa4ba710e",
+          "constructorArguments": [
+            "0x742be5fa9A518760b7147632324e6A07c78CB7A1",
+            "0x85cd7727867ceA45216d3a4Cc3551CaC08b18fcb",
+            "0x056678e7cE7D175C6D5728f486D7987c43243703",
+            "0xa7f71a39c863e2b36bc68eb6644c4416616d52b506841c839c24d622443293b6",
+            "0xD6d6C03B9B7B6156FdD51654A462c19FFC971230",
+            "0x7bc7dc1aa4ded881e03c3cde281e29dd8183358e839bb3e52b03bc7b54df0ebc"
+          ]
+        },
+        {
+          "label": "configured best-execution router",
+          "address": "0x93775fc40311E655E386D04Fbb73D4304923e386",
+          "contractName": "ConfidentialBestExecutionRouter",
+          "sourceName": "contracts/ConfidentialBestExecutionRouter.sol",
+          "runtimeCodehash": "0x31c3c39f2cde3690860a232d55cbc071b7c9cf6a6803500e39db1a984ad447f7",
+          "compilerInputHash": "0xaa069269b480365bcb70940a0633088de3980c79691ac036b4b705d3031199b4",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 0,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 211
+            },
+            "metadataBytecodeHash": "none"
+          },
+          "creationTransactionHash": "0x6ef253c7f8fdf0b5162c826d069f571756ca065b0912bc3a07c37133b9511d4d",
+          "constructorArguments": [
+            "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434"
+          ]
+        },
+        {
+          "label": "configured reference pool",
+          "address": "0x7C95491D6d4Ff52FfDDe262b647E04AebCb119b5",
+          "contractName": "ConfidentialCPMM",
+          "sourceName": "contracts/ConfidentialCPMM.sol",
+          "runtimeCodehash": "0x025ffc307b3a0cab4f49a036600d83a2545532f43606d87b065f9316587d9c57",
+          "compilerInputHash": "0x2ffef493de3509e7aed8c53501277c7574dd153d2dbec6191b059ab67ca15165",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 50,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 1
+            },
+            "metadataBytecodeHash": "none"
+          }
+        },
+        {
+          "label": "configured reference private LP token",
+          "address": "0x109e41b6ea3C6591703360C13d911dA3120a9C70",
+          "contractName": "PrivateLPToken",
+          "sourceName": "contracts/PrivateLPToken.sol",
+          "runtimeCodehash": "0x6b19c371742084e9a98a54b6f8824d671bc4cd7e44eebb2cecbb87c1be5b86c7",
+          "compilerInputHash": "0x6659e55465ed28c14a2f2fab8f14d8f1f3378f35cb97c5aa6f84ab15f2d96b21",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 3,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 204
+            },
+            "metadataBytecodeHash": "none"
+          }
+        },
+        {
+          "label": "configured compatibility pool",
+          "address": "0xE446B1018Bd2aE3d909e148AABb9Cd24dA04f135",
+          "contractName": "ConfidentialCPMM",
+          "sourceName": "contracts/ConfidentialCPMM.sol",
+          "runtimeCodehash": "0x75ae07470f499791ab8335cabc566acfe0c30dbdf165d8b91c52cde522992304",
+          "compilerInputHash": "0x2ffef493de3509e7aed8c53501277c7574dd153d2dbec6191b059ab67ca15165",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 50,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 1
+            },
+            "metadataBytecodeHash": "none"
+          }
+        },
+        {
+          "label": "configured compatibility private LP token",
+          "address": "0x86961D228720cC10604b2Db5006ec52e2C6EBE62",
+          "contractName": "PrivateLPToken",
+          "sourceName": "contracts/PrivateLPToken.sol",
+          "runtimeCodehash": "0x32ad0dc24c64f97614e20558968c4cae8065f2a2c2c7a3ff31b2c6f51a958de9",
+          "compilerInputHash": "0x6659e55465ed28c14a2f2fab8f14d8f1f3378f35cb97c5aa6f84ab15f2d96b21",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 3,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 204
+            },
+            "metadataBytecodeHash": "none"
+          }
+        }
+      ],
+      "transactions": [
+        {
+          "label": "create canonical 100 bps pool",
+          "hash": "0x9c36ac1f14c3493aff523f410957b9babde5d16c1577928ec58d84157024ed9f",
+          "status": 1,
+          "blockNumber": 9162546,
+          "blockHash": "0x89c7410f71f85bf833312f8fda4fb1fc915d2683b0e97f682732add26425667b",
+          "gasUsed": "6296055",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+          "chainId": 7082400,
+          "calldataHash": "0x43a049bd4d59cdef8dd59d83f698b6fa24207a2861f928ddf4046b26f345acae",
+          "selector": "0x0cff88f6",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x9d05facd2f762199dfc09f9db1c3266824f62584b1549d7c497d453404f85fb6",
+          "logCount": 6
+        },
+        {
+          "label": "duplicate canonical reference pool",
+          "hash": "0x90808a5130a6247ad67726a2bd056fd281a7a466bf1c8afd8d8f7df74fc2b095",
+          "status": 0,
+          "blockNumber": 9162558,
+          "blockHash": "0x0c9749c79576f0ee0796111ec62e8846e2d77d4819b1b2d1db8ad1c4898181b0",
+          "gasUsed": "35227",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+          "chainId": 7082400,
+          "calldataHash": "0x43a049bd4d59cdef8dd59d83f698b6fa24207a2861f928ddf4046b26f345acae",
+          "selector": "0x0cff88f6",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "create canonical 30 bps pool",
+          "hash": "0xf65bec3a66133f2466f1cb70fd1ec32e0643846807800d01ba86cdb41e4a1655",
+          "status": 1,
+          "blockNumber": 9162570,
+          "blockHash": "0x676030de51a7ba17388b87930d74f5a62ae752623d26361dab44806e520a2f4c",
+          "gasUsed": "6278872",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+          "chainId": 7082400,
+          "calldataHash": "0x659488c797d19567ec8c45bdcbffb68c76950ba5421b5bc8ea00d9f78bfc25ba",
+          "selector": "0x0cff88f6",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x554836485aa4de07995d1c8831d95bc11da442ccf63fe820d46e2a335087a10e",
+          "logCount": 6
+        },
+        {
+          "label": "30 bps token0 liquidity approval",
+          "hash": "0x56f577310f49e08cdb20f8d48e4b0b9f83c6f6a616b77e00526920bf25422084",
+          "status": 1,
+          "blockNumber": 9162584,
+          "blockHash": "0xa51c7e6030b588beca72daffa8dbfb4356fe648ad631915de5e26d4c38ec8ba2",
+          "gasUsed": "458458",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0x1503b02a4Aa27812306c65116FD23b733603F142",
+          "chainId": 7082400,
+          "calldataHash": "0x30bb53295a87986d15a375da01d06a8ea3e8b3cdc4e1f2975498545fa0b98c14",
+          "selector": "0x8e532c44",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0xaff05b51b27ac0aa86fad30b3e2bf43232dfc633c52ab7bccf3008a505ae39d5",
+          "logCount": 1
+        },
+        {
+          "label": "30 bps token1 liquidity approval",
+          "hash": "0xee3bcd629a622448577c751554f3add6d1a898a933131f99292f0a6e7592901f",
+          "status": 1,
+          "blockNumber": 9162596,
+          "blockHash": "0x5be8fd2c90bd8315bae913287db7712daf02e348179d38bb80ff7c94f61b5977",
+          "gasUsed": "458470",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xF009BADb181d471995a1CFF406C3Db7B180F64eA",
+          "chainId": 7082400,
+          "calldataHash": "0xa489d1491c6f0c424b93552ad4b58e1a88df2f77efd58de206b84ab1e8f6a38e",
+          "selector": "0x8e532c44",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x964c333fc861f60a4ecd9f97097454506572a780640ae5dc53d285134ed0bc62",
+          "logCount": 1
+        },
+        {
+          "label": "initialize canonical 30 bps pool",
+          "hash": "0xcba6a6da451f8e85a25acd44f022e1e5887cdc0d5f901d5281ec33fb1155b716",
+          "status": 1,
+          "blockNumber": 9162606,
+          "blockHash": "0x98e56c4b28c110b8a5de2bde6dbfbb6996e90d6b6d0e365cf6ef542f505cdd2c",
+          "gasUsed": "13434987",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xE446B1018Bd2aE3d909e148AABb9Cd24dA04f135",
+          "chainId": 7082400,
+          "calldataHash": "0x50be03172f8ff19356765c06184cfa09581ecdf5aa8d1970e1e91c8f38ced2c7",
+          "selector": "0xca671e61",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x7c9184ad81cd40fe9b7f5bbbd87068fb3d447beb888ffd75af7c1089d8d7a5b0",
+          "logCount": 6
+        },
+        {
+          "label": "configured compatibility best quote",
+          "hash": "0x88d3f1e519cf4f70e0d5219f54732ec1003345a8880512fec7903570fa4c63b0",
+          "status": 1,
+          "blockNumber": 9162619,
+          "blockHash": "0x6e1e443c12db16f63b81341e090d2aadd36c83dd514f1a534e3118343a198c4a",
+          "gasUsed": "8545498",
+          "from": "0x503860ABBFE4910594D648d223FF70bE9A6b6D44",
+          "to": "0x93775fc40311E655E386D04Fbb73D4304923e386",
+          "chainId": 7082400,
+          "calldataHash": "0xf0bd915a9cc5dc3cff6972d3525facebf3c03f15dd02a1c75c1e262de11f1291",
+          "selector": "0xc636ee79",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x1559d957dd3c8d48089270b8e2229bc633369cbd658832ce885b52bea8c2b1c6",
+          "logCount": 1
+        },
+        {
+          "label": "configured compatibility best swap router approval",
+          "hash": "0x5037f9fadc9c0575495e9381a8229d7b3e907dbaba1a25420a1ef3011fc1f81a",
+          "status": 1,
+          "blockNumber": 9162631,
+          "blockHash": "0x0fb8dc8ee7435b86363465b31b8f1b278091637adaedc4fac9d3fd24d58e3d78",
+          "gasUsed": "458446",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0x1503b02a4Aa27812306c65116FD23b733603F142",
+          "chainId": 7082400,
+          "calldataHash": "0x8768f602dc9b146eb08e169635c55980d58c04670bc0454ad53bca1e33b9a1e8",
+          "selector": "0x8e532c44",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x98381e3725fe6255d5dbfe80e204f8b537c8159898edb78d372e8dd4d23b407b",
+          "logCount": 1
+        },
+        {
+          "label": "configured compatibility best swap encrypted slippage rollback",
+          "hash": "0xeecc167280bdb7111349c986a12b36bdb65c3a48328434ee73891686be543ce3",
+          "status": 0,
+          "blockNumber": 9162641,
+          "blockHash": "0xbe745bc29099ab9dcf9816433cc2660a88d19946e19b4b580a78562020aa930e",
+          "gasUsed": "18748190",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0x93775fc40311E655E386D04Fbb73D4304923e386",
+          "chainId": 7082400,
+          "calldataHash": "0xc0534a5799047c9046ecf6e0dc94d404a4f874641c70698202c4250884ced2e0",
+          "selector": "0xc55b572d",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "configured compatibility best swap",
+          "hash": "0xb22376e797e206687d7d39edd9ea4dca1e2950782c6c0d2eac6c6f613d20ce4a",
+          "status": 1,
+          "blockNumber": 9162651,
+          "blockHash": "0xf5929f2b3ecf9aada976214f24fd0dc4f684c525f874cfd0073a3be6b7b47e58",
+          "gasUsed": "21120437",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0x93775fc40311E655E386D04Fbb73D4304923e386",
+          "chainId": 7082400,
+          "calldataHash": "0x363527345d2ef06339f5b32d74d76b8f14130b094996df1f25f4add6c31942c5",
+          "selector": "0xc55b572d",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x436cfd61f4bb8bcf064d686657d69fcd64a5b8392079645fba893c69d0887aab",
+          "logCount": 8
+        },
+        {
+          "label": "full cleanup exit for 30 bps pool",
+          "hash": "0xee86e4f57c05eebd7d68f3b984cd2a95c7f8c05270aafca3dcc0c792aab7d900",
+          "status": 1,
+          "blockNumber": 9162663,
+          "blockHash": "0x74e3e96ae84beef6fa806d41a8a3faf06332cc5062ccec59b74f0957e416c8de",
+          "gasUsed": "11808423",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xE446B1018Bd2aE3d909e148AABb9Cd24dA04f135",
+          "chainId": 7082400,
+          "calldataHash": "0x227e4b61d572da784f8117d29d8bde5320d3b6cbbf960731987891f8b1fa1ed0",
+          "selector": "0x1928ed0a",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0xd3b8437e30a2bb02f008717f10a3b86599a3a9fee7f69f5c89b8bc762bd7215c",
+          "logCount": 9
+        },
+        {
+          "label": "configured LP factory deployment provenance",
+          "hash": "0xc3dfb999a2e67c49f729600883f76b7d7a876e9a7ed72e312f6b0532c23a3dd4",
+          "status": 1,
+          "blockNumber": 9162186,
+          "blockHash": "0x474c6786aa3fbb6393068e4acf7aa040dadd9a7f90d33209df960ecd016ebc76",
+          "gasUsed": "2991054",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": null,
+          "chainId": 7082400,
+          "calldataHash": "0x8671856039276e89433cebd2811cec2d3a18a686a22bacc587ade37e9e00b16f",
+          "selector": "0x60808060",
+          "value": "0",
+          "contractAddress": "0x85cd7727867ceA45216d3a4Cc3551CaC08b18fcb",
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "configured confidential factory deployment provenance",
+          "hash": "0xbdc04e40c1b0cda216484d95c841316ed546ae72f6b6283152b1f44aa4ba710e",
+          "status": 1,
+          "blockNumber": 9162206,
+          "blockHash": "0x2e9a77db294e4569146cd0250a9b84e618ef8c98cd2ce40e3eb0c86b3f07d94b",
+          "gasUsed": "2176979",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": null,
+          "chainId": 7082400,
+          "calldataHash": "0xebaa2e2379e60b68f7baf4c77c918e48c0e2f4a467e4e2efc7d636f288666821",
+          "selector": "0x61016080",
+          "value": "0",
+          "contractAddress": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "configured router deployment provenance",
+          "hash": "0x6ef253c7f8fdf0b5162c826d069f571756ca065b0912bc3a07c37133b9511d4d",
+          "status": 1,
+          "blockNumber": 9162253,
+          "blockHash": "0xa0720f72db39737bdd4e64f22ce2c06660923a113c06dad18687d464cc825184",
+          "gasUsed": "2182401",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": null,
+          "chainId": 7082400,
+          "calldataHash": "0x96f4aa994671d0e704b50b2582eb458a2a4bee30a1477f87d98943121f101b82",
+          "selector": "0x60808060",
+          "value": "0",
+          "contractAddress": "0x93775fc40311E655E386D04Fbb73D4304923e386",
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        }
+      ],
+      "recoveredResources": [
+        {
+          "id": "pool-100",
+          "kind": "confidential-pool",
+          "address": "0x7C95491D6d4Ff52FfDDe262b647E04AebCb119b5",
+          "creationTransactionHash": "0x9c36ac1f14c3493aff523f410957b9babde5d16c1577928ec58d84157024ed9f",
+          "recoveryTransactionHashes": [
+            "0x9c36ac1f14c3493aff523f410957b9babde5d16c1577928ec58d84157024ed9f"
+          ],
+          "metadata": {
+            "factoryAddress": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+            "token0Address": "0x6cE8907414986E73De9e7D28d62Ea2080F8E88E1",
+            "token1Address": "0xcEF137E96eDF68EE99D4CdEa7085f154d74895cD",
+            "decimals0": 18,
+            "decimals1": 6,
+            "feeBps": 100
+          }
+        },
+        {
+          "id": "pool-30",
+          "kind": "confidential-pool",
+          "address": "0xE446B1018Bd2aE3d909e148AABb9Cd24dA04f135",
+          "creationTransactionHash": "0xf65bec3a66133f2466f1cb70fd1ec32e0643846807800d01ba86cdb41e4a1655",
+          "recoveryTransactionHashes": [
+            "0xee86e4f57c05eebd7d68f3b984cd2a95c7f8c05270aafca3dcc0c792aab7d900"
+          ],
+          "metadata": {
+            "factoryAddress": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+            "token0Address": "0x1503b02a4Aa27812306c65116FD23b733603F142",
+            "token1Address": "0xF009BADb181d471995a1CFF406C3Db7B180F64eA",
+            "decimals0": 18,
+            "decimals1": 18,
+            "feeBps": 30
+          }
+        }
+      ],
+      "assertions": [
+        "reference and differing runtime tokens passed structural compatibility",
+        "configured factory created canonical pools without token approval",
+        "balance-derived liquidity stayed within one tenth of one percent",
+        "configured router quote and atomic swap preserved parity",
+        "router escrow and pool allowances returned to zero",
+        "configured compatibility pools exited with zero residue"
+      ],
+      "outcome": "passed",
+      "attestation": {
+        "scheme": "eip191",
+        "digest": "0x6bffc3f825b6fff6e5e1347cf89784a8dfe86977cc0a53401677b836af800086",
+        "signer": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+        "signature": "0xf4002c1c8deed0bb4af0af2b6e6ce07284afeb6a553746336730ac4b5ad0f4970d4390f1e52f8d483ef1198491c17728d5bfc8cbd4449ff0be4310aeaf672ffd1c"
+      }
+    },
+    {
+      "schema": "cipherdex.funded-run-evidence/v6",
+      "runner": "configured-launchpad",
+      "sourceCommit": "e7be24fa6b53fc1181b2c87440a47b2c6dafda57",
+      "chainId": 7082400,
+      "owner": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+      "startedAt": "2026-08-22T09:48:32.527Z",
+      "deployment": {
+        "recordPath": "deployments/coti-testnet-e7be24fa6b53fc1181b2c87440a47b2c6dafda57.json",
+        "recordSha256": "fb96c04567ecc1f53f82da497f2bb2921954cede463447e7767549f083ae3b0d",
+        "manifestCommit": "8388923dead96313cb4be9dc478d7c479ebbb5f0",
+        "sourceCommit": "e7be24fa6b53fc1181b2c87440a47b2c6dafda57"
+      },
+      "runnerSource": "scripts/testnet-launchpad.ts",
+      "runnerSourceSha256": "1738d0affdec601b5c68984d105c37e4c1220d1a9cedfb461e9ed0def2ae37e1",
+      "generatedAt": "2026-08-22T10:05:46.043Z",
+      "participants": [
+        "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+        "0x503860ABBFE4910594D648d223FF70bE9A6b6D44"
+      ],
+      "configuration": {
+        "chainId": 7082400,
+        "confidentialPoolVersion": 3,
+        "disposition": 0,
+        "factory": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+        "feeBeneficiary": "0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff",
+        "feeBps": 30,
+        "initializationStrategy": "0x1d964b2aB2548BE27872737184a5382D0F78aD79",
+        "initializationStrategyVersion": 1,
+        "launchpadMigrator": "0xbfD4983c13746275e7C2B1665df957cBC9c8184A",
+        "launchpadMigratorVersion": 4,
+        "maximumBalanceBps": 10,
+        "privacyMode": 1,
+        "tokenA": "0x1503b02a4aa27812306c65116fd23b733603f142",
+        "tokenACodehash": "0xc20a798d468089168d3a741d9ebd87877c86200c66615fa2232bbaee8caa115e",
+        "tokenB": "0xf009badb181d471995a1cff406c3db7b180f64ea",
+        "tokenBCodehash": "0x4d0e1851f5ad83578a9b502ea2adc88f9a96fe3ab4bccf92a94befa97d458ec9"
+      },
+      "configurationHash": "0x66b6c4e6e62d5c45f5e930f478f9fa79155ef8fb1d6d7cc145321d4260ffd49e",
+      "artifacts": [
+        {
+          "label": "configured launchpad fee vault",
+          "address": "0x742be5fa9A518760b7147632324e6A07c78CB7A1",
+          "contractName": "CipherDEXFeeVault",
+          "sourceName": "contracts/CipherDEXFeeVault.sol",
+          "runtimeCodehash": "0x0a31d459cba5dc561e4d0fafc605f44a6f4674f8230621b18ab93232a9c59b93",
+          "compilerInputHash": "0xd290fa638a0c63b0c4168e127d244276f93da64e60547633706682d6aba0e4be",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 8,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 200
+            },
+            "metadataBytecodeHash": "none"
+          },
+          "creationTransactionHash": "0x4019dd61d826ae4a45248c7b75f500ab77fab0e684301eb1deab69a7f843ef36",
+          "constructorArguments": [
+            "0x6214f0397e4351dCD0Ec6f3D13bC680Df7cFa4ff"
+          ]
+        },
+        {
+          "label": "configured launchpad LP factory",
+          "address": "0x85cd7727867ceA45216d3a4Cc3551CaC08b18fcb",
+          "contractName": "PrivateLPTokenFactory",
+          "sourceName": "contracts/PrivateLPTokenFactory.sol",
+          "runtimeCodehash": "0x9c796ceca64fdb8f1b780ed50588dfce7d75b5674ef5faa06bc1d5d4f063a0de",
+          "compilerInputHash": "0xe5945ee4d42891d66ec7b3352a4fdbc4030c8af35dbff1baedab34c270497863",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 0,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 205
+            },
+            "metadataBytecodeHash": "none"
+          },
+          "creationTransactionHash": "0xc3dfb999a2e67c49f729600883f76b7d7a876e9a7ed72e312f6b0532c23a3dd4",
+          "constructorArguments": []
+        },
+        {
+          "label": "configured launchpad confidential factory",
+          "address": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+          "contractName": "ConfidentialCPMMFactory",
+          "sourceName": "contracts/ConfidentialCPMMFactory.sol",
+          "runtimeCodehash": "0x1d5bda64a519d11a81f52b785e6bb11cb3bd90cfda6aba452c37b8debffa3311",
+          "compilerInputHash": "0x5d95b18b9b93e5c1f1286d37ce204a7b31a2ed0c2ce9241b937ac68e4f4fe774",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 18,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 1
+            },
+            "metadataBytecodeHash": "none"
+          },
+          "creationTransactionHash": "0xbdc04e40c1b0cda216484d95c841316ed546ae72f6b6283152b1f44aa4ba710e",
+          "constructorArguments": [
+            "0x742be5fa9A518760b7147632324e6A07c78CB7A1",
+            "0x85cd7727867ceA45216d3a4Cc3551CaC08b18fcb",
+            "0x056678e7cE7D175C6D5728f486D7987c43243703",
+            "0xa7f71a39c863e2b36bc68eb6644c4416616d52b506841c839c24d622443293b6",
+            "0xD6d6C03B9B7B6156FdD51654A462c19FFC971230",
+            "0x7bc7dc1aa4ded881e03c3cde281e29dd8183358e839bb3e52b03bc7b54df0ebc"
+          ]
+        },
+        {
+          "label": "configured launch initialization strategy",
+          "address": "0x1d964b2aB2548BE27872737184a5382D0F78aD79",
+          "contractName": "ConfidentialLaunchInitializationStrategy",
+          "sourceName": "contracts/ConfidentialLaunchInitializationStrategy.sol",
+          "runtimeCodehash": "0x335fc04d96c84bee1a26c771a6b114f8dac1854270d3d9c9714a3b75a7c20b99",
+          "compilerInputHash": "0x46b010ad8861d10e9ad595bf059d18a485eea1b787129d500bf6ccca3685abd4",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 0,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 1
+            },
+            "metadataBytecodeHash": "none"
+          },
+          "creationTransactionHash": "0x9d4dbefd1b68f68a4f8225b0316627d9cf3ef3e5dfc5309fbdc9409db9f931ae",
+          "constructorArguments": [
+            "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+            "0xD6d6C03B9B7B6156FdD51654A462c19FFC971230",
+            "0x503860ABBFE4910594D648d223FF70bE9A6b6D44"
+          ]
+        },
+        {
+          "label": "configured launchpad migrator",
+          "address": "0xbfD4983c13746275e7C2B1665df957cBC9c8184A",
+          "contractName": "ConfidentialLaunchpadMigrator",
+          "sourceName": "contracts/ConfidentialLaunchpadMigrator.sol",
+          "runtimeCodehash": "0xf72c938d461e1a2caf44c6bd9dc444554d1ad3bbd8c32cbc47d51717cbb010ca",
+          "compilerInputHash": "0x6cf66b73d65c3097229a59b8b3cafb93027fb965ea29a180cf85d9dc3e28a56f",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 26,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 1
+            },
+            "metadataBytecodeHash": "none"
+          }
+        },
+        {
+          "label": "configured launchpad pool",
+          "address": "0xEd3660A370e6Ba72F5C66edEaea599952EfC0775",
+          "contractName": "ConfidentialCPMM",
+          "sourceName": "contracts/ConfidentialCPMM.sol",
+          "runtimeCodehash": "0x7bc7a9d98cf8cefc0aca873ce46c8b6010f90c11f1d2d1429585832c91fff3a8",
+          "compilerInputHash": "0x2ffef493de3509e7aed8c53501277c7574dd153d2dbec6191b059ab67ca15165",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 50,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 1
+            },
+            "metadataBytecodeHash": "none"
+          }
+        },
+        {
+          "label": "configured launchpad private LP token",
+          "address": "0xCBe9A00B2a52E7857c446F6C9466C2aDAB55Baf0",
+          "contractName": "PrivateLPToken",
+          "sourceName": "contracts/PrivateLPToken.sol",
+          "runtimeCodehash": "0x079929f15cb3e26fb8c3e016ef7e1febbbb1fa247ba216c6af141f1ccb280a02",
+          "compilerInputHash": "0x6659e55465ed28c14a2f2fab8f14d8f1f3378f35cb97c5aa6f84ab15f2d96b21",
+          "solcVersion": "0.8.28",
+          "solcLongVersion": "0.8.28+commit.7893614a",
+          "immutableReferenceCount": 3,
+          "settings": {
+            "evmVersion": "paris",
+            "viaIR": true,
+            "optimizer": {
+              "enabled": true,
+              "runs": 204
+            },
+            "metadataBytecodeHash": "none"
+          }
+        }
+      ],
+      "transactions": [
+        {
+          "label": "launch commitment",
+          "hash": "0x4db6efceb710b4c64b5a3701d99c2c47100b7279a4591dc67938bf334e55ac93",
+          "status": 1,
+          "blockNumber": 9162926,
+          "blockHash": "0x41cecb7c642f35d7c7384dad1fa537de845a5a37c5a93c9bc043b6a155f9aca7",
+          "gasUsed": "6465514",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0x1d964b2aB2548BE27872737184a5382D0F78aD79",
+          "chainId": 7082400,
+          "calldataHash": "0x284badf2884d4247f2549ec3292fb8de01c6ad95e58369e1e50b27325b245290",
+          "selector": "0x132490ee",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x2f998d4d839eeed7e247fef4583e74da6286485492f1244c3719302ccef07940",
+          "logCount": 7
+        },
+        {
+          "label": "token0 launchpad approval",
+          "hash": "0xae74e364ac4c51fb914ce162268cc1e552adb7e585179c7695222098787cfbb4",
+          "status": 1,
+          "blockNumber": 9162941,
+          "blockHash": "0x17e7fe0085e4521278042ccfb2390b6151d20b5bc4c1c9ff96f479d82ea200fd",
+          "gasUsed": "458458",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0x1503b02a4Aa27812306c65116FD23b733603F142",
+          "chainId": 7082400,
+          "calldataHash": "0x20143975ede901aeea02ef8033fc72badf2aaffa04511759d6c592bc7ad390f2",
+          "selector": "0x8e532c44",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x1216d2481e1012accceb85b72906b0e1f0b8e1ca6a99959cd8dda0ef261bc1af",
+          "logCount": 1
+        },
+        {
+          "label": "token1 launchpad approval",
+          "hash": "0xf5df2fef02e6bdad9f50c83c8b33abfbb293a66cf3cf09b3bb9aaeee30f5515b",
+          "status": 1,
+          "blockNumber": 9162953,
+          "blockHash": "0xcfa5839d85a3c0a54af0198dede2cbaae875ef47065fd9c6da9d7bbf7b305121",
+          "gasUsed": "458482",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xF009BADb181d471995a1CFF406C3Db7B180F64eA",
+          "chainId": 7082400,
+          "calldataHash": "0x5cc499d3a475f2d0e651903f2c0ddd345f160adc001bfb8645438566411a4dd8",
+          "selector": "0x8e532c44",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x35f3a1c9dc2e6611916d3b641b2bb40ea0eef2c596e8b01f33f9a4a8455742a3",
+          "logCount": 1
+        },
+        {
+          "label": "rejected launchpad price-bound probe",
+          "hash": "0x26d1fedf5cc2e470ea79e742db4e2ed996c840210321fbde5bb436e6018c11c8",
+          "status": 0,
+          "blockNumber": 9162964,
+          "blockHash": "0xcbcbe6d8cfc48f9bb128a0176cb2565b8c511bee0f8d908046dd46342629a18c",
+          "gasUsed": "12864768",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xbfD4983c13746275e7C2B1665df957cBC9c8184A",
+          "chainId": 7082400,
+          "calldataHash": "0x440156f9b88728fd552545932cb9f1de8f9de4cf1b89dd010a0d5c812a47b0d8",
+          "selector": "0xb3f48f47",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "atomic launchpad migration",
+          "hash": "0x7a27c5ce990138213d8682dab210fc5e4ab09c56eed3caba315551163d89bbe8",
+          "status": 1,
+          "blockNumber": 9162976,
+          "blockHash": "0x9ae9326e2ff20dc47ad6d95e446c2a8362591cd2d69b3aba257ebeb2137c527c",
+          "gasUsed": "15771039",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xbfD4983c13746275e7C2B1665df957cBC9c8184A",
+          "chainId": 7082400,
+          "calldataHash": "0x24ec44c942497fc22905ee814f211741d9366825c9f0ad7874c1865d1a7da36d",
+          "selector": "0xb3f48f47",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x543d09bbea224b3be91cdb24845950a51d2d004983943eb0b6cd9b04b070d2bd",
+          "logCount": 14
+        },
+        {
+          "label": "launchpad replay probe",
+          "hash": "0xbfc8a06ba9cd0aad64057b68a404c0e4d3eac8b12d260b309d6857fb23be3894",
+          "status": 0,
+          "blockNumber": 9162987,
+          "blockHash": "0x15b1676bfb4c76ebeaa798fb1e8b3b8f9e3aa73590818f1ae5f44306affde494",
+          "gasUsed": "82297",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xbfD4983c13746275e7C2B1665df957cBC9c8184A",
+          "chainId": 7082400,
+          "calldataHash": "0x24ec44c942497fc22905ee814f211741d9366825c9f0ad7874c1865d1a7da36d",
+          "selector": "0xb3f48f47",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "launchpad pool direct paid quote",
+          "hash": "0x6676047009b05ce1ba8c536cff99a34ec7e8e33568aaeb921f6f35c5f34380f6",
+          "status": 1,
+          "blockNumber": 9162999,
+          "blockHash": "0x44547e527ede0c16a45dada3d38ca82fc7c21d057abc3679ad7777eef6313b8c",
+          "gasUsed": "9010947",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xEd3660A370e6Ba72F5C66edEaea599952EfC0775",
+          "chainId": 7082400,
+          "calldataHash": "0xab5991c1c6b20cbdcda4cc1b3651af03faa8e18d97dc6b426c481d1f4fc4766c",
+          "selector": "0xf79365c8",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0xe8b90dbfdcc424b162284cbccaead214cc59e8bc4c6a091d571d446610cd84e2",
+          "logCount": 1
+        },
+        {
+          "label": "launchpad pool direct-swap allowance",
+          "hash": "0xc39ac5ba3169ca2e3a60bb099739be049bfddc3c1b0285cd6d42781646fe54de",
+          "status": 1,
+          "blockNumber": 9163012,
+          "blockHash": "0x9ca5b6e2e8bba7d702d6b2f5a21085f1053b40105f3df8799cf642738a39e2b0",
+          "gasUsed": "458482",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0x1503b02a4Aa27812306c65116FD23b733603F142",
+          "chainId": 7082400,
+          "calldataHash": "0xbca14a7acecbd7ebac6d3cfa2fc264776d010dbe718b9212b2ffd561c2aa445c",
+          "selector": "0x8e532c44",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0xe21caec28aa30b40bb9edf8848eae5dc10a482efd6e29d1c207bcce7ea83be57",
+          "logCount": 1
+        },
+        {
+          "label": "launchpad pool direct private swap",
+          "hash": "0xa13da4c8a939ac0c44169081c8855e75f32470bdb42eff26da2fc685c433fdf8",
+          "status": 1,
+          "blockNumber": 9163023,
+          "blockHash": "0xa6b67038d7d990910d03bd3df02101f8a4381aa76260a017a43bf61173ea766a",
+          "gasUsed": "11499869",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xEd3660A370e6Ba72F5C66edEaea599952EfC0775",
+          "chainId": 7082400,
+          "calldataHash": "0x3f217630ca253f93d6652c04aad5e186e9d10305b747ab6eb8f8fa4f9290478f",
+          "selector": "0xa33cffc4",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x5bc95122cc82a65aa77fd4b4f1553254335aaaa68339919e8a6f7a3d246b2caf",
+          "logCount": 4
+        },
+        {
+          "label": "protected launchpad pool partial exit",
+          "hash": "0xd2102f5e037517f61a86c91de3f1dc8ac06cc22bdc674dc11ee6a701425a0468",
+          "status": 1,
+          "blockNumber": 9163036,
+          "blockHash": "0x0e953168c58e19b9728d3336dbacce7843a5b2e2a26eb44834687b1ab5bd6fe2",
+          "gasUsed": "10236014",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xEd3660A370e6Ba72F5C66edEaea599952EfC0775",
+          "chainId": 7082400,
+          "calldataHash": "0x9f95eafbac958fb9eeb6d89ffba411818604a883ec4834693df7bea2333e0627",
+          "selector": "0x1928ed0a",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x1ed88cf4f85e653c887a74ebd5f9e16ef9a4ffb619af7aa742e7778e51fdd294",
+          "logCount": 4
+        },
+        {
+          "label": "protected launchpad pool first full exit",
+          "hash": "0x23f9c4e86eb42ed72cebed25b0911defd3da865aad0081949101620be2622f48",
+          "status": 1,
+          "blockNumber": 9163047,
+          "blockHash": "0xdcefc93d1f04fad67c62f1f2c3d7d1278ecc66d8b592fbbb6176e21f1711a0e3",
+          "gasUsed": "11888423",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xEd3660A370e6Ba72F5C66edEaea599952EfC0775",
+          "chainId": 7082400,
+          "calldataHash": "0x7bcfb1852303aba761a8c49cd0ac65bd68b7e19fc154f4f0ac8ee4082e6a6b29",
+          "selector": "0x1928ed0a",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x1ba9664d20dbf9451d0ce1ded0d8c7c420f84e03f2754ac6eb8f4a06a99fca25",
+          "logCount": 9
+        },
+        {
+          "label": "token0 protected-pool re-seed approval",
+          "hash": "0x802af6be68488a989719935616056e4b9289346666bc4f680b4c85eff4d233b1",
+          "status": 1,
+          "blockNumber": 9163061,
+          "blockHash": "0x29c748574404dc94f6a235362eb8ced34edac4c3394be237b42d46416dec4a71",
+          "gasUsed": "460112",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0x1503b02a4Aa27812306c65116FD23b733603F142",
+          "chainId": 7082400,
+          "calldataHash": "0xf878a79d885e0b8b29627016434bc2bf45c9f5be6696447a2c3668d3c92886f7",
+          "selector": "0x8e532c44",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x6c805eb6c6ba571e602e5dde27465cb3e4e745bb864e4b17eb27fd431bc55d64",
+          "logCount": 1
+        },
+        {
+          "label": "token1 protected-pool re-seed approval",
+          "hash": "0x5e226630e69ff096c30f1ac976c8d13d67a4d41f416db4795f1876e8e475b603",
+          "status": 1,
+          "blockNumber": 9163074,
+          "blockHash": "0xe9f47f54dbf81c510e7d33755e0e5b60cc3806b9fde79c6e559d19033f976769",
+          "gasUsed": "458470",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xF009BADb181d471995a1CFF406C3Db7B180F64eA",
+          "chainId": 7082400,
+          "calldataHash": "0xe6283fb87db4465d252dcb7d5c1b8db488515b563c0fd5a88601ef888e725ded",
+          "selector": "0x8e532c44",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x6a650efec812f42bb1207f3da25e45102bd2b897d35ad82bd915853d38cfbceb",
+          "logCount": 1
+        },
+        {
+          "label": "protected pool ordinary re-seed",
+          "hash": "0x5e4b9b7e6fdad34758d0f5fa25ee526de54e29bc94f4e35ab7d86f117e4f53b1",
+          "status": 1,
+          "blockNumber": 9163086,
+          "blockHash": "0x91a86625f5c57ec4a576fd3a33fcf38e6309c9dfde5f82ec50ec05f3a41d7fa1",
+          "gasUsed": "13791748",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xEd3660A370e6Ba72F5C66edEaea599952EfC0775",
+          "chainId": 7082400,
+          "calldataHash": "0xa35d89ffe09675f90cf1f55f8bbe2437bce7db81becfebc3340a3cf780127bd9",
+          "selector": "0xca671e61",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x65fb1e411f56b804161dd3e2b2704a702bcc46d4571ef518faadf426df3f3e47",
+          "logCount": 6
+        },
+        {
+          "label": "full configured launchpad-pool exit",
+          "hash": "0x6169ba60cfd536c99f8338bb15c398b321877b175ffa55877ea294417d11f8f3",
+          "status": 1,
+          "blockNumber": 9163106,
+          "blockHash": "0x95e7c77c85dc66b454037cbbedb21a65a975a5366e9773817ee9b84ea889e2c1",
+          "gasUsed": "10241298",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": "0xEd3660A370e6Ba72F5C66edEaea599952EfC0775",
+          "chainId": 7082400,
+          "calldataHash": "0xddcc5aef2e711bdbb3f4b145fd2a1dd96ee2fd7b4610cb672e503b873dbd6fd9",
+          "selector": "0x1928ed0a",
+          "value": "0",
+          "contractAddress": null,
+          "logsHash": "0x6c310cc3f75f26efdedd2e6fbf89e8f24cd0cbeb27e0779070be42889e29a312",
+          "logCount": 4
+        },
+        {
+          "label": "configured fee vault deployment provenance",
+          "hash": "0x4019dd61d826ae4a45248c7b75f500ab77fab0e684301eb1deab69a7f843ef36",
+          "status": 1,
+          "blockNumber": 9162180,
+          "blockHash": "0xe6ddd151bb30545ef871db4faba8978da726c48b8557fc55e4d3cc4f25392d25",
+          "gasUsed": "1841820",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": null,
+          "chainId": 7082400,
+          "calldataHash": "0xfb64f2a767955772ead22f197d0ce10c7faff5246e412358aa03cbee46c3dce4",
+          "selector": "0x60e03461",
+          "value": "0",
+          "contractAddress": "0x742be5fa9A518760b7147632324e6A07c78CB7A1",
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "configured LP factory deployment provenance",
+          "hash": "0xc3dfb999a2e67c49f729600883f76b7d7a876e9a7ed72e312f6b0532c23a3dd4",
+          "status": 1,
+          "blockNumber": 9162186,
+          "blockHash": "0x474c6786aa3fbb6393068e4acf7aa040dadd9a7f90d33209df960ecd016ebc76",
+          "gasUsed": "2991054",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": null,
+          "chainId": 7082400,
+          "calldataHash": "0x8671856039276e89433cebd2811cec2d3a18a686a22bacc587ade37e9e00b16f",
+          "selector": "0x60808060",
+          "value": "0",
+          "contractAddress": "0x85cd7727867ceA45216d3a4Cc3551CaC08b18fcb",
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "configured confidential factory deployment provenance",
+          "hash": "0xbdc04e40c1b0cda216484d95c841316ed546ae72f6b6283152b1f44aa4ba710e",
+          "status": 1,
+          "blockNumber": 9162206,
+          "blockHash": "0x2e9a77db294e4569146cd0250a9b84e618ef8c98cd2ce40e3eb0c86b3f07d94b",
+          "gasUsed": "2176979",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": null,
+          "chainId": 7082400,
+          "calldataHash": "0xebaa2e2379e60b68f7baf4c77c918e48c0e2f4a467e4e2efc7d636f288666821",
+          "selector": "0x61016080",
+          "value": "0",
+          "contractAddress": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+          "logsHash": "0x518674ab2b227e5f11e9084f615d57663cde47bce1ba168b4c19c7ee22a73d70",
+          "logCount": 0
+        },
+        {
+          "label": "configured launch strategy deployment provenance",
+          "hash": "0x9d4dbefd1b68f68a4f8225b0316627d9cf3ef3e5dfc5309fbdc9409db9f931ae",
+          "status": 1,
+          "blockNumber": 9162233,
+          "blockHash": "0x54a9131abf1e7a25d99e134c0f0278f1a6a00c195dddc0f432409ca101155f51",
+          "gasUsed": "4286439",
+          "from": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+          "to": null,
+          "chainId": 7082400,
+          "calldataHash": "0x256d9ce228724fe0deb25d16c823c1429e0838228622a04ab64c5d9a4503586f",
+          "selector": "0x60808060",
+          "value": "0",
+          "contractAddress": "0x1d964b2aB2548BE27872737184a5382D0F78aD79",
+          "logsHash": "0xc1375aaecaacb288b1220dcda29b5ee7e8c70e6515c0bff83d1038d29b2b8982",
+          "logCount": 1
+        }
+      ],
+      "recoveredResources": [
+        {
+          "id": "launchpad-pool",
+          "kind": "launchpad-pool",
+          "address": "0xEd3660A370e6Ba72F5C66edEaea599952EfC0775",
+          "creationTransactionHash": "0x4db6efceb710b4c64b5a3701d99c2c47100b7279a4591dc67938bf334e55ac93",
+          "recoveryTransactionHashes": [
+            "0x6169ba60cfd536c99f8338bb15c398b321877b175ffa55877ea294417d11f8f3"
+          ],
+          "metadata": {
+            "factoryAddress": "0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434",
+            "migratorAddress": "0xbfD4983c13746275e7C2B1665df957cBC9c8184A",
+            "initializationStrategyAddress": "0x1d964b2aB2548BE27872737184a5382D0F78aD79",
+            "token0Address": "0x1503b02a4aa27812306c65116fd23b733603f142",
+            "token1Address": "0xf009badb181d471995a1cff406c3db7b180f64ea",
+            "decimals0": 18,
+            "decimals1": 18,
+            "feeBps": 30
+          }
+        }
+      ],
+      "assertions": [
+        "empty protected pool slot verified",
+        "dual-authorized launch commitment created one uninitialized protected pool",
+        "failed signed alternate-bound launch request rolled back atomically",
+        "launchpad migration used canonical pool",
+        "LP disposition and lock state verified",
+        "replay protection rolled back atomically",
+        "direct private quote and swap preserved exact balance and allowance deltas",
+        "partial and full LP removal succeeded",
+        "completed protected pool remained permissionless after a full exit and ordinary re-seed",
+        "private balances and allowances recovered",
+        "configured launchpad pool recovered with zero residue"
+      ],
+      "outcome": "passed",
+      "attestation": {
+        "scheme": "eip191",
+        "digest": "0xb6349871f5d92e44924374684405264bfc2eb048fd07f1999d4682364f0e7bc9",
+        "signer": "0x42230C3CDc4c2604a3E481c47Dc29a22C0eC0725",
+        "signature": "0xb11a30b05e008987d9851756df0d814d68ec14f1b1b46435c0961d2b0327c44e35548a6da14f145ab979e504caf630800589e1eb953a76e4e3547e54fa5280a61c"
+      }
+    }
+  ]
+}

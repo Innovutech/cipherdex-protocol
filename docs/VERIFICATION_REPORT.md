@@ -395,33 +395,82 @@ they are not the supported integration surface.
 
 ### Fresh COTI testnet deployment
 
-Source commit `af9d65f88f9e78aaba34fe5979473c6311d59181` was deployed to
-COTI testnet after the permissionless private-token compatibility refactor. The
-complete 17-transaction deployment and binding record is
-`deployments/coti-testnet-af9d65f88f9e78aaba34fe5979473c6311d59181.json`.
-All transactions succeeded and consumed `23448875` gas in total. The new
+Source commit `e7be24fa6b53fc1181b2c87440a47b2c6dafda57` is the supported
+COTI testnet deployment for the permissionless private-token compatibility
+model. The complete 17-transaction deployment and binding record is
+`deployments/coti-testnet-e7be24fa6b53fc1181b2c87440a47b2c6dafda57.json`.
+All transactions succeeded and consumed `23448875` gas in total. The
 confidential factory constructor has six arguments and the manifest contains
 neither `reviewedPrivateTokens` nor `approvedPrivateTokenCodehashes`.
 
-- Fee vault: `0x41916Ee1fCacb21933AbE9d85F1A1989C4D795aB`.
-- Private LP-token factory: `0x3E4FA6E18F07dbaf71FD504A1A6c63Cc65d2ba68`.
+- Fee vault: `0x742be5fa9A518760b7147632324e6A07c78CB7A1`.
+- Private LP-token factory: `0x85cd7727867ceA45216d3a4Cc3551CaC08b18fcb`.
 - Initialization-strategy registry:
-  `0x76470ffDe28a840CD5e669b3Ff18d52C724e6936`.
+  `0xD6d6C03B9B7B6156FdD51654A462c19FFC971230`.
 - Confidential pool deployer:
-  `0x68338a5A722aa00DE980deb8e826c6fFf6F03C79`.
-- Confidential factory: `0xDB9b624bFb3e5EB073fEAf5289B21BbAB618bb30`.
+  `0x056678e7cE7D175C6D5728f486D7987c43243703`.
+- Confidential factory: `0xE5BF8a12D922589819eFE6bc7f80926Dea9b7434`.
 - Launch initialization strategy:
-  `0x26989f2593Cf06aa0a5630F9C6d0CE612EF4B7f8`.
-- Launchpad migrator: `0xce11f4578ecC1d0A9c9054A7A7DD26830F1f9C96`.
+  `0x1d964b2aB2548BE27872737184a5382D0F78aD79`.
+- Launchpad migrator: `0xbfD4983c13746275e7C2B1665df957cBC9c8184A`.
 - Confidential best-execution router:
-  `0xa8EE19691Fc9Db3666635e2f409844e1B12A385f`.
-- Public factory: `0xbc6a22c8d58d8067488841A2AF1ba64696dF23d3`.
-- Public quoter: `0x006ed12889125eeF5d1B200309F1a7735901B998`.
-- Public router: `0xAa328e7C1Bb20d005d8A26E3bbfbe64B4eba62A6`.
+  `0x93775fc40311E655E386D04Fbb73D4304923e386`.
+- Public factory: `0xc5666f11Edc2d90D4DD8D7f880F3Fee1D7AE3a92`.
+- Public quoter: `0x236c94020d4EF4fCcB17B8d4273B612197F885Ff`.
+- Public router: `0xEC239e7447F1840CfCCBbB7dc0cD6873A3346Edf`.
 
-Funded compatibility, configured-router and configured-launchpad evidence for
-this deployment remains pending below. The preceding deployment is retained as
-historical complete-key evidence only.
+The two EIP-191-attested sanitized funded records are published together at
+`evidence/coti-testnet-e7be24fa6b53fc1181b2c87440a47b2c6dafda57.json`
+(SHA-256 `2592828f07b77f10f1312db2ccc04de20b4ba1b9b445d339ba48b9d1efe97c0c`).
+The records contain no private keys, AES keys, ciphertexts, signed transaction
+payloads, private balances or decrypted values.
+
+The configured compatibility record proves the old p.COTI reference runtime
+codehash `0xcd4b4b3329cd64190c49fdfbe7feb3b2a81cfcb50c36f50d4d603c76906589b2`
+alongside distinct, previously unknown p.gCOTI and p.WETH runtime codehashes
+`0xc20a798d468089168d3a741d9ebd87877c86200c66615fa2232bbaee8caa115e`
+and `0x4d0e1851f5ad83578a9b502ea2adc88f9a96fe3ab4bccf92a94befa97d458ec9`.
+Structural compatibility and canonical pool creation succeeded without token
+registration or bytecode approval. Principal transactions were:
+
+- Canonical 30 bps pool creation:
+  `0xf65bec3a66133f2466f1cb70fd1ec32e0643846807800d01ba86cdb41e4a1655`.
+- Arbitrary-ratio initialization:
+  `0xcba6a6da451f8e85a25acd44f022e1e5887cdc0d5f901d5281ec33fb1155b716`.
+- Configured router quote:
+  `0x88d3f1e519cf4f70e0d5219f54732ec1003345a8880512fec7903570fa4c63b0`.
+- Atomic best swap:
+  `0xb22376e797e206687d7d39edd9ea4dca1e2950782c6c0d2eac6c6f613d20ce4a`.
+- Full cleanup exit:
+  `0xee86e4f57c05eebd7d68f3b984cd2a95c7f8c05270aafca3dcc0c792aab7d900`.
+
+The configured launchpad record uses the same two unregistered differing
+runtimes and proves commitment, protected-pool creation, atomic graduation,
+private quote/swap, partial/full LP disposition, ordinary re-seeding after a
+full exit, replay rejection and final cleanup. Principal transactions were:
+
+- Launch commitment:
+  `0x4db6efceb710b4c64b5a3701d99c2c47100b7279a4591dc67938bf334e55ac93`.
+- Atomic migration:
+  `0x7a27c5ce990138213d8682dab210fc5e4ab09c56eed3caba315551163d89bbe8`.
+- Direct private quote and swap:
+  `0x6676047009b05ce1ba8c536cff99a34ec7e8e33568aaeb921f6f35c5f34380f6`
+  and `0xa13da4c8a939ac0c44169081c8855e75f32470bdb42eff26da2fc685c433fdf8`.
+- Partial and first full exits:
+  `0xd2102f5e037517f61a86c91de3f1dc8ac06cc22bdc674dc11ee6a701425a0468`
+  and `0x23f9c4e86eb42ed72cebed25b0911defd3da865aad0081949101620be2622f48`.
+- Ordinary re-seed and terminal full exit:
+  `0x5e4b9b7e6fdad34758d0f5fa25ee526de54e29bc94f4e35ab7d86f117e4f53b1`
+  and `0x6169ba60cfd536c99f8338bb15c398b321877b175ffa55877ea294417d11f8f3`.
+
+Both records enforce a maximum funded amount of ten balance basis points,
+prove exact balance-delta and quote/settlement invariants, and finish with zero
+router escrow, zero relevant allowances and zero protocol-owned test residue.
+p.USDT was considered but skipped before broadcast because its 6-decimal
+minimum safe input could not fit inside the hard balance cap; the runner did not
+increase the amount and did not print the balance. Earlier compatibility
+deployments and configured runs are diagnostic artifacts only and are not the
+supported integration surface.
 
 ### Previous complete-key COTI testnet deployment
 
