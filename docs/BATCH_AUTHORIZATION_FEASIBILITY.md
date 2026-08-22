@@ -8,7 +8,8 @@ with the current COTI testnet MPC boundary.
 CipherDEX production entry points remain unchanged. The diagnostic contracts and
 SDK builders in source commit `ce16606989985b09a0607b8b12a4bcf14b0245ff`
 prove the intended authorization semantics locally and isolate the live runtime
-blocker. They are not a production protocol version or deployment.
+blocker. They are not a production protocol version or deployment and have been
+removed from the supported source and SDK surface.
 
 ## Intended Boundary
 
@@ -31,7 +32,8 @@ validation use the shared `SignatureValidation` boundary.
 
 ## Local Evidence
 
-The focused `InputBatchAuthorization.spec.ts` suite proves:
+The focused `InputBatchAuthorization.spec.ts` suite in source commit `ce16606`
+proves:
 
 - SDK and Solidity digest equality;
 - one successful EOA authorization and nonce consumption;
@@ -47,7 +49,7 @@ Mocha results.
 
 ## Live COTI Testnet Evidence
 
-The diagnostic source-bound stack is recorded in
+The diagnostic source-bound stack is recorded in commit `eeacd32` at
 `deployments/coti-testnet-ce16606989985b09a0607b8b12a4bcf14b0245ff.json`.
 It exists only to authenticate the funded probe and is not an authoritative
 CipherDEX integration deployment.

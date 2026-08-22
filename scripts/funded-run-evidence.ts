@@ -62,7 +62,6 @@ const NESTED_CREATION_CONTRACTS = new Set([
   "ConfidentialLaunchpadMigrator",
 ]);
 const RUNNER_SOURCES = Object.freeze<Record<string, string>>({
-  "batch-authorization-feasibility": "scripts/testnet-batch-authorization-probe.ts",
   "best-execution-feasibility": "scripts/testnet-best-execution-feasibility.ts",
   "best-execution": "scripts/testnet-best-execution.ts",
   "configured-compatibility": "scripts/testnet-best-execution.ts",
@@ -78,15 +77,6 @@ function requireSelector(abi: readonly string[], functionName: string): string {
 }
 
 const SELECTOR = Object.freeze({
-  batchProbeTwo: requireSelector([
-    "function probeTwo((uint256,uint256)[],(uint256,bytes32,bytes32,uint64,bytes))",
-  ], "probeTwo"),
-  batchProbeFive: requireSelector([
-    "function probeFive((uint256,uint256)[],(uint256,bytes32,bytes32,uint64,bytes))",
-  ], "probeFive"),
-  erc1271Execute: requireSelector([
-    "function execute(address,bytes) returns (bytes)",
-  ], "execute"),
   probeQuote: "0x0b6f808f",
   probeSwap: "0x7cbe798d",
   closeAndRecover: "0xcb9648a1",
@@ -160,31 +150,6 @@ export const BEST_EXECUTION_FEASIBILITY_ROUTER_BINDING_LABELS = Object.freeze([
 ] as const);
 
 const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
-  "batch-authorization-feasibility": {
-    configurationKeys: [
-      "chainId", "domainName", "domainVersion", "fiveSlotSchema", "probe",
-      "protocolVersion", "twoSlotSchema",
-    ],
-    assertions: [
-      "two raw ciphertext slots onboarded after one EOA batch signature",
-      "five raw ciphertext slots onboarded after one EOA batch signature",
-      "encrypted batch arithmetic decrypted to the expected EOA results",
-      "modified ciphertext batch rejected before nonce consumption",
-      "consumed batch nonce replay rejected",
-      "ERC-1271 caller authorized one raw ciphertext batch",
-    ],
-    artifacts: {
-      MpcBatchAuthorizationProbe: 1,
-      MockERC1271Wallet: 1,
-    },
-    requiredTransactions: [
-      { label: /^EOA two-slot batch$/, status: 1, targetArtifactLabel: "batch authorization MPC probe", selectors: [SELECTOR.batchProbeTwo] },
-      { label: /^modified EOA two-slot batch$/, status: 0, targetArtifactLabel: "batch authorization MPC probe", selectors: [SELECTOR.batchProbeTwo] },
-      { label: /^replayed EOA two-slot batch$/, status: 0, targetArtifactLabel: "batch authorization MPC probe", selectors: [SELECTOR.batchProbeTwo] },
-      { label: /^EOA five-slot batch$/, status: 1, targetArtifactLabel: "batch authorization MPC probe", selectors: [SELECTOR.batchProbeFive] },
-      { label: /^ERC-1271 two-slot batch$/, status: 1, targetArtifactLabel: "batch authorization ERC-1271 wallet", selectors: [SELECTOR.erc1271Execute] },
-    ],
-  },
   "best-execution-feasibility": {
     configurationKeys: [
       "candidateCount", "chainId", "protocolVersion", "quoteTransport", "reviewedFactory",

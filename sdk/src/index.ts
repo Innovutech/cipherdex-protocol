@@ -1,3 +1,5 @@
+export * from "./tokenApproval";
+
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
  *
@@ -381,8 +383,6 @@ function snapshotAuthorization(value: string | Uint8Array): string {
  * Canonicalizes the complete protected-pool commitment before EIP-712 signing.
  * The caller still signs with its chosen reviewed signing implementation.
  */
-
-export * from "./inputBatch";
 export function buildConfidentialLaunchCommitment(
   input: ConfidentialLaunchCommitmentInput,
 ): ConfidentialLaunchCommitment {

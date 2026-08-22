@@ -68,6 +68,13 @@ balance-delta checks around every token movement as defense in depth. Exact
 runtime-codehash authentication remains limited to CipherDEX-owned infrastructure.
 
 Public pools expose a factory-gated exact-input router and gasless quoter.
+The dependency-free SDK defaults public token spending to exact allowances and
+offers an explicit `unlimited` mode. Its approval-plan builder takes the observed
+current allowance, reduces larger residual allowances when exact mode is chosen,
+and emits a zero-reset step before nonzero-to-nonzero changes for token
+compatibility. Confidential integrations can use the same amount-policy resolver
+before encrypting the selected allowance with the official COTI SDK; CipherDEX
+does not handle wallet AES keys.
 Confidential pools retain direct execution and additionally expose a
 factory-bound `ConfidentialBestExecutionRouter`. Users encrypt inputs for that
 router and exact function selector. The router reuses the validated MPC value
