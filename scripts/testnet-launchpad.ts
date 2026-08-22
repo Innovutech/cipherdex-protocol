@@ -21,6 +21,7 @@ import {
 } from "./funded-recovery-journal";
 import { writePreparedFundedRunEvidence } from "./funded-run-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
+import { recordConfiguredDeploymentArtifactTransactions } from "./funded-deployment-artifact-evidence";
 import {
   deriveFundedTestAmount,
   minimumInputWithProtocolFee,
@@ -1781,6 +1782,13 @@ async function main(): Promise<void> {
       constructorArguments: feeVaultDeployment.constructorArguments,
     },
     {
+      label: "configured launchpad LP factory",
+      contractName: "PrivateLPTokenFactory",
+      address: lpTokenFactoryDeployment.address,
+      creationTransactionHash: lpTokenFactoryDeployment.transactionHash,
+      constructorArguments: lpTokenFactoryDeployment.constructorArguments,
+    },
+    {
       label: "configured launchpad confidential factory",
       contractName: "ConfidentialCPMMFactory",
       address: factoryAddress,
@@ -1879,6 +1887,34 @@ async function main(): Promise<void> {
       address: lpTokenAddress,
     },
   ];
+  if (configuredProof) {
+    await recordConfiguredDeploymentArtifactTransactions(
+      recoveryJournal,
+      hardhatEthers.provider,
+      [
+        {
+          label: "configured fee vault deployment provenance",
+          address: feeVaultDeployment.address,
+          transactionHash: feeVaultDeployment.transactionHash,
+        },
+        {
+          label: "configured LP factory deployment provenance",
+          address: lpTokenFactoryDeployment.address,
+          transactionHash: lpTokenFactoryDeployment.transactionHash,
+        },
+        {
+          label: "configured confidential factory deployment provenance",
+          address: factoryDeployment.address,
+          transactionHash: factoryDeployment.transactionHash,
+        },
+        {
+          label: "configured launch strategy deployment provenance",
+          address: strategyDeployment.address,
+          transactionHash: strategyDeployment.transactionHash,
+        },
+      ],
+    );
+  }
   recoveryJournal.prepareEvidence({
     participants: [walletAddress, launchAuthorityAddress],
     configuration: launchEvidenceConfiguration,

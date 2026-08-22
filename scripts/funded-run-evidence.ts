@@ -227,6 +227,7 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       "configured compatibility pools exited with zero residue",
     ],
     artifacts: {
+      PrivateLPTokenFactory: 1,
       ConfidentialCPMMFactory: 1,
       ConfidentialBestExecutionRouter: 1,
       ConfidentialCPMM: 2,
@@ -337,6 +338,7 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
     ],
     artifacts: {
       CipherDEXFeeVault: 1,
+      PrivateLPTokenFactory: 1,
       ConfidentialCPMMFactory: 1,
       ConfidentialLaunchInitializationStrategy: 1,
       ConfidentialLaunchpadMigrator: 1,

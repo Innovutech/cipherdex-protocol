@@ -26,6 +26,7 @@ import {
   writePreparedFundedRunEvidence,
 } from "./funded-run-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
+import { recordConfiguredDeploymentArtifactTransactions } from "./funded-deployment-artifact-evidence";
 import {
   deriveFundedTestAmount,
   fundedScenarioCap,
@@ -1799,18 +1800,46 @@ async function main(): Promise<void> {
 
     const factoryRecord = deploymentRecord.contracts.confidentialFactory;
     const routerRecord = deploymentRecord.contracts.confidentialBestExecutionRouter;
+    const lpFactoryRecord = deploymentRecord.contracts.confidentialLpTokenFactory;
     const factoryDeploymentTx = String(factoryRecord?.deploymentTx ?? "");
     const routerDeploymentTx = String(routerRecord?.deploymentTx ?? "");
+    const lpFactoryDeploymentTx = String(lpFactoryRecord?.deploymentTx ?? "");
     const factoryConstructorArgs = factoryRecord?.constructorArgs;
     const routerConstructorArgs = routerRecord?.constructorArgs;
+    const lpFactoryConstructorArgs = lpFactoryRecord?.constructorArgs;
+    const lpFactoryAddress = String(lpFactoryRecord?.address ?? "");
     if (
       !/^0x[0-9a-fA-F]{64}$/.test(factoryDeploymentTx) ||
       !/^0x[0-9a-fA-F]{64}$/.test(routerDeploymentTx) ||
+      !/^0x[0-9a-fA-F]{64}$/.test(lpFactoryDeploymentTx) ||
       !Array.isArray(factoryConstructorArgs) ||
-      !Array.isArray(routerConstructorArgs)
+      !Array.isArray(routerConstructorArgs) ||
+      !Array.isArray(lpFactoryConstructorArgs) ||
+      !ethersLibrary.isAddress(lpFactoryAddress)
     ) {
       throw new Error("configured deployment manifest omits canonical constructor evidence");
     }
+    await recordConfiguredDeploymentArtifactTransactions(
+      recoveryJournal,
+      ethers.provider,
+      [
+        {
+          label: "configured LP factory deployment provenance",
+          address: lpFactoryAddress,
+          transactionHash: lpFactoryDeploymentTx,
+        },
+        {
+          label: "configured confidential factory deployment provenance",
+          address: factoryAddress,
+          transactionHash: factoryDeploymentTx,
+        },
+        {
+          label: "configured router deployment provenance",
+          address: routerAddress,
+          transactionHash: routerDeploymentTx,
+        },
+      ],
+    );
     const referenceResource = recoveryJournal.resources.find(
       (resource) => resource.id === "pool-100",
     );
@@ -1828,6 +1857,13 @@ async function main(): Promise<void> {
       participants: [primaryAddress, quoteAddress],
       configuration: evidenceConfiguration,
       artifacts: [
+        {
+          label: "configured private LP factory",
+          contractName: "PrivateLPTokenFactory",
+          address: lpFactoryAddress,
+          creationTransactionHash: lpFactoryDeploymentTx,
+          constructorArguments: lpFactoryConstructorArgs as any,
+        },
         {
           label: "configured confidential factory",
           contractName: "ConfidentialCPMMFactory",
