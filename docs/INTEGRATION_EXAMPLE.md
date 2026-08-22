@@ -179,6 +179,28 @@ one verified pool. It requires fresh pool/selector-bound ciphertexts. Promote
 the router as a preferred integration path only after its exact deployed source
 has passed the documented funded mixed-class proof.
 
+## Optional wallet batching and signing UI
+
+Use the SDK confidential-operation plan builders to present the purpose and
+position of every COTI encrypted-input signature separately from transaction
+confirmations. Plans cover quotes, direct or best-execution swaps, liquidity
+addition/removal and LP locking. They expose sequential and batched prompt counts
+without including plaintext private values.
+
+`prepareWalletCallExecution` is optional client orchestration, not a protocol
+requirement. Query live per-chain capabilities with `wallet_getCapabilities` and
+pass that untrusted response to the helper. It returns a validated EIP-5792 v2
+`wallet_sendCalls` request only when batching is advertised, otherwise retaining
+the exact ordered calls for sequential execution. One-call operations remain
+sequential. Integrators may require, prefer or decline atomic execution.
+
+Poll the wallet-returned identifier with the request from
+`buildWalletCallsStatusRequest`, then validate responses with
+`normalizeWalletCallsStatus`. Never retry an uncertain batch blindly. A partial
+non-atomic batch containing token approvals requires explicit allowance review
+and recovery. The helper does not invoke the provider, sign inputs, persist batch
+state or replace the application's existing sequential fallback.
+
 ## Launchpad bootstrap
 
 Launchpads first use `buildConfidentialLaunchCommitment`, creator and

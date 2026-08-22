@@ -1,3 +1,6 @@
+export * from "./tokenApproval.js";
+export * from "./operationPlan.js";
+export * from "./walletCallBatch.js";
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
  *

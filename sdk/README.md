@@ -17,6 +17,14 @@ transaction, but it is not gasless and becomes a preferred integration path only
 after a fresh funded deployment proves the final router. Per-pool transactions
 remain direct protocol operations rather than being mislabeled as a fallback.
 
+The SDK also exports exact-by-default token approval planning, canonical
+confidential-operation signature/transaction steps, and optional EIP-5792 v2
+wallet-call preparation. Capability parsing, batching and status normalization
+are dependency-free and provider-agnostic: clients query their connected wallet,
+use a prepared batch only when supported, and retain sequential execution as the
+fallback. Partial non-atomic batches involving approvals are marked for explicit
+allowance review. The SDK never signs, sends, polls or persists wallet requests.
+
 The SDK exposes shape parsers and semantic guards for privacy-minimal lock and
 launchpad migration records. Shape or semantic validity is not chain
 authentication. Integrations must use `verifyLaunchpadMigrationMetadata` with a
