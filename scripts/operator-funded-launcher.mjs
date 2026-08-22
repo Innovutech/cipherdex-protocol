@@ -32,11 +32,16 @@ const TRUSTED_GIT_CANDIDATES = Object.freeze(
 const GIT_CONFIG_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 const COMMIT = /^[0-9a-f]{40}$/iu;
 const TARGET = /^scripts\/[a-z0-9-]+\.ts$/u;
-const FUNDED_EVIDENCE_RUNNERS = Object.freeze([
+const FINALIZED_FUNDED_EVIDENCE_RUNNERS = Object.freeze([
   "best-execution-feasibility",
   "best-execution",
   "fee-collection",
   "launchpad",
+]);
+const PROMOTABLE_FUNDED_EVIDENCE_RUNNERS = Object.freeze([
+  ...FINALIZED_FUNDED_EVIDENCE_RUNNERS,
+  "configured-compatibility",
+  "configured-launchpad",
 ]);
 const MAX_FUNDED_EVIDENCE_BYTES = 10_000_000;
 const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -238,7 +243,7 @@ function stageFundedEvidence(recoveryRoot, runtime, sourceCommit) {
   mkdirSync(destinationRoot, { recursive: false, mode: 0o700 });
   restrictOperatorDirectory(destinationRoot);
 
-  for (const runner of FUNDED_EVIDENCE_RUNNERS) {
+  for (const runner of FINALIZED_FUNDED_EVIDENCE_RUNNERS) {
     const name = `${runner}-${sourceCommit}.json`;
     const sourcePath = resolve(canonicalSourceRoot, name);
     const original = lstatSync(sourcePath);
@@ -291,7 +296,13 @@ async function deploymentSourceCommit(runtime, environmentPath, authenticatedCom
   return match[1].toLowerCase();
 }
 
-function promoteFundedEvidence(runtime, recoveryRoot, target, authenticatedCommit) {
+async function promoteFundedEvidence(
+  runtime,
+  recoveryRoot,
+  target,
+  environmentPath,
+  authenticatedCommit,
+) {
   const sourceRoot = resolve(runtime, ".testnet-state", "evidence");
   if (!existsSync(sourceRoot)) return;
   const sourceRootStat = lstatSync(sourceRoot);
@@ -301,7 +312,10 @@ function promoteFundedEvidence(runtime, recoveryRoot, target, authenticatedCommi
   const destinationRoot = resolve(recoveryRoot, "evidence");
   mkdirSync(destinationRoot, { recursive: true, mode: 0o700 });
   restrictOperatorDirectory(destinationRoot);
-  const permittedRunners = new Set(FUNDED_EVIDENCE_RUNNERS);
+  const permittedRunners = new Set(PROMOTABLE_FUNDED_EVIDENCE_RUNNERS);
+  const expectedSourceCommit = target === "scripts/rematerialize-funded-evidence.ts"
+    ? undefined
+    : await deploymentSourceCommit(runtime, environmentPath, authenticatedCommit);
   let promoted = 0;
   for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
     if (!entry.isFile() || entry.isSymbolicLink()) {
@@ -329,8 +343,8 @@ function promoteFundedEvidence(runtime, recoveryRoot, target, authenticatedCommi
       typeof sourceCommit !== "string" ||
       !COMMIT.test(sourceCommit) ||
       entry.name !== `${runner}-${sourceCommit.toLowerCase()}.json` ||
-      (target !== "scripts/rematerialize-funded-evidence.ts" &&
-        sourceCommit.toLowerCase() !== authenticatedCommit)
+      (expectedSourceCommit !== undefined &&
+        sourceCommit.toLowerCase() !== expectedSourceCommit)
     ) throw new Error("runtime funded evidence identity is invalid");
     const serialized = contents.toString("utf8");
     if (/"(?:privateKey|aesKey|signedTransaction|ciphertext)"\s*:/iu.test(serialized)) {
@@ -506,7 +520,13 @@ async function main() {
       failure: "reviewed funded target failed",
     });
     if (input.target !== "scripts/finalize-funded-evidence.ts") {
-      promoteFundedEvidence(runtime, recoveryRoot, input.target, input.commit);
+      await promoteFundedEvidence(
+        runtime,
+        recoveryRoot,
+        input.target,
+        environmentPath,
+        input.commit,
+      );
     }
   } finally {
     if (existsSync(runtime)) {
