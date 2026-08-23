@@ -13,13 +13,13 @@ factory-ABI fix, the launchpad deadline/revert-evidence hardening and the
 deployment-evidence provenance handoff passed the complete local suite and
 focused Codex Security diff reviews with zero findings.
 Each executable change was correctly rejected by the preceding deployment's
-source-provenance gate. Commit
-`900c4449cc6cb880faf08b6576fc3306fc0d6d22` has therefore been deployed through
-a new commit-bound public manifest. Its deployment provenance and immutable
-bindings are verified, while its funded feasibility, expanded best execution,
-fee collection, launchpad migration and independent suite evidence remain
-pending at this checkpoint. The preceding supported deployment retains its
-completed funded evidence until this new suite is sealed.
+source-provenance gate. Corrected source commit
+`cac3da94bfa4a2bcfd7b0c8548f4f8768bdde635` has now been deployed through a
+new commit-bound public manifest. Its deployment provenance and immutable
+bindings are verified. Its funded feasibility, expanded best execution, fee
+collection, launchpad migration and independent suite evidence remain pending
+at this checkpoint. The preceding supported deployment retains its completed
+funded evidence until this new suite is sealed.
 
 The current source additionally removes the confidential factory's external-token
 runtime-codehash admission list. Standard and launch-protected pool creation now
@@ -407,6 +407,40 @@ operation signature or secret.
 The most recently completed funded scenario suite is recorded below. Historical
 deployment narratives are retained only to explain superseded testnet artifacts;
 they are not the supported integration surface.
+
+### Current source-bound deployment pending funded promotion
+
+Corrected source commit `cac3da94bfa4a2bcfd7b0c8548f4f8768bdde635`
+was deployed to COTI testnet chain `7082400` through the authenticated
+exact-commit launcher. The complete 18-transaction deployment and binding
+record is
+`deployments/coti-testnet-cac3da94bfa4a2bcfd7b0c8548f4f8768bdde635.json`.
+All transactions succeeded, consumed `24726981` gas in total, and the deployment
+runner independently verified creation bytecode, constructor inputs, runtime
+codehashes and every immutable post-deployment relationship. Deployment created
+no pools and moved no private token.
+
+- Fee vault: `0xb91863568b7A382BC0C3FB0258b43A5ce78bC81c`.
+- Private LP-token factory: `0x15f9F35D99d79BE63bD8ec1DBd2727171fCa056E`.
+- Initialization-strategy registry:
+  `0x22f8aA7dE6E847E4D271E2AD283db7F921C4ab70`.
+- Confidential pool deployer:
+  `0x5d8c6E2e3b87B11f8aC03497a99731cf3aEFb561`.
+- Confidential factory: `0x7e272f110fD896FA0b10E1F344a1A5b8344f03eD`.
+- Launch initialization strategy:
+  `0xB00FccC058B6298D07399238Ac53319f29e0E2b0`.
+- Launchpad migrator: `0x295a51E5a6EFc0201916b8aFA196F33aE3C356F3`.
+- Confidential best-execution router:
+  `0xe1f7821E8e597710d687461525f34CF9dcaf18F5`.
+- Public factory: `0x74b420518dAfee25E01c9ee7A0169E2E6190551d`.
+- Public quoter: `0x147CD1436AAf5292B1fa22131Bc28560E0c1C49f`.
+- Public swap router: `0x5D54F9eFcdF0d94656AF677096C746efa2E66584`.
+- Public liquidity router: `0xa7fb97D53e51De5aA2e5AC93c82EB86142Ffbd0E`.
+
+This deployment crossed the runner point that failed for the preceding source:
+the disposable strategy and public-token operations now use distinct durable
+identities. Promotion still requires the complete source-bound funded suite and
+final independent evidence verification described above.
 
 ### Superseded source-bound deployment with failed funded gate
 
