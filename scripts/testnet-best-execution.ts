@@ -306,12 +306,13 @@ async function deployContract(
   wallet: CotiWallet,
   args: readonly unknown[],
   gasLimit: bigint,
+  operationLabel = `${name} deployment`,
 ): Promise<{ contract: any; address: string; transaction: Submitted }> {
-  stage = `${name} deployment`;
+  stage = operationLabel;
   const factory = await ethers.getContractFactory(name, wallet);
   let contract: any;
   const transaction = await submit(
-    `${name} deployment`,
+    operationLabel,
     async () => {
       contract = await factory.deploy(...args, { gasLimit });
       const deploymentTx = contract.deploymentTransaction();
@@ -1348,12 +1349,14 @@ async function runPublicLiquidityScenario(
     wallet,
     ["Funded Public Token A", "FPA", 18],
     2_000_000n,
+    "funded public token A deployment",
   );
   const tokenBDeployment = await deployContract(
     "MockERC20",
     wallet,
     ["Funded Public Token B", "FPB", 18],
     2_000_000n,
+    "funded public token B deployment",
   );
   const tokenA = tokenADeployment.contract;
   const tokenB = tokenBDeployment.contract;
@@ -2360,6 +2363,7 @@ async function main(): Promise<void> {
       strategyRegistryDeployment.address,
     ],
     INITIALIZATION_STRATEGY_DEPLOY_GAS_LIMIT,
+    "first disposable launch strategy deployment",
   );
   const migratorAddress = ethersLibrary.getAddress(
     String(await strategyDeployment.contract.migrator()),
@@ -2381,6 +2385,7 @@ async function main(): Promise<void> {
     primary,
     [factoryDeployment.address, strategyRegistryDeployment.address],
     INITIALIZATION_STRATEGY_DEPLOY_GAS_LIMIT,
+    "second disposable launch strategy deployment",
   );
   const secondMigratorAddress = ethersLibrary.getAddress(
     String(await secondStrategyDeployment.contract.migrator()),

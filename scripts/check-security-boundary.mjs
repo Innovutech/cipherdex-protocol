@@ -1984,6 +1984,17 @@ for (const required of [
     throw new Error(`Best-execution funded runner omits reviewed input control: ${required}`);
   }
 }
+for (const required of [
+  "operationLabel = `${name} deployment`",
+  '"first disposable launch strategy deployment"',
+  '"second disposable launch strategy deployment"',
+  '"funded public token A deployment"',
+  '"funded public token B deployment"',
+]) {
+  if (!bestExecutionRunnerRaw.includes(required)) {
+    throw new Error(`Best-execution funded deployment labels are not unique: ${required}`);
+  }
+}
 if (bestExecutionRunnerRaw.includes("CIPHERDEX_FEE_BENEFICIARY")) {
   throw new Error("Best-execution funded runner accepts an unreviewed fee beneficiary");
 }

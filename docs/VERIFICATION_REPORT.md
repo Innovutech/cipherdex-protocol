@@ -1,6 +1,6 @@
 # Verification Report
 
-Date: 2026-08-23
+Date: 2026-08-24
 
 ## Status
 
@@ -408,7 +408,7 @@ The most recently completed funded scenario suite is recorded below. Historical
 deployment narratives are retained only to explain superseded testnet artifacts;
 they are not the supported integration surface.
 
-### Current source-bound deployment pending funded scenario seal
+### Superseded source-bound deployment with failed funded gate
 
 Source commit `900c4449cc6cb880faf08b6576fc3306fc0d6d22` was deployed to COTI
 testnet chain `7082400` through the authenticated exact-commit launcher. The
@@ -436,11 +436,17 @@ no pools and moved no private token.
 - Public swap router: `0x6e9e958108D84343E8d74923ADf2CadAcac7FCA6`.
 - Public liquidity router: `0xafa67648dF56A7B87493cDA6De58D018f226CBBE`.
 
-The funded suite must still prove the expanded four-, six- and nine-candidate
-quote paths, both proportional-liquidity preview directions, preview-bound
-settlement, public atomic rollback/refund/full-exit behavior, and the existing
-feasibility, fee-collection and launchpad lifecycle before this deployment
-replaces the preceding supported integration surface.
+The feasibility runner passed with exact private-asset recovery, and the
+configured-token compatibility branch passed with full pool cleanup. The full
+best-execution runner then stopped before pool creation, private-token approval
+or private-token movement: its first disposable launch strategy deployed, while
+the second strategy correctly failed closed because both deployments had the
+same durable logical-operation label. The source now gives both strategy
+deployments and both disposable public token deployments unique reviewed labels,
+with a mandatory static regression guard. Because that is an executable source
+change, this deployment is diagnostic and cannot be retried or promoted as the
+supported integration surface. A new exact-source deployment and complete
+funded suite are required.
 
 ### Fresh COTI testnet deployment
 
