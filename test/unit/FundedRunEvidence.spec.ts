@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ethers } from "../../hardhat/runtime.js";
-import { Interface, TypedDataEncoder, Wallet, ZeroAddress, keccak256 } from "ethers";
+import { AbiCoder, Interface, Wallet, ZeroAddress, keccak256 } from "ethers";
 
 import { FundedRecoveryJournal } from "../../scripts/funded-recovery-journal";
 import {
@@ -20,9 +20,9 @@ import {
 import {
   CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI,
   CONFIDENTIAL_CPMM_ABI,
-  CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI,
-  LAUNCH_COMMITMENT_EIP712_TYPES,
-  LAUNCH_INITIALIZATION_EIP712_DOMAIN,
+  CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
+  LAUNCHPAD_MIGRATION_EIP712_TYPES,
+  LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
 } from "../../sdk/src/index";
 import { verifyDeployedRuntimeArtifactWithProvenance } from "../../scripts/runtime-artifact";
 
@@ -255,8 +255,7 @@ describe("funded run evidence", function () {
     });
     const lifecycle = {
       poolAddress: pool,
-      commitment: transaction("commit", 10, 0, `0x${"95".repeat(20)}`),
-      rejectedProbe: { ...transaction("reject", 10, 1, `0x${"96".repeat(20)}`), status: 0 as const },
+      rejectedProbe: { ...transaction("reject", 10, 0, `0x${"96".repeat(20)}`), status: 0 as const },
       migration: transaction("migration", 11, 0, `0x${"96".repeat(20)}`),
       replay: { ...transaction("replay", 11, 1, `0x${"96".repeat(20)}`), status: 0 as const },
       firstExit: transaction("first exit", 12, 0),
@@ -268,32 +267,42 @@ describe("funded run evidence", function () {
     expect(() => requireProtectedPoolLifecycleOrder({
       ...lifecycle,
       reseed: { ...lifecycle.reseed, transactionIndex: 0 },
-    })).to.throw("not strictly commit/reject/migrate/replay/exit/reseed/exit ordered");
+    })).to.throw("not strictly reject/migrate/replay/exit/reseed/exit ordered");
     expect(() => requireProtectedPoolLifecycleOrder({
       ...lifecycle,
       finalExit: { ...lifecycle.finalExit, to: `0x${"97".repeat(20)}` },
-    })).to.throw("not strictly commit/reject/migrate/replay/exit/reseed/exit ordered");
+    })).to.throw("not strictly reject/migrate/replay/exit/reseed/exit ordered");
   });
 
   it("binds every funded best-execution tier, direction, and protected launch authorization", async function () {
     const creator = Wallet.createRandom();
-    const authority = Wallet.createRandom();
     const otherCaller = Wallet.createRandom();
     const router = `0x${"10".repeat(20)}`;
     const tokenA = `0x${"20".repeat(20)}`;
     const tokenB = `0x${"30".repeat(20)}`;
     const pool5 = `0x${"60".repeat(20)}`;
+    const poolA5 = `0x${"61".repeat(20)}`;
+    const poolB5 = `0x${"62".repeat(20)}`;
+    const standard30 = `0x${"71".repeat(20)}`;
     const pool30 = `0x${"70".repeat(20)}`;
+    const poolB30 = `0x${"72".repeat(20)}`;
     const pool100 = `0x${"80".repeat(20)}`;
+    const poolA100 = `0x${"81".repeat(20)}`;
+    const poolB100 = `0x${"82".repeat(20)}`;
     const strategy = `0x${"90".repeat(20)}`;
+    const strategyB = `0x${"91".repeat(20)}`;
     const factory = `0x${"a0".repeat(20)}`;
     const migrator = `0x${"b0".repeat(20)}`;
+    const migratorB = `0x${"b1".repeat(20)}`;
     const chainId = 7_082_400n;
-    const bitmap = 0b001_010_001;
-    const mixedTwoBitmap = bitmap & ~1;
+    const bitmap = 0b111_111_111;
+    const mixedBitmap = 0b001_010_001;
+    const mixedTwoBitmap = 0b001_010_000;
+    const fourCandidateBitmap = 0b001_001_011;
+    const sixCandidateBitmap = 0b011_011_011;
     const routerInterface = new Interface(CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI);
-    const strategyInterface = new Interface(CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI);
-    const encrypted = (seed: bigint) => [
+    const launchpadInterface = new Interface(CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI);
+    const encrypted = (seed: bigint): readonly [readonly [bigint, bigint], string] => [
       [seed, seed + 1n],
       `0x${seed.toString(16).padStart(2, "0")}`,
     ];
@@ -379,52 +388,85 @@ describe("funded run evidence", function () {
       } as const;
     };
 
-    const commitment = {
-      launchId: requestId(240),
-      creator: creator.address,
-      token0: tokenA,
-      token1: tokenB,
-      decimals0: 18,
-      decimals1: 6,
-      feeBps: 30n,
-      privacyMode: 1,
-      poolVersion: 3n,
-      factory,
-      migrator,
-      initializationStrategy: strategy,
-      launchAuthority: authority.address,
-      chainId,
-      authorizationDeadline: 10_000n,
-      migrationDeadline: 10_000n,
-    } as const;
-    const launchDomain = {
-      ...LAUNCH_INITIALIZATION_EIP712_DOMAIN,
-      chainId,
-      verifyingContract: strategy,
-    } as const;
-    const launchTypes = { LaunchCommitment: [...LAUNCH_COMMITMENT_EIP712_TYPES] };
-    const [creatorAuthorization, authorityAuthorization] = await Promise.all([
-      creator.signTypedData(launchDomain, launchTypes, commitment),
-      authority.signTypedData(launchDomain, launchTypes, commitment),
-    ]);
-    const commitmentHash = TypedDataEncoder.hash(launchDomain, launchTypes, commitment);
-    const committed = strategyInterface.encodeEventLog(
-      strategyInterface.getEvent("LaunchCommitted")!,
-      [commitment.launchId, requestId(241), pool30, creator.address, 10_000n, commitmentHash],
-    );
-    const transactions = [
-      transaction(
-        "commit protected 30 bps launch",
+    const migrationTransaction = async (
+      label: string,
+      feeBps: 5 | 30 | 100,
+      selectedStrategy: string,
+      selectedMigrator: string,
+      selectedPool: string,
+      seed: number,
+    ) => {
+      const launchId = requestId(seed);
+      const migrationInputs = [1n, 11n, 21n, 31n, 41n]
+        .map((offset) => encrypted(BigInt(seed % 100) + offset));
+      const encryptedInputsHash = keccak256(AbiCoder.defaultAbiCoder().encode(
+        ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32"],
+        migrationInputs.map((input) => keccak256(AbiCoder.defaultAbiCoder().encode(
+          ["uint256", "uint256", "bytes32"],
+          [input[0][0], input[0][1], keccak256(input[1])],
+        ))),
+      ));
+      const migrationDomain = {
+        ...LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
+        chainId,
+        verifyingContract: selectedMigrator,
+      } as const;
+      const migrationTypes = { Migration: [...LAUNCHPAD_MIGRATION_EIP712_TYPES] };
+      const migrationValues = {
+        launchId,
+        initializationStrategy: selectedStrategy,
+        creator: creator.address,
+        tokenA,
+        tokenB,
+        decimalsA: 18,
+        decimalsB: 6,
+        feeBps,
+        encryptedInputsHash,
+        deadline: 10_000n,
+        withDisposition: false,
+        disposition: 0,
+        unlockTime: 0,
+      } as const;
+      const authorization = await creator.signTypedData(
+        migrationDomain,
+        migrationTypes,
+        migrationValues,
+      );
+      const authorizationHash = ethers.TypedDataEncoder.hash(
+        migrationDomain,
+        migrationTypes,
+        migrationValues,
+      );
+      const migrated = launchpadInterface.encodeEventLog(
+        launchpadInterface.getEvent("LaunchpadMigration")!,
+        [launchId, creator.address, selectedPool, selectedStrategy, authorizationHash],
+      );
+      return transaction(
+        label,
         1,
         creator.address,
-        strategy,
-        strategyInterface.encodeFunctionData("commitLaunch", [
-          commitment,
-          creatorAuthorization,
-          authorityAuthorization,
-        ]),
-        [{ address: strategy, topics: committed.topics, data: committed.data }],
-      ),
+        selectedMigrator,
+        launchpadInterface.encodeFunctionData("migrate", [[
+          launchId,
+          tokenA,
+          tokenB,
+          18,
+          6,
+          feeBps,
+          ...migrationInputs,
+          10_000n,
+          authorization,
+        ]]),
+        [{ address: selectedMigrator, topics: migrated.topics, data: migrated.data }],
+      );
+    };
+    const transactions = [
+      await migrationTransaction("initialize protected 30 bps pool", 30, strategy, migrator, pool30, 240),
+      await migrationTransaction("initialize protected a 5 bps pool", 5, strategy, migrator, poolA5, 241),
+      await migrationTransaction("initialize protected a 100 bps pool", 100, strategy, migrator, poolA100, 242),
+      await migrationTransaction("initialize protected b 5 bps pool", 5, strategyB, migratorB, poolB5, 243),
+      await migrationTransaction("initialize protected b 30 bps pool", 30, strategyB, migratorB, poolB30, 244),
+      await migrationTransaction("initialize protected b 100 bps pool", 100, strategyB, migratorB, poolB100, 245),
     ];
     const addQuote = (
       label: string,
@@ -491,29 +533,29 @@ describe("funded run evidence", function () {
       1,
       creator.address,
       router,
-      quoteData(tokenB, tokenA, referenceInput, bitmap, referenceId, 1_000n),
-      [resultLog("ConfidentialBestQuoteResult", creator.address, referenceId, 100, bitmap, false)],
+      quoteData(tokenB, tokenA, referenceInput, mixedBitmap, referenceId, 1_000n),
+      [resultLog("ConfidentialBestQuoteResult", creator.address, referenceId, 100, mixedBitmap, false)],
     ));
     transactions.push(transaction(
       "best quote request-id replay",
       0,
       creator.address,
       router,
-      quoteData(tokenB, tokenA, encrypted(51n), bitmap, referenceId, 1_000n),
+      quoteData(tokenB, tokenA, encrypted(51n), mixedBitmap, referenceId, 1_000n),
     ));
     transactions.push(transaction(
       "best quote ciphertext replay",
       0,
       creator.address,
       router,
-      quoteData(tokenB, tokenA, referenceInput, bitmap, requestId(51), 1_000n),
+      quoteData(tokenB, tokenA, referenceInput, mixedBitmap, requestId(51), 1_000n),
     ));
     transactions.push(transaction(
       "best quote expired deadline",
       0,
       creator.address,
       router,
-      quoteData(tokenB, tokenA, encrypted(52n), bitmap, requestId(52), 99n),
+      quoteData(tokenB, tokenA, encrypted(52n), mixedBitmap, requestId(52), 99n),
     ));
     const callerInput = encrypted(53n);
     const callerId = requestId(53);
@@ -522,24 +564,67 @@ describe("funded run evidence", function () {
       0,
       otherCaller.address,
       router,
-      quoteData(tokenB, tokenA, callerInput, bitmap, callerId, 1_000n),
+      quoteData(tokenB, tokenA, callerInput, mixedBitmap, callerId, 1_000n),
     ));
     transactions.push(transaction(
       "caller-bound ciphertext primary control",
       1,
       creator.address,
       router,
-      quoteData(tokenB, tokenA, callerInput, bitmap, callerId, 1_000n),
-      [resultLog("ConfidentialBestQuoteResult", creator.address, callerId, 100, bitmap, false)],
+      quoteData(tokenB, tokenA, callerInput, mixedBitmap, callerId, 1_000n),
+      [resultLog("ConfidentialBestQuoteResult", creator.address, callerId, 100, mixedBitmap, false)],
     ));
-    addSwap("two-candidate quote-plus-swap", 100, bitmap);
-    addQuote("three-candidate quote", 5, bitmap);
-    addSwap("three-candidate quote-plus-swap", 5, bitmap);
-    addQuote("post-tie 30 bps selection quote", 30, bitmap);
-    addSwap("post-tie 30 bps quote-plus-swap", 30, bitmap);
-    addQuote("encrypted-invalid candidate isolation quote", 100, bitmap);
-    addQuote("reverse three-candidate quote", 30, bitmap, tokenA, tokenB);
-    addSwap("reverse three-candidate quote-plus-swap", 30, bitmap, tokenA, tokenB);
+    addSwap("two-candidate quote-plus-swap", 100, mixedBitmap);
+    addQuote("three-candidate quote", 5, mixedBitmap);
+    addSwap("three-candidate quote-plus-swap", 5, mixedBitmap);
+    addQuote("post-tie 30 bps selection quote", 30, mixedBitmap);
+    addSwap("post-tie 30 bps quote-plus-swap", 30, mixedBitmap);
+    addQuote("encrypted-invalid candidate isolation quote", 100, mixedBitmap);
+    addQuote("reverse three-candidate quote", 30, mixedBitmap, tokenA, tokenB);
+    addSwap("reverse three-candidate quote-plus-swap", 30, mixedBitmap, tokenA, tokenB);
+    addQuote("four-candidate populated quote", 5, fourCandidateBitmap);
+    addQuote("six-candidate populated quote", 5, sixCandidateBitmap);
+    addQuote("nine-candidate populated quote", 5, bitmap);
+
+    const poolInterface = new Interface(CONFIDENTIAL_CPMM_ABI);
+    for (const [label, token0Specified, seed] of [
+      ["confidential token0 proportional-liquidity preview", true, 70],
+      ["confidential token1 proportional-liquidity preview", false, 71],
+    ] as const) {
+      const id = requestId(seed);
+      const encoded = poolInterface.encodeEventLog(
+        poolInterface.getEvent("ConfidentialLiquidityQuoteResult")!,
+        [creator.address, id, token0Specified, [1n, 2n], [3n, 4n], [5n, 6n]],
+      );
+      transactions.push(transaction(
+        label,
+        1,
+        creator.address,
+        poolB30,
+        poolInterface.encodeFunctionData("requestAddLiquidityQuote", [
+          encrypted(BigInt(seed)),
+          token0Specified,
+          id,
+          1_000n,
+        ]),
+        [{ address: poolB30, topics: encoded.topics, data: encoded.data }],
+      ));
+    }
+    transactions.push(transaction(
+      "preview-bound proportional-liquidity add",
+      1,
+      creator.address,
+      poolB30,
+      poolInterface.encodeFunctionData("addLiquidity", [
+        encrypted(80n),
+        encrypted(81n),
+        encrypted(82n),
+        encrypted(83n),
+        encrypted(84n),
+        true,
+        1_000n,
+      ]),
+    ));
 
     const configuration = {
       candidateBitmap: bitmap,
@@ -551,13 +636,21 @@ describe("funded run evidence", function () {
     };
     const artifacts = [
       { label: "5 bps standard canonical pool", address: pool5 },
-      { label: "30 bps launch-protected canonical pool", address: pool30 },
+      { label: "5 bps launch-protected a canonical pool", address: poolA5 },
+      { label: "5 bps launch-protected b canonical pool", address: poolB5 },
+      { label: "30 bps standard canonical pool", address: standard30 },
+      { label: "30 bps launch-protected a canonical pool", address: pool30 },
+      { label: "30 bps launch-protected b canonical pool", address: poolB30 },
       { label: "100 bps standard canonical pool", address: pool100 },
+      { label: "100 bps launch-protected a canonical pool", address: poolA100 },
+      { label: "100 bps launch-protected b canonical pool", address: poolB100 },
       { label: "disposable launch initialization strategy", address: strategy },
+      { label: "disposable second launch initialization strategy", address: strategyB },
       { label: "disposable confidential factory", address: factory },
       { label: "disposable launchpad migrator", address: migrator },
+      { label: "disposable second launchpad migrator", address: migratorB },
     ];
-    const participants = [creator.address, authority.address, otherCaller.address];
+    const participants = [creator.address, otherCaller.address];
     expect(() => requireOnchainSemanticBindings(
       "best-execution",
       configuration,

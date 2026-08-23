@@ -31,7 +31,7 @@ type FundedTransactionContext = Readonly<{
 
 const transactionContext = new AsyncLocalStorage<FundedTransactionContext>();
 
-const DEFAULT_MAX_FEE_PER_GAS_WEI = 10_000_000_000n;
+export const REVIEWED_MAX_FEE_PER_GAS_WEI = 10_000_000_000n;
 const DEFAULT_MAX_PRIORITY_FEE_PER_GAS_WEI = 2_000_000_000n;
 const DEFAULT_MAX_TRANSACTION_FEE_WEI = 300_000_000_000_000_000n;
 const RECOVERY_KEY_DOMAIN = "cipherdex-funded-recovery-key/v1";
@@ -64,6 +64,25 @@ export function deriveFundedRecoveryKey(
   return createHmac("sha256", keyBytes).update(context, "utf8").digest();
 }
 
+export function deriveFundedRecoveryKeyFromSecret(
+  secret: string,
+  identity: FundedRecoveryIdentity,
+): Buffer {
+  const keyBytes = getBytes(secret);
+  if (keyBytes.length !== 32) {
+    throw new Error("funded recovery secret must contain exactly 32 bytes");
+  }
+  const context = JSON.stringify({
+    domain: RECOVERY_KEY_DOMAIN,
+    runner: identity.runner,
+    sourceCommit: identity.sourceCommit.toLowerCase(),
+    chainId: identity.chainId,
+    owner: identity.owner.toLowerCase(),
+    deployment: identity.deployment,
+  });
+  return createHmac("sha256", keyBytes).update(context, "utf8").digest();
+}
+
 export function openFundedRecoveryJournal(
   privateKey: string | SigningKey,
   identity: FundedRecoveryIdentity,
@@ -82,6 +101,24 @@ export function openFundedRecoveryJournal(
   });
 }
 
+export function openFundedRecoveryJournalWithSecret(
+  secret: string,
+  identity: FundedRecoveryIdentity,
+): FundedRecoveryJournal {
+  if (!identity.directory || !isAbsolute(identity.directory)) {
+    throw new Error("funded recovery state requires an explicit absolute durable directory");
+  }
+  return FundedRecoveryJournal.open({
+    runner: identity.runner,
+    sourceCommit: identity.sourceCommit,
+    chainId: identity.chainId,
+    owner: identity.owner,
+    deployment: identity.deployment,
+    directory: identity.directory,
+    recoveryKey: deriveFundedRecoveryKeyFromSecret(secret, identity),
+  });
+}
+
 export type FundedFeePolicy = Readonly<{
   maxFeePerGasWei: bigint;
   maxPriorityFeePerGasWei: bigint;
@@ -90,7 +127,7 @@ export type FundedFeePolicy = Readonly<{
 
 export function reviewedFundedFeePolicy(): FundedFeePolicy {
   return Object.freeze({
-    maxFeePerGasWei: DEFAULT_MAX_FEE_PER_GAS_WEI,
+    maxFeePerGasWei: REVIEWED_MAX_FEE_PER_GAS_WEI,
     maxPriorityFeePerGasWei: DEFAULT_MAX_PRIORITY_FEE_PER_GAS_WEI,
     maxTransactionFeeWei: DEFAULT_MAX_TRANSACTION_FEE_WEI,
   });

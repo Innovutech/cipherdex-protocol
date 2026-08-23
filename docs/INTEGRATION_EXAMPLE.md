@@ -15,6 +15,12 @@ Use `PublicCPMMQuoter.quoteExactInput` for gasless exact-input quotes and
 pools outside their immutable factory. Route responses must retain
 `privacyMode: 0` and `poolKind: "public-erc20-cpmm-v2"`.
 
+Use `PublicCPMMLiquidityRouter.createOrAddLiquidity` for one-transaction public
+pool creation/seeding or a proportional add to an existing canonical pool. The
+call accepts token-order-independent desired maxima, price bounds and minimum
+shares. It mints shares directly to the caller and refunds unused maxima. Direct
+factory and pool calls remain available for existing integrations.
+
 ## Confidential pool discovery
 
 Index `PoolCreated` from `ConfidentialCPMMFactory` or enumerate `allPools`. Build
@@ -125,10 +131,14 @@ const transaction = buildVerifiedConfidentialBestQuoteTransaction(
 ```
 
 The default `requestBestQuoteExactInput` derives the three standard 5/30/100 bps
-candidates from the factory. The candidate-aware variant accepts only a nine-bit
-fee/strategy-class bitmap, rejects more than three active bits and never accepts
-pool addresses. It skips missing or uninitialized variants, uses the same GT
-input, selects privately and emits one caller-encrypted winner. After submission, call
+candidates from the factory. The candidate-aware quote variant accepts only a
+nine-bit fee/strategy-class bitmap and may evaluate all nine canonical slots in
+one paid request. The atomic swap variant remains limited to three active bits.
+Neither accepts pool addresses. Both skip missing or uninitialized variants,
+reuse the same GT input, select privately and emit only one caller-encrypted
+winner. Construct the active namespace with
+`buildConfidentialCandidateBitmap(1 + registeredStrategyCount)`, not an
+unconditional `0x1ff`. After submission, call
 `decryptConfidentialBestExecutionResult` with the expected operation, caller,
 request ID, token pair, transaction hash and exact encoded transaction calldata.
 Its trusted adapter must fetch the
@@ -140,6 +150,13 @@ best-execution router both have fresh funded proof. Use the router as the
 preferred bounded integration path and the pool-level method for explicit direct
 pool quoting. Neither path is gasless; there is no gasless route for either one
 to fall back from on the tested runtime.
+
+Only the three-candidate route currently has funded COTI gas evidence. Before
+enabling a larger bitmap, measure the exact deployed router against the live
+block limit. If needed, use `partitionConfidentialQuoteCandidateBitmap` to split
+the active bitmap deterministically. Each returned batch is an independent paid
+quote and requires a fresh request ID and ciphertext bound to the quote selector.
+Compare only authenticated, successfully decrypted batch winners.
 
 The verification and decryption adapters are trusted chain-data boundaries, not
 indexer callbacks. Expected addresses and runtime codehashes must come from the
@@ -179,6 +196,21 @@ one verified pool. It requires fresh pool/selector-bound ciphertexts. Promote
 the router as a preferred integration path only after its exact deployed source
 has passed the documented funded mixed-class proof.
 
+## Confidential liquidity preview
+
+For an existing initialized pool, encrypt one token-side maximum for
+`requestAddLiquidityQuote` and submit the paid preview transaction with a fresh
+request ID and deadline. Its result event contains the accepted specified
+amount, required proportional counterpart and expected shares as ciphertexts
+offboarded only to the caller. Authenticate the canonical pool, successful
+receipt, exact caller, request ID and side before decrypting the event.
+
+The preview discloses the pool ratio/depth to that active caller in the same way
+as repeated exact swap quotes. It does not reserve state. Re-read balances and
+allowances, apply explicit tolerance to minimum shares and normalized price
+bounds, create fresh pool/function-bound encrypted inputs, then submit
+`addLiquidity`. Never turn the preview into an unbounded or zero-minimum add.
+
 ## Optional wallet batching and signing UI
 
 Use the SDK confidential-operation plan builders to present the purpose and
@@ -203,13 +235,14 @@ state or replace the application's existing sequential fallback.
 
 ## Launchpad bootstrap
 
-Launchpads first use `buildConfidentialLaunchCommitment`, creator and
-launch-authority EIP-712 signatures, and `buildConfidentialLaunchCommitCall` to
-commit a reviewed strategy-bound protected pool. This is a distinct complete
-key from the standard `address(0)` pool, not a creator-scoped namespace. Index
-`PoolCreated`, `LaunchCommitted`, `LaunchCanceled`, `LaunchExpired`,
-`LaunchInitializationAuthorized`, `LaunchpadMigration` and
-`LaunchpadLockDisposition` as separate lifecycle evidence.
+Launchpads encrypt five private inputs for the exact migrator and selector, then
+use `LAUNCHPAD_MIGRATION_EIP712_TYPES` for one creator authorization covering the
+complete migration. The migrator prepares and initializes the reviewed
+strategy-bound protected pool in the same transaction. This is a distinct
+complete key from the standard `address(0)` pool, not a creator-scoped namespace.
+Index `PoolCreated`, `LaunchPrepared`, `LaunchInitializationAuthorized`,
+`LaunchpadMigration` and optional `LaunchpadLockDisposition` from that successful
+atomic transaction.
 
 Indexer JSON is untrusted discovery data. Parse it with the SDK shape guards,
 apply the semantic guards, and then call `verifyLaunchpadMigrationMetadata`
@@ -222,8 +255,8 @@ execution. Shape validation alone is never transaction evidence.
 
 Liquidity amounts, normalized price bounds, minted shares, reserves and TVL are
 not public discovery fields. The ordinary standard pool never blocks or receives
-the launch. The protected pool must match the active commitment and be empty;
-the factory and strategy consume its one-shot authorization atomically with
+the launch. The protected pool must match the transaction-scoped launch record
+and be empty; the factory and strategy consume its one-shot creator authorization atomically with
 escrow, exact pool allowances, pool balance-delta validation and bootstrap.
 Prior unmanaged balances cannot become reserves or block this exact-delta
 initialization.

@@ -34,6 +34,11 @@ if (!Number.isSafeInteger(cotiTestnetGasLimit) || cotiTestnetGasLimit <= 0) {
   throw new Error("COTI_TESTNET_GAS_LIMIT must be a positive safe integer");
 }
 
+const cotiMainnetGasLimit = Number(process.env.COTI_MAINNET_GAS_LIMIT ?? "30000000");
+if (!Number.isSafeInteger(cotiMainnetGasLimit) || cotiMainnetGasLimit <= 0) {
+  throw new Error("COTI_MAINNET_GAS_LIMIT must be a positive safe integer");
+}
+
 export default defineConfig({
   plugins: [
     cipherdexSolidityBuildBoundary,
@@ -61,8 +66,10 @@ export default defineConfig({
       "contracts/PublicCPMMFactory.sol": compilerSettings(200, false),
       "contracts/PublicCPMMQuoter.sol": compilerSettings(206, false),
       "contracts/PublicCPMMRouter.sol": compilerSettings(207, false),
+      "contracts/PublicCPMMLiquidityRouter.sol": compilerSettings(208),
       "contracts/interfaces/IPublicCPMM.sol": compilerSettings(200, false),
       "contracts/interfaces/IPublicCPMMFactory.sol": compilerSettings(200, false),
+      "contracts/interfaces/IPublicCPMMLiquidityRouter.sol": compilerSettings(200, false),
       "contracts/mocks/MockERC20.sol": compilerSettings(200, false),
       "contracts/mocks/MockTokenMetadata.sol": compilerSettings(200, false),
       "contracts/mocks/MpcQuoteCallProbe.sol": compilerSettings(208),
@@ -85,6 +92,14 @@ export default defineConfig({
       // COTI testnet intermittently rejects pending-block lookups while
       // populating transactions. Receipts still report actual gas consumed.
       gas: cotiTestnetGasLimit,
+    },
+    cotiMainnet: {
+      type: "http",
+      chainType: "generic",
+      url: process.env.COTI_MAINNET_RPC_URL ?? "https://mainnet.coti.io/rpc",
+      chainId: 2632500,
+      accounts: [],
+      gas: cotiMainnetGasLimit,
     },
   },
   test: {

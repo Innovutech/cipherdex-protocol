@@ -2,10 +2,14 @@
 
 Independent COTI-native AMM protocol work for the CipherDEX ecosystem.
 
-This repository is separate from CipherTrade and CipherTools. The first phase is a
-testnet-only feasibility implementation for public/public ordinary ERC-20 pools
-and an amount-confidential constant-product pool over COTI `PrivateERC20` assets.
-It is not a mainnet deployment and has not received an external audit.
+This repository is separate from CipherTrade and CipherTools. It implements
+public/public ordinary ERC-20 pools and an amount-confidential constant-product
+pool over COTI `PrivateERC20` assets. The source includes a commit-bound COTI
+mainnet deployment path that can sign either on a Ledger or with an explicitly
+configured deployment private key. Source code alone is not evidence of a mainnet deployment; only a reviewed,
+committed deployment record is authoritative. The contracts have not received an
+external audit, and the deployment tooling reports that fact without enforcing it
+as a technical gate.
 
 ## Current boundary
 
@@ -16,14 +20,14 @@ interface still takes public recipient addresses and emits public participant
 addresses, so this phase does not claim anonymous or hidden-recipient execution.
 
 `ConfidentialLaunchInitializationStrategy` and
-`ConfidentialLaunchpadMigrator` form the atomic launch boundary. A launch is
-committed before graduation by both its creator and the fixed launch authority.
-The commitment binds the ordered pair, fee tier, privacy mode, confidential
-protocol version, factory, strategy, migrator, chain and deadlines. The strategy
-reserves a distinct launch-protected pool identity; it does not reserve or alter
-the ordinary standard pool. At graduation the migrator consumes that commitment,
-pulls exact encrypted allowances, initializes the protected pool at the encrypted
-final-price ratio and applies the selected LP disposition atomically. The strategy
+`ConfidentialLaunchpadMigrator` form the atomic launch boundary. The creator signs
+one EIP-712 migration authorization binding the launch ID, strategy, caller,
+pair/decimals, fee tier, encrypted inputs, deadline and LP disposition. In the
+same transaction, the pinned migrator prepares the distinct launch-protected pool,
+pulls exact encrypted allowances, initializes the pool at the encrypted final-price
+ratio and applies the selected LP disposition. Any failure rolls back launch state,
+pool creation and asset movement together; there is no operator precommit or launch
+authority. The ordinary standard pool remains independent. The strategy
 is initialization-only and the migrator has no withdrawal authority. Each
 reviewed strategy pins and authenticates its own migrator; the factory has no
 global launch adapter or shared migrator authority. Both EOA and ERC-1271 launch
@@ -56,8 +60,8 @@ fee accrual can begin. Direct user execution against canonical pools remains
 available. The launchpad migrator preserves creator-held shares by default and also exposes an
 atomic timed-lock or permanent-lock disposition.
 After a completed protected pool later reaches a true full exit, ordinary
-permissionless `addLiquidity` may re-seed it. The consumed launch commitment and
-strategy can never bootstrap it again.
+permissionless `addLiquidity` may re-seed it. The consumed launch ID and strategy
+can never bootstrap it again.
 
 Confidential pool creation is permissionless for deployed contracts that report
 the official COTI `IPrivateERC20` interface and valid matching decimals. CipherDEX
@@ -67,7 +71,11 @@ malicious tokens remain a pool-level trust risk. Pools retain exact encrypted
 balance-delta checks around every token movement as defense in depth. Exact
 runtime-codehash authentication remains limited to CipherDEX-owned infrastructure.
 
-Public pools expose a factory-gated exact-input router and gasless quoter.
+Public pools expose a factory-gated exact-input router, gasless quoter and an
+atomic create-or-add liquidity router. The liquidity router resolves or creates
+the canonical pool, pulls exact maxima, mints shares directly to the user,
+refunds unused proportional amounts and leaves no token balance or allowance
+residue. Existing direct factory and pool methods remain supported.
 The dependency-free SDK defaults public token spending to exact allowances and
 offers an explicit `unlimited` mode. Its approval-plan builder takes the observed
 current allowance, reduces larger residual allowances when exact mode is chosen,
@@ -77,12 +85,20 @@ before encrypting the selected allowance with the official COTI SDK; CipherDEX
 does not handle wallet AES keys.
 Confidential pools retain direct execution and additionally expose a
 factory-bound `ConfidentialBestExecutionRouter`. Users encrypt inputs for that
-router and exact function selector. The router reuses the validated MPC value
-across at most three factory-derived candidates selected from the approved 5,
-30 and 100 bps tiers and the finalized standard/protected strategy classes. It
-privately selects the largest valid output and offboards only the winner. It can
-either return a paid encrypted best quote or atomically escrow and settle the
-selected pool.
+router and exact function selector. A paid quote may reuse the validated MPC
+value across up to all nine canonical fee/strategy slots. Atomic quote-and-swap
+remains capped at three candidates because that is the largest execution path
+with funded COTI gas evidence. The router privately selects the largest valid
+output and offboards only the winner. If a live runtime cannot fit the requested
+quote set, the SDK can partition the canonical bitmap into deterministic quote
+batches; each batch still requires a fresh encrypted input and request ID.
+
+Existing confidential LPs can request a paid encrypted liquidity preview from
+one verified pool. Given one maximum token amount and a side, the pool returns
+the accepted specified amount, proportional counterpart and expected shares
+encrypted only for that caller. The later add remains authoritative and binds
+minimum shares, price bounds and deadline, so state movement cannot silently
+change the reviewed deposit.
 
 The current source defines public pools/factory version 2, confidential
 pools/factory version 3, best-execution router version 2, launchpad migrator
@@ -134,8 +150,13 @@ Encrypted recovery journals are stored in an owner-only, repository-scoped
 directory outside that disposable runtime, so runtime cleanup cannot erase
 replay protection, pending transaction evidence, or asset-recovery obligations.
 
-The `scripts/deploy-testnet.ts` target requires a committed source tree and a commit-named
-`COTI_DEPLOYMENT_RECORD`. All four funded gates run only after the reviewed
+The `scripts/deploy-testnet.ts` and `scripts/deploy-mainnet.ts` targets require a
+committed source tree and a network/commit-named `COTI_DEPLOYMENT_RECORD`.
+Mainnet requires exactly one signer mode: a hash-pinned external Foundry `cast`
+binary plus Ledger address, or `COTI_MAINNET_PRIVATE_KEY`. Ledger mode validates
+the connected address and signs each fully populated transaction on-device;
+private-key mode uses the same local-hash, journal and broadcast boundary.
+All four testnet funded gates run only after the reviewed
 record is committed in a separate evidence commit; they reject dirty, untracked
 or executable post-deployment changes and token instances absent from the
 reviewed record. Every disposable asset-holding resource is journaled before use,
@@ -158,10 +179,14 @@ ciphertexts, keys or raw RPC payloads.
 - `periphery/`: routing/adapter boundary and integration notes;
 - `sdk/`: stable dependency-free ABI and discovery types;
 - `deployments/`: sanitized public deployment-record boundary;
-- `scripts/`: explicit testnet deployment and COTI scenario runners;
+- `scripts/`: commit-bound Ledger/private-key mainnet deployment, testnet deployment and
+  COTI scenario runners;
 - `test/`: local security/property tests and the gated real-COTI integration
   placeholder;
 - `docs/`: feasibility, privacy, threat, dependency and operational records.
 
-The deployment script requires explicit COTI testnet token addresses and never
-contains a mainnet network or private key fallback.
+Deployment does not require token addresses or AES material. Hardhat stores no
+mainnet account; the deployer is constructed only inside the authenticated funded
+runner from the single configured Ledger or private-key mode described in
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The deployer receives no lasting protocol
+role after deployment.

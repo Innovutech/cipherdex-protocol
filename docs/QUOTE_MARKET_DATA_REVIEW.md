@@ -13,14 +13,21 @@ The paid per-pool quote is a proven exact quote mechanism. This version also
 implements one factory-bound
 `ConfidentialBestExecutionRouter.requestBestQuoteExactInput` transaction. The
 caller creates one router/selector-bound encrypted input. The router reuses the
-validated GT value across a bounded factory-derived fee/strategy candidate set,
-privately selects the largest valid output and offboards only the winner. It pays
+validated GT value across up to the complete nine-slot factory-derived
+fee/strategy candidate namespace, privately selects the largest valid output and
+offboards only the winner. Atomic best execution remains capped at three
+candidates because that is the largest funded COTI execution measurement. It pays
 gas, waits for inclusion and creates public caller/winning-pool/tier/strategy/
 direction/timing history, but does not reveal losing outputs or move funds. It
 has passed fresh funded mixed standard/protected verification and is the
 preferred bounded integration transport. It is not a gasless path, and the
 direct per-pool quote remains an independently supported exact path rather than
 a substitute for nonexistent gasless quoting.
+
+The nine-candidate quote ceiling is source/unit/invariant tested but does not yet
+have funded live-COTI gas evidence. Integrations must measure the deployed
+artifact before enabling it and use deterministic fresh-ciphertext quote groups
+if the chain cannot fit the selected set in one transaction.
 
 No public reserve, TVL, spot-price, TWAP, depth ladder or quote state is added.
 This is a testnet feasibility boundary, not a mainnet-readiness claim.

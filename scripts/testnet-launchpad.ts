@@ -1,8 +1,6 @@
 import { Contract, TransactionReceipt, ethers } from "ethers";
 import { artifacts, ethers as hardhatEthers } from "../hardhat/runtime.js";
 import {
-  LAUNCH_COMMITMENT_EIP712_TYPES,
-  LAUNCH_INITIALIZATION_EIP712_DOMAIN,
   LAUNCHPAD_MIGRATION_EIP712_TYPES,
   LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
 } from "../sdk/src/index";
@@ -70,7 +68,7 @@ const POOL_RESOURCE_ID = "launchpad-pool";
 const FUNDED_LAUNCHPAD_DEADLINE_WINDOW_SECONDS = 3_600n;
 const MINIMUM_MIGRATION_SUBMISSION_WINDOW_SECONDS = 300n;
 const PRICE_OUTSIDE_BOUNDS_SELECTOR = ethers.id("PriceOutsideBounds()").slice(0, 10);
-const INVALID_LAUNCH_COMMITMENT_SELECTOR = ethers.id("InvalidLaunchCommitment()").slice(0, 10);
+const LAUNCH_ALREADY_EXISTS_SELECTOR = ethers.id("LaunchAlreadyExists()").slice(0, 10);
 
 let stage = "configuration";
 let configuredLaunchpadProof = false;
@@ -467,16 +465,16 @@ async function recoverLaunchpadResources(): Promise<void> {
       initializationStrategyAddress,
     );
     const poolAddress = ethers.getAddress(await factory.getPool(key));
-    const successfulCommitments = recoveryJournal.transactions.filter((transaction) =>
-      transaction.label === "launch commitment" &&
+    const successfulMigrations = recoveryJournal.transactions.filter((transaction) =>
+      transaction.label === "atomic launchpad migration" &&
       transaction.status === "mined-success"
     );
-    if (successfulCommitments.length > 1) {
-      throw new Error("launchpad recovery found multiple successful commitments");
+    if (successfulMigrations.length > 1) {
+      throw new Error("launchpad recovery found multiple successful migrations");
     }
     if (poolAddress === ethers.ZeroAddress) {
-      if (successfulCommitments.length !== 0) {
-        throw new Error("successful launch commitment has no canonical pool to recover");
+      if (successfulMigrations.length !== 0) {
+        throw new Error("successful launchpad migration has no canonical pool to recover");
       }
     } else {
       if (!(await factory.isPool(poolAddress))) {
@@ -509,10 +507,10 @@ async function recoverLaunchpadResources(): Promise<void> {
       }
       const creationTransactionHash = matchingCreatedEvents[0].transactionHash;
       if (
-        successfulCommitments.length === 1 &&
-        successfulCommitments[0].hash.toLowerCase() !== creationTransactionHash.toLowerCase()
+        successfulMigrations.length === 1 &&
+        successfulMigrations[0].hash.toLowerCase() !== creationTransactionHash.toLowerCase()
       ) {
-        throw new Error("launchpad recovery journal does not match canonical pool creation");
+        throw new Error("launchpad recovery journal does not match atomic pool creation");
       }
       const creationReceipt = await hardhatEthers.provider.getTransactionReceipt(
         creationTransactionHash,
@@ -678,7 +676,6 @@ async function recoverLaunchpadResources(): Promise<void> {
 
 async function main(): Promise<void> {
   const privateKey = requiredPrivateKey();
-  const launchAuthorityPrivateKey = requiredPrivateKey("COTI_QUOTE_PRIVATE_KEY");
   const aesKey = process.env.COTI_AES_KEY?.trim();
   if (!aesKey) throw new Error("missing COTI_AES_KEY");
 
@@ -696,18 +693,10 @@ async function main(): Promise<void> {
   if (network.chainId !== EXPECTED_CHAIN_ID) {
     throw new Error(`expected COTI testnet ${EXPECTED_CHAIN_ID}, received ${network.chainId}`);
   }
-  const launchAuthority = new FundedWallet(
-    launchAuthorityPrivateKey,
-    hardhatEthers.provider,
-  );
   const wallet = new CotiWallet(privateKey, hardhatEthers.provider, { aesKey });
   wallet.setAesKey(aesKey);
   const walletAddress = await wallet.getAddress();
-  const launchAuthorityAddress = await launchAuthority.getAddress();
   const deployer = wallet;
-  if (launchAuthorityAddress.toLowerCase() === walletAddress.toLowerCase()) {
-    throw new Error("launch authority must be distinct from the pool creator");
-  }
   stage = "reviewed deployment provenance";
   const deploymentRecord = await verifyConfiguredTestnetDeployment(
     requiredTestnetDeploymentRecordPath(),
@@ -1045,7 +1034,6 @@ async function main(): Promise<void> {
     () => strategyFactory.deploy(
       factoryAddress,
       strategyRegistryDeployment.address,
-      launchAuthorityAddress,
       { gasLimit: INITIALIZATION_STRATEGY_DEPLOY_GAS_LIMIT },
     ),
   );
@@ -1098,7 +1086,6 @@ async function main(): Promise<void> {
       factoryAddress,
       migratorAddress,
       initializationStrategyAddress,
-      launchAuthorityAddress,
       token0Address: canonicalToken0,
       token1Address: canonicalToken1,
       decimals0: canonicalDecimals0,
@@ -1145,91 +1132,6 @@ async function main(): Promise<void> {
     FUNDED_LAUNCHPAD_DEADLINE_WINDOW_SECONDS,
   );
   const launchId = ethers.hexlify(ethers.randomBytes(32));
-  const launchCommitment = {
-    launchId,
-    creator: walletAddress,
-    token0: canonicalToken0,
-    token1: canonicalToken1,
-    decimals0: canonicalDecimals0,
-    decimals1: canonicalDecimals1,
-    feeBps,
-    privacyMode: 1,
-    poolVersion: 3,
-    factory: factoryAddress,
-    migrator: migratorAddress,
-    initializationStrategy: initializationStrategyAddress,
-    launchAuthority: launchAuthorityAddress,
-    chainId: network.chainId,
-    authorizationDeadline: deadline,
-    migrationDeadline: deadline,
-  } as const;
-  const launchDomain = {
-    ...LAUNCH_INITIALIZATION_EIP712_DOMAIN,
-    chainId: network.chainId,
-    verifyingContract: initializationStrategyAddress,
-  };
-  stage = "launch commitment signing";
-  const creatorLaunchAuthorization = await wallet.signTypedData(
-    launchDomain,
-    { LaunchCommitment: [...LAUNCH_COMMITMENT_EIP712_TYPES] },
-    launchCommitment,
-  );
-  const authorityLaunchAuthorization = await launchAuthority.signTypedData(
-    launchDomain,
-    { LaunchCommitment: [...LAUNCH_COMMITMENT_EIP712_TYPES] },
-    launchCommitment,
-  );
-  const [predictedPoolAddressValue, launchCommitmentHash] =
-    await strategy.commitLaunch.staticCall(
-      launchCommitment,
-      creatorLaunchAuthorization,
-      authorityLaunchAuthorization,
-    );
-  const predictedPoolAddress = ethers.getAddress(predictedPoolAddressValue);
-  if (await hardhatEthers.provider.getCode(predictedPoolAddress) !== "0x") {
-    throw new Error("predicted protected pool address is already deployed");
-  }
-  stage = "launch commitment";
-  const launchCommitmentTransaction = await submit(
-    stage,
-    () => strategy.commitLaunch(
-      launchCommitment,
-      creatorLaunchAuthorization,
-      authorityLaunchAuthorization,
-      { gasLimit: COTI_TESTNET_TX_GAS_LIMIT },
-    ),
-  );
-  if (
-    ethers.getAddress(await factory.getPool(canonicalPoolKey)) !==
-      predictedPoolAddress ||
-    await hardhatEthers.provider.getCode(predictedPoolAddress) === "0x"
-  ) {
-    throw new Error("launch commitment did not create the canonical protected pool");
-  }
-  const committedPool = await hardhatEthers.getContractAt(
-    "ConfidentialCPMM",
-    predictedPoolAddress,
-    wallet,
-  );
-  if (await committedPool.initialized()) {
-    throw new Error("launch commitment unexpectedly initialized the protected pool");
-  }
-  recoveryJournal.recordResource({
-    id: POOL_RESOURCE_ID,
-    kind: "launchpad-pool",
-    address: predictedPoolAddress,
-    creationTransactionHash: launchCommitmentTransaction.transactionHash,
-    metadata: {
-      factoryAddress,
-      migratorAddress,
-      initializationStrategyAddress,
-      token0Address: canonicalToken0,
-      token1Address: canonicalToken1,
-      decimals0: canonicalDecimals0,
-      decimals1: canonicalDecimals1,
-      feeBps,
-    },
-  });
 
   await setRecoverablePrivateAllowance({
     journal: journal(), wallet, token: token0, tokenAddress: canonicalToken0,
@@ -1249,6 +1151,39 @@ async function main(): Promise<void> {
   const minPriceInput = await wallet.encryptValue256(minPrice, migratorAddress, migrateSelector);
   const maxPriceInput = await wallet.encryptValue256(maxPrice, migratorAddress, migrateSelector);
   const withDisposition = disposition !== undefined;
+  const migrationDomain = {
+    ...LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
+    chainId: network.chainId,
+    verifyingContract: migratorAddress,
+  } as const;
+  const migrationTypes = { Migration: [...LAUNCHPAD_MIGRATION_EIP712_TYPES] };
+  const migrationValues = (
+    signedAmount0: typeof input0,
+    signedAmount1: typeof input1,
+    signedMinShares: typeof minSharesInput,
+    signedMinPrice: typeof minPriceInput,
+    signedMaxPrice: typeof maxPriceInput,
+  ) => ({
+    launchId,
+    initializationStrategy: initializationStrategyAddress,
+    creator: walletAddress,
+    tokenA,
+    tokenB,
+    decimalsA,
+    decimalsB,
+    feeBps,
+    encryptedInputsHash: encryptedInputsHash(
+      signedAmount0,
+      signedAmount1,
+      signedMinShares,
+      signedMinPrice,
+      signedMaxPrice,
+    ),
+    deadline,
+    withDisposition,
+    disposition: disposition ?? 0,
+    unlockTime,
+  });
   const signAuthorization = (
     signedAmount0: typeof input0,
     signedAmount1: typeof input1,
@@ -1256,35 +1191,16 @@ async function main(): Promise<void> {
     signedMinPrice: typeof minPriceInput,
     signedMaxPrice: typeof maxPriceInput,
   ) => wallet.signTypedData(
-      {
-        ...LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
-        chainId: network.chainId,
-        verifyingContract: migratorAddress,
-      },
-      { Migration: [...LAUNCHPAD_MIGRATION_EIP712_TYPES] },
-      {
-        launchId,
-        launchCommitmentHash,
-        initializationStrategy: initializationStrategyAddress,
-        creator: walletAddress,
-        tokenA,
-        tokenB,
-        decimalsA,
-        decimalsB,
-        feeBps,
-        encryptedInputsHash: encryptedInputsHash(
-          signedAmount0,
-          signedAmount1,
-          signedMinShares,
-          signedMinPrice,
-          signedMaxPrice,
-        ),
-        deadline,
-        withDisposition,
-        disposition: disposition ?? 0,
-        unlockTime,
-      },
-    );
+    migrationDomain,
+    migrationTypes,
+    migrationValues(
+      signedAmount0,
+      signedAmount1,
+      signedMinShares,
+      signedMinPrice,
+      signedMaxPrice,
+    ),
+  );
   stage = "migration authorization signing";
   const authorization = await signAuthorization(
     input0,
@@ -1293,9 +1209,13 @@ async function main(): Promise<void> {
     minPriceInput,
     maxPriceInput,
   );
+  const authorizationHash = ethers.TypedDataEncoder.hash(
+    migrationDomain,
+    migrationTypes,
+    migrationValues(input0, input1, minSharesInput, minPriceInput, maxPriceInput),
+  );
   const migrationRequest = [
     launchId,
-    launchCommitmentHash,
     tokenA,
     tokenB,
     decimalsA,
@@ -1342,7 +1262,6 @@ async function main(): Promise<void> {
   );
   const rejectedRequest = [
     launchId,
-    launchCommitmentHash,
     tokenA,
     tokenB,
     decimalsA,
@@ -1357,11 +1276,10 @@ async function main(): Promise<void> {
     rejectedAuthorization,
   ];
   if (
-    ethers.getAddress(await factory.getPool(canonicalPoolKey)) !==
-      predictedPoolAddress ||
-    await committedPool.initialized()
+    ethers.getAddress(await factory.getPool(canonicalPoolKey)) !== ethers.ZeroAddress ||
+    Number((await strategy.getLaunch(launchId)).status) !== 0
   ) {
-    throw new Error("launchpad rollback probe requires the committed uninitialized pool");
+    throw new Error("launchpad rollback probe requires an empty atomic launch state");
   }
   stage = "rollback probe balance snapshot";
   const beforeRejected0 = await readPrivateBalance(token0, walletAddress, wallet);
@@ -1384,11 +1302,10 @@ async function main(): Promise<void> {
     throw new Error("launchpad price-bound proof mined after its reviewed deadline");
   }
   if (
-    ethers.getAddress(await factory.getPool(canonicalPoolKey)) !==
-      predictedPoolAddress ||
-    await committedPool.initialized()
+    ethers.getAddress(await factory.getPool(canonicalPoolKey)) !== ethers.ZeroAddress ||
+    Number((await strategy.getLaunch(launchId)).status) !== 0
   ) {
-    throw new Error("failed launchpad migration changed the committed pool state");
+    throw new Error("failed launchpad migration did not roll back launch and pool creation");
   }
   if (
     (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeRejected0 ||
@@ -1422,7 +1339,7 @@ async function main(): Promise<void> {
 
   let poolAddress: string | null = null;
   let migrationEventCount = 0;
-  let migrationCommitmentMismatch = false;
+  let migrationAuthorizationMismatch = false;
   let lockDisposition: {
     disposition: number;
     lockId: string;
@@ -1440,10 +1357,10 @@ async function main(): Promise<void> {
           ethers.getAddress(String(parsed.args.creator)) !== walletAddress ||
           ethers.getAddress(String(parsed.args.initializationStrategy)) !==
             initializationStrategyAddress ||
-          String(parsed.args.launchCommitmentHash).toLowerCase() !==
-            String(launchCommitmentHash).toLowerCase()
+          String(parsed.args.authorizationHash).toLowerCase() !==
+            authorizationHash.toLowerCase()
         ) {
-          migrationCommitmentMismatch = true;
+          migrationAuthorizationMismatch = true;
         }
         poolAddress = parsed.args.pool as string;
       }
@@ -1461,7 +1378,7 @@ async function main(): Promise<void> {
   }
   if (
     migrationEventCount !== 1 ||
-    migrationCommitmentMismatch ||
+    migrationAuthorizationMismatch ||
     !poolAddress ||
     !ethers.isAddress(poolAddress)
   ) {
@@ -1470,9 +1387,31 @@ async function main(): Promise<void> {
   if (dispositionEventCount > 1) {
     throw new Error("launchpad lock disposition event is ambiguous");
   }
-  if (poolAddress.toLowerCase() !== predictedPoolAddress.toLowerCase()) {
-    throw new Error("launchpad did not deploy the predicted canonical pool");
+  const canonicalPoolAddress = ethers.getAddress(
+    await factory.getPool(canonicalPoolKey),
+  );
+  if (ethers.getAddress(poolAddress) !== canonicalPoolAddress) {
+    throw new Error("launchpad did not deploy the canonical factory pool");
   }
+  if (Number((await strategy.getLaunch(launchId)).status) !== 2) {
+    throw new Error("launchpad migration did not complete its atomic launch record");
+  }
+  recoveryJournal.recordResource({
+    id: POOL_RESOURCE_ID,
+    kind: "launchpad-pool",
+    address: poolAddress,
+    creationTransactionHash: migration.transactionHash,
+    metadata: {
+      factoryAddress,
+      migratorAddress,
+      token0Address: canonicalToken0,
+      token1Address: canonicalToken1,
+      decimals0: canonicalDecimals0,
+      decimals1: canonicalDecimals1,
+      feeBps,
+      initializationStrategyAddress,
+    },
+  });
   if (disposition === undefined) {
     if (lockDisposition) throw new Error("unexpected launchpad lock disposition event");
   } else {
@@ -1518,7 +1457,7 @@ async function main(): Promise<void> {
       : migrator.migrateWithDisposition(migrationRequest, disposition, unlockTime, {
           gasLimit: COTI_TESTNET_TX_GAS_LIMIT,
         }),
-    INVALID_LAUNCH_COMMITMENT_SELECTOR,
+    LAUNCH_ALREADY_EXISTS_SELECTOR,
   );
   if (
     (await readPrivateBalance(token0, walletAddress, wallet)) !== beforeReplay0 ||
@@ -1766,8 +1705,8 @@ async function main(): Promise<void> {
   }
   const launchAssertions = [
     "empty protected pool slot verified",
-    "dual-authorized launch commitment created one uninitialized protected pool",
-    "failed signed alternate-bound launch request rolled back atomically",
+    "creator-authorized migration created and initialized one protected pool atomically",
+    "failed signed alternate-bound migration rolled back launch and pool creation atomically",
     "launchpad migration used canonical pool",
     "LP disposition and lock state verified",
     "replay protection rolled back atomically",
@@ -1874,7 +1813,6 @@ async function main(): Promise<void> {
       constructorArguments: [
         factoryAddress,
         strategyRegistryDeployment.address,
-        launchAuthorityAddress,
       ],
     },
     {
@@ -1922,7 +1860,7 @@ async function main(): Promise<void> {
     );
   }
   recoveryJournal.prepareEvidence({
-    participants: [walletAddress, launchAuthorityAddress],
+    participants: [walletAddress],
     configuration: launchEvidenceConfiguration,
     artifacts: launchArtifacts as any,
     assertions: launchAssertions,

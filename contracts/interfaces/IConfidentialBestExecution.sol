@@ -47,6 +47,8 @@ interface IConfidentialBestExecutionRouter {
 
     function PROTOCOL_VERSION() external view returns (uint256);
     function factory() external view returns (address);
+    function MAX_CANDIDATES() external view returns (uint8);
+    function MAX_QUOTE_CANDIDATES() external view returns (uint8);
 
     function requestBestQuoteExactInput(
         address tokenIn,

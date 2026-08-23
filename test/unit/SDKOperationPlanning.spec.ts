@@ -2,6 +2,7 @@ import { expect } from "chai";
 import {
   WALLET_CALLS_VERSION,
   buildConfidentialAddLiquidityOperationPlan,
+  buildConfidentialAddLiquidityQuoteOperationPlan,
   buildConfidentialLockLiquidityOperationPlan,
   buildConfidentialQuoteOperationPlan,
   buildConfidentialRemoveLiquidityOperationPlan,
@@ -125,10 +126,26 @@ describe("SDK confidential operation planning", function () {
 
   it("covers quote, removal, and lock signature progress", function () {
     const quote = buildConfidentialQuoteOperationPlan();
+    const splitQuote = buildConfidentialQuoteOperationPlan({
+      route: "best-execution",
+      candidateBatchCount: 3,
+    });
+    const liquidityQuote = buildConfidentialAddLiquidityQuoteOperationPlan();
     const removal = buildConfidentialRemoveLiquidityOperationPlan();
     const lock = buildConfidentialLockLiquidityOperationPlan();
 
     expect(quote.prompts.sequentialTotal).to.equal(2);
+    expect(splitQuote.signatures).to.have.length(3);
+    expect(splitQuote.transactions).to.have.length(3);
+    expect(splitQuote.prompts).to.deep.include({
+      sequentialTotal: 6,
+      batchedTotal: 4,
+    });
+    expect(liquidityQuote).to.deep.include({
+      operation: "add-liquidity-quote",
+    });
+    expect(liquidityQuote.signatures[0].purpose).to.equal("specified-amount");
+    expect(liquidityQuote.prompts.sequentialTotal).to.equal(2);
     expect(removal.signatures.map((step) => step.field)).to.deep.equal([
       "shares",
       "minimumAmount0",
@@ -150,6 +167,9 @@ describe("SDK confidential operation planning", function () {
     expect(() => buildConfidentialQuoteOperationPlan({
       route: "other" as unknown as "direct",
     })).to.throw("Invalid confidential operation route");
+    expect(() => buildConfidentialQuoteOperationPlan({
+      candidateBatchCount: 2,
+    })).to.throw("Invalid confidential quote candidate batch count");
   });
 });
 
@@ -160,6 +180,7 @@ describe("SDK optional wallet call batching", function () {
     for (const name of [
       "buildConfidentialSwapOperationPlan",
       "buildConfidentialAddLiquidityOperationPlan",
+      "buildConfidentialAddLiquidityQuoteOperationPlan",
       "buildWalletCapabilitiesRequest",
       "prepareWalletCallExecution",
       "normalizeWalletCallsStatus",

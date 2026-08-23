@@ -62,7 +62,7 @@ interface IConfidentialCPMMFactory {
     function bootstrapPool(
         address initializationStrategy,
         bytes32 launchId,
-        bytes32 launchCommitmentHash,
+        bytes32 authorizationHash,
         address pool,
         address provider,
         uint256 amount0,
@@ -74,7 +74,7 @@ interface IConfidentialCPMMFactory {
     function bootstrapPoolWithDisposition(
         address initializationStrategy,
         bytes32 launchId,
-        bytes32 launchCommitmentHash,
+        bytes32 authorizationHash,
         address pool,
         address provider,
         uint256 amount0,

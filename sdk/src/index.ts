@@ -10,7 +10,7 @@ export * from "./walletCallBatch.js";
  * COTI SDK and the caller's AES key.
  */
 
-export const DISCLOSURE_SCHEMA_VERSION = 6 as const;
+export const DISCLOSURE_SCHEMA_VERSION = 7 as const;
 export const CIPHERDEX_PUBLIC_PROTOCOL_VERSION = 2 as const;
 export const CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION = 3 as const;
 export const CIPHERDEX_PROTOCOL_VERSION =
@@ -83,6 +83,7 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "function protectedInitializationCompleted() view returns (bool)",
   "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))",
   "function requestQuoteExactInput(((uint256,uint256),bytes),bool,bytes32) returns ((uint256,uint256))",
+  "function requestAddLiquidityQuote(((uint256,uint256),bytes),bool,bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256))",
   "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
   "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
   "function bootstrapLiquidity(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))",
@@ -100,6 +101,7 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent)",
   "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner)",
   "event ConfidentialQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed zeroForOne,(uint256,uint256) result)",
+  "event ConfidentialLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed token0Specified,(uint256,uint256) acceptedCiphertext,(uint256,uint256) counterpartCiphertext,(uint256,uint256) lpCiphertext)",
   "event ConfidentialProtocolFeesCollected(address indexed token,address indexed feeVault,uint32 aggregatedSwapCount)",
 ] as const;
 
@@ -155,6 +157,7 @@ export const CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function factory() view returns (address)",
   "function MAX_CANDIDATES() view returns (uint8)",
+  "function MAX_QUOTE_CANDIDATES() view returns (uint8)",
   "function MAX_POOL_CLASSES() view returns (uint8)",
   "function DEFAULT_STANDARD_CANDIDATE_BITMAP() view returns (uint16)",
   "function usedRequestIds(address,bytes4,bytes32) view returns (bool)",
@@ -184,9 +187,9 @@ export const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function factory() view returns (address)",
   "function initializationStrategy() view returns (address)",
-  "function migrate((bytes32,bytes32,address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,bytes)) returns (address,(uint256,uint256))",
-  "function migrateWithDisposition((bytes32,bytes32,address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,bytes),uint8,uint64) returns (address,(uint256,uint256),bytes32)",
-  "event LaunchpadMigration(bytes32 indexed launchId,address indexed creator,address indexed pool,address initializationStrategy,bytes32 launchCommitmentHash)",
+  "function migrate((bytes32,address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,bytes)) returns (address,(uint256,uint256))",
+  "function migrateWithDisposition((bytes32,address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,bytes),uint8,uint64) returns (address,(uint256,uint256),bytes32)",
+  "event LaunchpadMigration(bytes32 indexed launchId,address indexed creator,address indexed pool,address initializationStrategy,bytes32 authorizationHash)",
   "event LaunchpadLockDisposition(address indexed creator,address indexed pool,uint8 disposition,bytes32 lockId,uint64 unlockTime)",
 ] as const;
 
@@ -198,18 +201,12 @@ export const CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI = [
   "function strategyRegistry() view returns (address)",
   "function migrator() view returns (address)",
   "function migratorRuntimeCodehash() view returns (bytes32)",
-  "function launchAuthority() view returns (address)",
   "function configurationFinalized() view returns (bool)",
   "function factoryRegistration() view returns (bytes32)",
-  "function launchCommitmentDigest((bytes32 launchId,address creator,address token0,address token1,uint8 decimals0,uint8 decimals1,uint256 feeBps,uint8 privacyMode,uint256 poolVersion,address factory,address migrator,address initializationStrategy,address launchAuthority,uint256 chainId,uint64 authorizationDeadline,uint64 migrationDeadline) commitment) view returns (bytes32)",
-  "function commitLaunch((bytes32 launchId,address creator,address token0,address token1,uint8 decimals0,uint8 decimals1,uint256 feeBps,uint8 privacyMode,uint256 poolVersion,address factory,address migrator,address initializationStrategy,address launchAuthority,uint256 chainId,uint64 authorizationDeadline,uint64 migrationDeadline) commitment,bytes creatorAuthorization,bytes authorityAuthorization) returns (address pool,bytes32 commitmentHash)",
-  "function cancelLaunch(bytes32)",
-  "function expireLaunch(bytes32)",
+  "function prepareLaunch(bytes32,address,address,address,uint8,uint8,uint256,uint64,bytes32) returns (address pool,bytes32 poolKey)",
   "function getLaunch(bytes32) view returns (bytes32,bytes32,address,address,uint64,uint8)",
   "function activeLaunchForPoolKey(bytes32) view returns (bytes32)",
-  "event LaunchCommitted(bytes32 indexed launchId,bytes32 indexed poolKey,address indexed pool,address creator,uint64 migrationDeadline,bytes32 commitmentHash)",
-  "event LaunchCanceled(bytes32 indexed launchId,bytes32 indexed poolKey)",
-  "event LaunchExpired(bytes32 indexed launchId,bytes32 indexed poolKey)",
+  "event LaunchPrepared(bytes32 indexed launchId,bytes32 indexed poolKey,address indexed pool,address creator,uint64 migrationDeadline,bytes32 authorizationHash)",
 ] as const;
 
 export const CONFIDENTIAL_INITIALIZATION_STRATEGY_REGISTRY_ABI = [
@@ -263,7 +260,6 @@ export const LAUNCHPAD_MIGRATOR_EIP712_DOMAIN = {
 
 export const LAUNCHPAD_MIGRATION_EIP712_TYPES = [
   { name: "launchId", type: "bytes32" },
-  { name: "launchCommitmentHash", type: "bytes32" },
   { name: "initializationStrategy", type: "address" },
   { name: "creator", type: "address" },
   { name: "tokenA", type: "address" },
@@ -277,71 +273,6 @@ export const LAUNCHPAD_MIGRATION_EIP712_TYPES = [
   { name: "disposition", type: "uint8" },
   { name: "unlockTime", type: "uint64" },
 ] as const;
-
-export const LAUNCH_INITIALIZATION_EIP712_DOMAIN = {
-  name: "CipherDEX Launch Initialization",
-  version: "1",
-} as const;
-
-export const LAUNCH_COMMITMENT_EIP712_TYPES = [
-  { name: "launchId", type: "bytes32" },
-  { name: "creator", type: "address" },
-  { name: "token0", type: "address" },
-  { name: "token1", type: "address" },
-  { name: "decimals0", type: "uint8" },
-  { name: "decimals1", type: "uint8" },
-  { name: "feeBps", type: "uint256" },
-  { name: "privacyMode", type: "uint8" },
-  { name: "poolVersion", type: "uint256" },
-  { name: "factory", type: "address" },
-  { name: "migrator", type: "address" },
-  { name: "initializationStrategy", type: "address" },
-  { name: "launchAuthority", type: "address" },
-  { name: "chainId", type: "uint256" },
-  { name: "authorizationDeadline", type: "uint64" },
-  { name: "migrationDeadline", type: "uint64" },
-] as const;
-
-export type ConfidentialLaunchCommitmentInput = Readonly<{
-  launchId: string;
-  creator: string;
-  tokenA: string;
-  tokenB: string;
-  decimalsA: number;
-  decimalsB: number;
-  feeBps: number;
-  factory: string;
-  migrator: string;
-  initializationStrategy: string;
-  launchAuthority: string;
-  chainId: bigint;
-  authorizationDeadline: bigint;
-  migrationDeadline: bigint;
-}>;
-
-export type ConfidentialLaunchCommitment = Readonly<{
-  launchId: string;
-  creator: string;
-  token0: string;
-  token1: string;
-  decimals0: number;
-  decimals1: number;
-  feeBps: number;
-  privacyMode: typeof PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP;
-  poolVersion: typeof CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION;
-  factory: string;
-  migrator: string;
-  initializationStrategy: string;
-  launchAuthority: string;
-  chainId: bigint;
-  authorizationDeadline: bigint;
-  migrationDeadline: bigint;
-}>;
-
-export type ConfidentialLaunchCommitCall = Readonly<{
-  functionName: "commitLaunch";
-  args: readonly [ConfidentialLaunchCommitment, string, string];
-}>;
 
 const MAX_UINT256_DECIMAL_DIGITS = 78;
 const MAX_EVIDENCE_CALLDATA_BYTES = 64 * 1024;
@@ -371,119 +302,6 @@ const isBoundedEvenHex = (value: unknown, maximumBytes: number): value is string
   value.length % 2 === 0 &&
   /^0x[0-9a-fA-F]*$/u.test(value);
 
-function snapshotAuthorization(value: string | Uint8Array): string {
-  const hex = typeof value === "string"
-    ? value
-    : `0x${Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-  if (!/^0x(?:[0-9a-fA-F]{2})+$/.test(hex)) {
-    throw new TypeError("Invalid launch authorization bytes");
-  }
-  return hex;
-}
-
-/**
- * Canonicalizes the complete protected-pool commitment before EIP-712 signing.
- * The caller still signs with its chosen reviewed signing implementation.
- */
-export function buildConfidentialLaunchCommitment(
-  input: ConfidentialLaunchCommitmentInput,
-): ConfidentialLaunchCommitment {
-  const addresses = [
-    input.creator,
-    input.tokenA,
-    input.tokenB,
-    input.factory,
-    input.migrator,
-    input.initializationStrategy,
-    input.launchAuthority,
-  ];
-  if (
-    !isBytes32(input.launchId) ||
-    /^0x0{64}$/i.test(input.launchId) ||
-    addresses.some((address) => !isAddressLike(address)) ||
-    addresses.some((address) => /^0x0{40}$/i.test(address)) ||
-    input.creator.toLowerCase() === input.launchAuthority.toLowerCase() ||
-    input.tokenA.toLowerCase() === input.tokenB.toLowerCase() ||
-    !Number.isInteger(input.decimalsA) ||
-    !Number.isInteger(input.decimalsB) ||
-    input.decimalsA < 0 ||
-    input.decimalsA > 18 ||
-    input.decimalsB < 0 ||
-    input.decimalsB > 18 ||
-    !CIPHERDEX_V1_FEE_POLICY.approvedTotalFeeBps.includes(
-      input.feeBps as 5 | 30 | 100,
-    ) ||
-    typeof input.chainId !== "bigint" ||
-    input.chainId <= 0n ||
-    typeof input.authorizationDeadline !== "bigint" ||
-    input.authorizationDeadline <= 0n ||
-    input.authorizationDeadline > UINT64_MAX ||
-    typeof input.migrationDeadline !== "bigint" ||
-    input.migrationDeadline < input.authorizationDeadline ||
-    input.migrationDeadline > UINT64_MAX
-  ) {
-    throw new TypeError("Invalid confidential launch commitment");
-  }
-
-  const tokenAFirst = input.tokenA.toLowerCase() < input.tokenB.toLowerCase();
-  return Object.freeze({
-    launchId: input.launchId,
-    creator: input.creator,
-    token0: tokenAFirst ? input.tokenA : input.tokenB,
-    token1: tokenAFirst ? input.tokenB : input.tokenA,
-    decimals0: tokenAFirst ? input.decimalsA : input.decimalsB,
-    decimals1: tokenAFirst ? input.decimalsB : input.decimalsA,
-    feeBps: input.feeBps,
-    privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-    poolVersion: CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION,
-    factory: input.factory,
-    migrator: input.migrator,
-    initializationStrategy: input.initializationStrategy,
-    launchAuthority: input.launchAuthority,
-    chainId: input.chainId,
-    authorizationDeadline: input.authorizationDeadline,
-    migrationDeadline: input.migrationDeadline,
-  });
-}
-
-export function buildConfidentialLaunchCommitCall(
-  commitment: ConfidentialLaunchCommitment,
-  creatorAuthorization: string | Uint8Array,
-  authorityAuthorization: string | Uint8Array,
-): ConfidentialLaunchCommitCall {
-  const canonical = buildConfidentialLaunchCommitment({
-    launchId: commitment.launchId,
-    creator: commitment.creator,
-    tokenA: commitment.token0,
-    tokenB: commitment.token1,
-    decimalsA: commitment.decimals0,
-    decimalsB: commitment.decimals1,
-    feeBps: commitment.feeBps,
-    factory: commitment.factory,
-    migrator: commitment.migrator,
-    initializationStrategy: commitment.initializationStrategy,
-    launchAuthority: commitment.launchAuthority,
-    chainId: commitment.chainId,
-    authorizationDeadline: commitment.authorizationDeadline,
-    migrationDeadline: commitment.migrationDeadline,
-  });
-  if (
-    commitment.privacyMode !== PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP ||
-    commitment.poolVersion !== CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION ||
-    canonical.token0.toLowerCase() !== commitment.token0.toLowerCase() ||
-    canonical.token1.toLowerCase() !== commitment.token1.toLowerCase()
-  ) {
-    throw new TypeError("Noncanonical confidential launch commitment");
-  }
-  return Object.freeze({
-    functionName: "commitLaunch" as const,
-    args: Object.freeze([
-      canonical,
-      snapshotAuthorization(creatorAuthorization),
-      snapshotAuthorization(authorityAuthorization),
-    ] as const),
-  });
-}
 
 const FEE_POLICY_FIELDS = Object.freeze([
   "totalFeeBps",
@@ -548,7 +366,7 @@ const CONFIDENTIAL_LOCK_DISCOVERY_FIELDS = Object.freeze([
 const LAUNCHPAD_MIGRATION_METADATA_FIELDS = Object.freeze([
   "disclosureSchemaVersion",
   "launchId",
-  "launchCommitmentHash",
+  "authorizationHash",
   "initializationStrategy",
   "creator",
   "pool",
@@ -654,6 +472,7 @@ export const PUBLIC_CPMM_ABI = [
   "function quoteExactInput(uint256,bool) view returns (uint256)",
   "function swapExactInput(uint256,uint256,bool,uint64) returns (uint256)",
   "function addLiquidity(uint256,uint256,uint256,uint256,uint256,uint64) returns (uint256)",
+  "function addLiquidityFor(address,uint256,uint256,uint256,uint256,uint256,uint64) returns (uint256)",
   "function removeLiquidity(uint256,uint256,uint256,uint64) returns (uint256,uint256)",
   "function collectProtocolFees(bool,bool) returns (uint256,uint256)",
   "function effectiveReserves() view returns (uint256,uint256)",
@@ -698,6 +517,13 @@ export const PUBLIC_CPMM_ROUTER_ABI = [
   "event SwapRouted(address indexed trader,address indexed pool,address indexed inputToken,address outputToken,uint256 amountIn,uint256 amountOut)",
 ] as const;
 
+export const PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function factory() view returns (address)",
+  "function createOrAddLiquidity(address,address,uint8,uint8,uint256,uint256,uint256,uint256,uint256,uint256,uint64) returns (address,uint256,uint256,uint256)",
+  "event PublicLiquidityRouted(address indexed provider,address indexed pool,bool indexed poolCreated,uint256 amount0,uint256 amount1,uint256 shares)",
+] as const;
+
 export type Ciphertext256 = {
   ciphertextHigh: bigint;
   ciphertextLow: bigint;
@@ -722,7 +548,16 @@ export const CONFIDENTIAL_BEST_SWAP_SELECTOR = "0x310481d3" as const;
 export const CONFIDENTIAL_BEST_SWAP_WITH_CANDIDATES_SELECTOR =
   "0xc55b572d" as const;
 export const DEFAULT_STANDARD_CANDIDATE_BITMAP = 0x49 as const;
+export const ALL_CONFIDENTIAL_CANDIDATE_BITMAP = 0x1ff as const;
+export const MAX_CONFIDENTIAL_QUOTE_CANDIDATES = 9 as const;
+export const MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES = 3 as const;
+/** @deprecated Use the operation-specific quote or atomic-swap limit. */
 export const MAX_CONFIDENTIAL_ROUTE_CANDIDATES = 3 as const;
+export const CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION =
+  "requestAddLiquidityQuote" as const;
+export const CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR = "0x6ad558a9" as const;
+export const CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC =
+  "0x4069fd369ee96a414b638a1f85119a2360ab4a7e05df9b1816582b1baf87a147" as const;
 export const CONFIDENTIAL_BEST_QUOTE_RESULT_TOPIC =
   "0x74d60457cef138a4b1c57bac9346b347c04566dfa22699c3a3eab54267d0fdb7" as const;
 export const CONFIDENTIAL_BEST_SWAP_RESULT_TOPIC =
@@ -731,8 +566,8 @@ export const LAUNCHPAD_MIGRATION_TOPIC =
   "0x6227c8fb63c7ea6dc2225fbf219a361b834ac2a7bf43da0b32f1ef9f3b779956" as const;
 export const LAUNCHPAD_LOCK_DISPOSITION_TOPIC =
   "0x75e334dcb38a552c1315b5412176e01190962bbb6774c5b3964f221b4a2eb53c" as const;
-export const LAUNCHPAD_MIGRATE_SELECTOR = "0xb3f48f47" as const;
-export const LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR = "0xf1134089" as const;
+export const LAUNCHPAD_MIGRATE_SELECTOR = "0x28eec19d" as const;
+export const LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR = "0x7e75f4d5" as const;
 export const CONFIDENTIAL_LIQUIDITY_LOCKED_TOPIC =
   "0xda0ee1246c7c735db57cd30fc8444456fd8e002c807a94c88bf4495ea01707bd" as const;
 
@@ -760,6 +595,28 @@ export type ConfidentialBestSwapWithCandidatesCall = Readonly<{
     InputText256,
     number,
     string,
+    bigint,
+  ];
+}>;
+
+export type ConfidentialLiquidityQuoteCall = Readonly<{
+  functionName: typeof CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION;
+  args: readonly [InputText256, boolean, string, bigint];
+}>;
+
+export type PublicCreateOrAddLiquidityCall = Readonly<{
+  functionName: "createOrAddLiquidity";
+  args: readonly [
+    string,
+    string,
+    number,
+    number,
+    bigint,
+    bigint,
+    bigint,
+    bigint,
+    bigint,
+    bigint,
     bigint,
   ];
 }>;
@@ -924,16 +781,72 @@ function assertInputText256(value: InputText256): void {
   }
 }
 
-function assertCandidateBitmap(candidateBitmap: number): void {
+function candidateCount(candidateBitmap: number): number {
+  return candidateBitmap.toString(2).replaceAll("0", "").length;
+}
+
+/** Builds the complete candidate bitmap for the factory's active pool classes. */
+export function buildConfidentialCandidateBitmap(poolClassCount: number): number {
+  if (!Number.isInteger(poolClassCount) || poolClassCount <= 0 || poolClassCount > 3) {
+    throw new TypeError("Invalid confidential pool class count");
+  }
+  let bitmap = 0;
+  for (let feeIndex = 0; feeIndex < 3; feeIndex += 1) {
+    for (let classIndex = 0; classIndex < poolClassCount; classIndex += 1) {
+      bitmap |= 1 << (feeIndex * 3 + classIndex);
+    }
+  }
+  return bitmap;
+}
+
+function assertCandidateBitmap(candidateBitmap: number, maximumCandidates: number): void {
   if (
     !Number.isInteger(candidateBitmap) ||
     candidateBitmap <= 0 ||
     candidateBitmap >= 512 ||
-    candidateBitmap.toString(2).replaceAll("0", "").length >
-      MAX_CONFIDENTIAL_ROUTE_CANDIDATES
+    !Number.isInteger(maximumCandidates) ||
+    maximumCandidates <= 0 ||
+    maximumCandidates > MAX_CONFIDENTIAL_QUOTE_CANDIDATES ||
+    candidateCount(candidateBitmap) > maximumCandidates
   ) {
     throw new TypeError("Invalid confidential route candidate bitmap");
   }
+}
+
+/**
+ * Deterministically partitions the canonical nine-bit namespace for a network
+ * that cannot process every quote candidate in one transaction. Each returned
+ * bitmap preserves ascending fee/class slot order and requires a fresh caller-
+ * bound encrypted input and request ID.
+ */
+export function partitionConfidentialQuoteCandidateBitmap(
+  candidateBitmap: number,
+  maximumCandidates: number = MAX_CONFIDENTIAL_QUOTE_CANDIDATES,
+): readonly number[] {
+  assertCandidateBitmap(candidateBitmap, MAX_CONFIDENTIAL_QUOTE_CANDIDATES);
+  if (
+    !Number.isInteger(maximumCandidates) ||
+    maximumCandidates <= 0 ||
+    maximumCandidates > MAX_CONFIDENTIAL_QUOTE_CANDIDATES
+  ) {
+    throw new TypeError("Invalid confidential quote candidate batch size");
+  }
+  const batches: number[] = [];
+  let batch = 0;
+  let count = 0;
+  for (let bit = 0; bit < MAX_CONFIDENTIAL_QUOTE_CANDIDATES; bit += 1) {
+    const mask = 1 << bit;
+    if ((candidateBitmap & mask) === 0) continue;
+    batch |= mask;
+    count += 1;
+    if (count === maximumCandidates) {
+      batches.push(batch);
+      batch = 0;
+      count = 0;
+    }
+  }
+  if (batch !== 0) batches.push(batch);
+  return Object.freeze(batches);
 }
 
 function snapshotInputText256(value: InputText256): InputText256 {
@@ -1027,7 +940,7 @@ export function buildConfidentialBestQuoteWithCandidatesCall(
   deadline: bigint,
 ): ConfidentialBestQuoteWithCandidatesCall {
   assertConfidentialBestExecutionEnvelope(tokenIn, tokenOut, requestId, deadline);
-  assertCandidateBitmap(candidateBitmap);
+  assertCandidateBitmap(candidateBitmap, MAX_CONFIDENTIAL_QUOTE_CANDIDATES);
   return Object.freeze({
     functionName: CONFIDENTIAL_BEST_QUOTE_WITH_CANDIDATES_FUNCTION,
     args: Object.freeze([
@@ -1051,7 +964,7 @@ export function buildConfidentialBestSwapWithCandidatesCall(
   deadline: bigint,
 ): ConfidentialBestSwapWithCandidatesCall {
   assertConfidentialBestExecutionEnvelope(tokenIn, tokenOut, requestId, deadline);
-  assertCandidateBitmap(candidateBitmap);
+  assertCandidateBitmap(candidateBitmap, MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES);
   return Object.freeze({
     functionName: CONFIDENTIAL_BEST_SWAP_WITH_CANDIDATES_FUNCTION,
     args: Object.freeze([
@@ -1062,6 +975,103 @@ export function buildConfidentialBestSwapWithCandidatesCall(
       candidateBitmap,
       requestId,
       deadline,
+    ] as const),
+  });
+}
+
+/**
+ * Builds the paid confidential proportional-liquidity preview. The encrypted
+ * specified amount must be bound to the target pool and this function selector.
+ */
+export function buildConfidentialLiquidityQuoteCall(
+  specifiedAmount: InputText256,
+  amount0Specified: boolean,
+  requestId: string,
+  deadline: bigint,
+): ConfidentialLiquidityQuoteCall {
+  if (typeof amount0Specified !== "boolean") {
+    throw new TypeError("Invalid confidential liquidity quote side");
+  }
+  if (!isBytes32(requestId) || /^0x0{64}$/i.test(requestId)) {
+    throw new TypeError("Invalid confidential liquidity quote request ID");
+  }
+  if (typeof deadline !== "bigint" || deadline <= 0n || deadline > UINT64_MAX) {
+    throw new TypeError("Invalid confidential liquidity quote deadline");
+  }
+  return Object.freeze({
+    functionName: CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION,
+    args: Object.freeze([
+      snapshotInputText256(specifiedAmount),
+      amount0Specified,
+      requestId,
+      deadline,
+    ] as const),
+  });
+}
+
+/** Builds the public atomic create-or-add-liquidity periphery call. */
+export function buildPublicCreateOrAddLiquidityCall(input: Readonly<{
+  tokenA: string;
+  tokenB: string;
+  decimalsA: number;
+  decimalsB: number;
+  feeBps: bigint;
+  amountADesired: bigint;
+  amountBDesired: bigint;
+  minShares: bigint;
+  minPriceX18: bigint;
+  maxPriceX18: bigint;
+  deadline: bigint;
+}>): PublicCreateOrAddLiquidityCall {
+  if (
+    !isAddressLike(input.tokenA) ||
+    !isAddressLike(input.tokenB) ||
+    input.tokenA.toLowerCase() === input.tokenB.toLowerCase() ||
+    !Number.isInteger(input.decimalsA) ||
+    !Number.isInteger(input.decimalsB) ||
+    input.decimalsA < 0 ||
+    input.decimalsA > 18 ||
+    input.decimalsB < 0 ||
+    input.decimalsB > 18
+  ) {
+    throw new TypeError("Invalid public liquidity token configuration");
+  }
+  const quantities = [
+    input.feeBps,
+    input.amountADesired,
+    input.amountBDesired,
+    input.minShares,
+    input.minPriceX18,
+    input.maxPriceX18,
+    input.deadline,
+  ];
+  if (
+    quantities.some((value) => typeof value !== "bigint" || value < 0n || value > UINT256_MAX) ||
+    input.amountADesired === 0n ||
+    input.amountBDesired === 0n ||
+    input.deadline === 0n ||
+    input.deadline > UINT64_MAX ||
+    input.minPriceX18 > input.maxPriceX18 ||
+    !(CIPHERDEX_V1_FEE_POLICY.approvedTotalFeeBps as readonly number[]).includes(
+      Number(input.feeBps),
+    )
+  ) {
+    throw new TypeError("Invalid public liquidity parameters");
+  }
+  return Object.freeze({
+    functionName: "createOrAddLiquidity" as const,
+    args: Object.freeze([
+      input.tokenA,
+      input.tokenB,
+      input.decimalsA,
+      input.decimalsB,
+      input.feeBps,
+      input.amountADesired,
+      input.amountBDesired,
+      input.minShares,
+      input.minPriceX18,
+      input.maxPriceX18,
+      input.deadline,
     ] as const),
   });
 }
@@ -1431,7 +1441,7 @@ export type ConfidentialLockDiscovery = {
 export type LaunchpadMigrationMetadata = {
   disclosureSchemaVersion: typeof DISCLOSURE_SCHEMA_VERSION;
   launchId: string;
-  launchCommitmentHash: string;
+  authorizationHash: string;
   initializationStrategy: string;
   creator: string;
   pool: string;
@@ -1865,6 +1875,9 @@ function decodeConfidentialBestExecutionResultEvidence(
   const hasCandidateBitmap =
     expectation.operation === "quote-with-candidates" ||
     expectation.operation === "swap-with-candidates";
+  const maximumEvidenceCandidates = isQuote
+    ? MAX_CONFIDENTIAL_QUOTE_CANDIDATES
+    : MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES;
   const expectedSelector =
     expectation.operation === "quote"
       ? CONFIDENTIAL_BEST_QUOTE_SELECTOR
@@ -1962,7 +1975,7 @@ function decodeConfidentialBestExecutionResultEvidence(
     candidateBitmapValue !== transactionCandidateBitmap ||
     candidateBitmapValue
       .toString(2)
-      .replaceAll("0", "").length > MAX_CONFIDENTIAL_ROUTE_CANDIDATES ||
+      .replaceAll("0", "").length > maximumEvidenceCandidates ||
     (zeroForOneValue !== 0n && zeroForOneValue !== 1n) ||
     ciphertextHigh === undefined ||
     ciphertextLow === undefined
@@ -2565,9 +2578,9 @@ const snapshotLaunchpadMigrationMetadata = (value: unknown): unknown => {
     return Object.freeze({
       disclosureSchemaVersion: ownDataValue(descriptors, "disclosureSchemaVersion"),
       launchId: ownDataValue(descriptors, "launchId"),
-      launchCommitmentHash: ownDataValue(
+      authorizationHash: ownDataValue(
         descriptors,
-        "launchCommitmentHash",
+        "authorizationHash",
       ),
       initializationStrategy: ownDataValue(
         descriptors,
@@ -2594,8 +2607,8 @@ export function isLaunchpadMigrationMetadataShape(
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     isBytes32(candidate.launchId) &&
     !/^0x0{64}$/i.test(candidate.launchId!) &&
-    isBytes32(candidate.launchCommitmentHash) &&
-    !/^0x0{64}$/i.test(candidate.launchCommitmentHash!) &&
+    isBytes32(candidate.authorizationHash) &&
+    !/^0x0{64}$/i.test(candidate.authorizationHash!) &&
     isAddressLike(candidate.initializationStrategy) &&
     isAddressLike(candidate.creator) &&
     isAddressLike(candidate.pool) &&
@@ -2897,9 +2910,9 @@ export async function verifyLaunchpadMigrationMetadata(
       metadata.initializationStrategy,
     ) ||
     migrationData[1]!.toLowerCase() !==
-      metadata.launchCommitmentHash.toLowerCase()
+      metadata.authorizationHash.toLowerCase()
   ) {
-    throw new TypeError("Launchpad migration event does not match commitment");
+    throw new TypeError("Launchpad migration event does not match authorization");
   }
 
   const dispositionLogs = matchingLogs(

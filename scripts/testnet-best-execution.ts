@@ -2,10 +2,6 @@ import { Contract, TransactionReceipt, ethers as ethersLibrary } from "ethers";
 import { artifacts, ethers } from "../hardhat/runtime.js";
 
 import {
-  buildConfidentialLaunchCommitment,
-  buildConfidentialLaunchCommitCall,
-  LAUNCH_COMMITMENT_EIP712_TYPES,
-  LAUNCH_INITIALIZATION_EIP712_DOMAIN,
   LAUNCHPAD_MIGRATION_EIP712_TYPES,
   LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
 } from "../sdk/src/index";
@@ -81,6 +77,9 @@ const FEE_TIERS = [5, 30, 100] as const;
 const MIXED_TWO_CANDIDATE_BITMAP = 0b001_010_000;
 const MIXED_THREE_CANDIDATE_BITMAP = 0b001_010_001;
 const STANDARD_30_BPS_CANDIDATE_BITMAP = 0b000_001_000;
+const FOUR_CANDIDATE_BITMAP = 0b001_001_011;
+const SIX_CANDIDATE_BITMAP = 0b011_011_011;
+const NINE_CANDIDATE_BITMAP = 0b111_111_111;
 const REFERENCE_PRIVATE_TOKEN = "0x6cE8907414986E73De9e7D28d62Ea2080F8E88E1";
 const REFERENCE_PARTNER_TOKEN = "0xcef137e96edf68ee99d4cdea7085f154d74895cd";
 const OLD_REFERENCE_CODEHASHES = new Set([
@@ -568,6 +567,7 @@ async function createPool(
   decimalsA: number,
   decimalsB: number,
   feeBps: number,
+  resourceId = `pool-${feeBps}`,
 ): Promise<PoolContext> {
   const creation = await submit(
     `create canonical ${feeBps} bps pool`,
@@ -594,7 +594,7 @@ async function createPool(
   }
   const context = await loadPool(address, wallet);
   journal().recordResource({
-    id: `pool-${feeBps}`,
+    id: resourceId,
     kind: "confidential-pool",
     address,
     creationTransactionHash: creation.hash,
@@ -702,7 +702,6 @@ async function initializeProtectedPool(
   initializationStrategy: any,
   migrator: any,
   creator: CotiWallet,
-  launchAuthority: CotiWallet,
   tokenA: string,
   tokenB: string,
   decimalsA: number,
@@ -710,12 +709,10 @@ async function initializeProtectedPool(
   feeBps: number,
   amountA: bigint,
   amountB: bigint,
+  resourceId: string,
+  transactionLabel: string,
 ): Promise<PoolContext> {
   const creatorAddress = ethersLibrary.getAddress(await creator.getAddress());
-  const authorityAddress = ethersLibrary.getAddress(await launchAuthority.getAddress());
-  if (creatorAddress === authorityAddress) {
-    throw new Error("protected launch creator and authority must be distinct");
-  }
   const factoryAddress = ethersLibrary.getAddress(String(factory.target));
   const strategyAddress = ethersLibrary.getAddress(String(initializationStrategy.target));
   const migratorAddress = ethersLibrary.getAddress(String(migrator.target));
@@ -727,50 +724,8 @@ async function initializeProtectedPool(
   const amount0 = tokenAFirst ? amountA : amountB;
   const amount1 = tokenAFirst ? amountB : amountA;
   const launchId = nextRequestId(`protected-${feeBps}-bps-launch`);
-  const authorizationDeadline = deadline(1_200);
-  const migrationDeadline = authorizationDeadline;
+  const migrationDeadline = deadline(1_200);
   const network = await ethers.provider.getNetwork();
-  const commitment = buildConfidentialLaunchCommitment({
-    launchId,
-    creator: creatorAddress,
-    tokenA,
-    tokenB,
-    decimalsA,
-    decimalsB,
-    feeBps,
-    factory: factoryAddress,
-    migrator: migratorAddress,
-    initializationStrategy: strategyAddress,
-    launchAuthority: authorityAddress,
-    chainId: network.chainId,
-    authorizationDeadline,
-    migrationDeadline,
-  });
-  const launchDomain = {
-    ...LAUNCH_INITIALIZATION_EIP712_DOMAIN,
-    chainId: network.chainId,
-    verifyingContract: strategyAddress,
-  };
-  const [creatorAuthorization, authorityAuthorization] = await Promise.all([
-    creator.signTypedData(
-      launchDomain,
-      { LaunchCommitment: [...LAUNCH_COMMITMENT_EIP712_TYPES] },
-      commitment,
-    ),
-    launchAuthority.signTypedData(
-      launchDomain,
-      { LaunchCommitment: [...LAUNCH_COMMITMENT_EIP712_TYPES] },
-      commitment,
-    ),
-  ]);
-  const call = buildConfidentialLaunchCommitCall(
-    commitment,
-    creatorAuthorization,
-    authorityAuthorization,
-  );
-  const [predictedPoolValue, commitmentHash] = await initializationStrategy
-    .commitLaunch.staticCall(...call.args);
-  const predictedPool = ethersLibrary.getAddress(String(predictedPoolValue));
   const key = await factory.poolKey(
     canonicalToken0,
     canonicalToken1,
@@ -779,44 +734,11 @@ async function initializeProtectedPool(
     feeBps,
     strategyAddress,
   );
-  if (
-    ethersLibrary.getAddress(await factory.getPool(key)) !== ethersLibrary.ZeroAddress ||
-    await ethers.provider.getCode(predictedPool) !== "0x"
-  ) {
+  if (ethersLibrary.getAddress(await factory.getPool(key)) !== ethersLibrary.ZeroAddress) {
     throw new Error("protected launch requires an unused complete pool key");
   }
-  const commitmentTransaction = await submit(
-    `commit protected ${feeBps} bps launch`,
-    () => initializationStrategy.commitLaunch(...call.args, { gasLimit: CALL_GAS_LIMIT }),
-  );
-  const context = await loadPool(predictedPool, creator);
-  if (
-    ethersLibrary.getAddress(await factory.getPool(key)) !== predictedPool ||
-    !(await factory.isPool(predictedPool)) ||
-    context.initializationStrategy !== strategyAddress ||
-    await context.pool.initialized()
-  ) {
-    throw new Error("protected launch commitment did not create its canonical pool");
-  }
-  journal().recordResource({
-    id: `pool-${feeBps}`,
-    kind: "launchpad-pool",
-    address: predictedPool,
-    creationTransactionHash: commitmentTransaction.hash,
-    metadata: {
-      factoryAddress,
-      migratorAddress,
-      initializationStrategyAddress: strategyAddress,
-      token0Address: canonicalToken0,
-      token1Address: canonicalToken1,
-      decimals0: canonicalDecimals0,
-      decimals1: canonicalDecimals1,
-      feeBps,
-    },
-  });
-
-  const token0 = context.token0;
-  const token1 = context.token1;
+  const token0 = new Contract(canonicalToken0, PRIVATE_ERC20_TESTNET_ABI, creator);
+  const token1 = new Contract(canonicalToken1, PRIVATE_ERC20_TESTNET_ABI, creator);
   const [before0, before1] = await Promise.all([
     privateBalance(token0, creator, creatorAddress),
     privateBalance(token1, creator, creatorAddress),
@@ -862,7 +784,6 @@ async function initializeProtectedPool(
     { Migration: [...LAUNCHPAD_MIGRATION_EIP712_TYPES] },
     {
       launchId,
-      launchCommitmentHash: commitmentHash,
       initializationStrategy: strategyAddress,
       creator: creatorAddress,
       tokenA,
@@ -885,7 +806,6 @@ async function initializeProtectedPool(
   );
   const migrationRequest = [
     launchId,
-    commitmentHash,
     tokenA,
     tokenB,
     decimalsA,
@@ -899,10 +819,35 @@ async function initializeProtectedPool(
     migrationDeadline,
     migrationAuthorization,
   ] as const;
-  await submit(
-    `initialize protected ${feeBps} bps pool`,
+  const migrationTransaction = await submit(
+    transactionLabel,
     () => migrator.migrate(migrationRequest, { gasLimit: CALL_GAS_LIMIT }),
   );
+  const protectedPool = ethersLibrary.getAddress(await factory.getPool(key));
+  const context = await loadPool(protectedPool, creator);
+  if (
+    protectedPool === ethersLibrary.ZeroAddress ||
+    !(await factory.isPool(protectedPool)) ||
+    context.initializationStrategy !== strategyAddress
+  ) {
+    throw new Error("protected migration did not create its canonical pool");
+  }
+  journal().recordResource({
+    id: resourceId,
+    kind: "launchpad-pool",
+    address: protectedPool,
+    creationTransactionHash: migrationTransaction.hash,
+    metadata: {
+      factoryAddress,
+      migratorAddress,
+      initializationStrategyAddress: strategyAddress,
+      token0Address: canonicalToken0,
+      token1Address: canonicalToken1,
+      decimals0: canonicalDecimals0,
+      decimals1: canonicalDecimals1,
+      feeBps,
+    },
+  });
   const [after0, after1, allowance0, allowance1, launchRecord] = await Promise.all([
     privateBalance(token0, creator, creatorAddress),
     privateBalance(token1, creator, creatorAddress),
@@ -916,7 +861,7 @@ async function initializeProtectedPool(
     allowance0 !== 0n ||
     allowance1 !== 0n ||
     !(await context.pool.initialized()) ||
-    Number(launchRecord.status) !== 4
+    Number(launchRecord.status) !== 2
   ) {
     throw new Error("protected migration violated exact initialization accounting");
   }
@@ -1201,6 +1146,358 @@ async function requestBestQuote(
     throw new Error("best quote emitted a token or pool event");
   }
   return { ...result, amountOut, input, requestId, transaction };
+}
+
+type LiquidityPreview = Readonly<{
+  accepted: bigint;
+  counterpart: bigint;
+  shares: bigint;
+  token0Specified: boolean;
+  transaction: Submitted;
+}>;
+
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  if (denominator <= 0n) throw new Error("invalid funded preview denominator");
+  return numerator / denominator + (numerator % denominator === 0n ? 0n : 1n);
+}
+
+async function requestLiquidityPreview(
+  context: PoolContext,
+  wallet: CotiWallet,
+  maximumSpecified: bigint,
+  token0Specified: boolean,
+  label: string,
+): Promise<LiquidityPreview> {
+  const selector = context.pool.interface.getFunction("requestAddLiquidityQuote")?.selector;
+  if (!selector) throw new Error("liquidity-preview selector unavailable");
+  const caller = ethersLibrary.getAddress(await wallet.getAddress());
+  const requestId = nextRequestId(label);
+  const encrypted = await wallet.encryptValue256(maximumSpecified, context.address, selector);
+  const [before, balance0Before, balance1Before, totalShares] = await Promise.all([
+    poolSnapshot(context),
+    privateBalance(context.token0, wallet, caller),
+    privateBalance(context.token1, wallet, caller),
+    privateShares(context, wallet),
+  ]);
+  if (totalShares <= 0n) throw new Error("liquidity preview requires caller-held pool shares");
+  const transaction = await submit(label, () => context.pool.requestAddLiquidityQuote(
+    encrypted,
+    token0Specified,
+    requestId,
+    deadline(),
+    { gasLimit: CALL_GAS_LIMIT },
+  ));
+  const events = transaction.receipt.logs.flatMap((log) => {
+    if (log.address.toLowerCase() !== context.address.toLowerCase()) return [];
+    try {
+      const parsed = context.pool.interface.parseLog(log);
+      return parsed?.name === "ConfidentialLiquidityQuoteResult" ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  }).filter((event) =>
+    String(event.args.caller).toLowerCase() === caller.toLowerCase() &&
+    String(event.args.requestId).toLowerCase() === requestId.toLowerCase() &&
+    Boolean(event.args.token0Specified) === token0Specified
+  );
+  if (events.length !== 1) throw new Error("liquidity preview result is missing or ambiguous");
+  const event = events[0]!;
+  const [accepted, counterpart, shares, after, balance0After, balance1After] = await Promise.all([
+    wallet.decryptValue256(event.args.acceptedCiphertext as never),
+    wallet.decryptValue256(event.args.counterpartCiphertext as never),
+    wallet.decryptValue256(event.args.lpCiphertext as never),
+    poolSnapshot(context),
+    privateBalance(context.token0, wallet, caller),
+    privateBalance(context.token1, wallet, caller),
+  ]);
+  const specifiedReserve = token0Specified ? context.model.reserve0 : context.model.reserve1;
+  const counterpartReserve = token0Specified ? context.model.reserve1 : context.model.reserve0;
+  const expectedShares = maximumSpecified * totalShares / specifiedReserve;
+  const expectedAccepted = ceilDiv(expectedShares * specifiedReserve, totalShares);
+  const expectedCounterpart = ceilDiv(expectedShares * counterpartReserve, totalShares);
+  if (
+    accepted !== expectedAccepted ||
+    counterpart !== expectedCounterpart ||
+    shares !== expectedShares ||
+    accepted <= 0n ||
+    counterpart <= 0n ||
+    shares <= 0n ||
+    balance0After !== balance0Before ||
+    balance1After !== balance1Before ||
+    JSON.stringify(after) !== JSON.stringify(before)
+  ) throw new Error("confidential liquidity preview diverged from proportional accounting");
+  return { accepted, counterpart, shares, token0Specified, transaction };
+}
+
+async function addPreviewedLiquidity(
+  context: PoolContext,
+  wallet: CotiWallet,
+  preview: LiquidityPreview,
+  label: string,
+): Promise<Submitted> {
+  if (!preview.token0Specified) throw new Error("funded settlement expects token0 preview");
+  const caller = ethersLibrary.getAddress(await wallet.getAddress());
+  const [balance0Before, balance1Before, sharesBefore] = await Promise.all([
+    privateBalance(context.token0, wallet, caller),
+    privateBalance(context.token1, wallet, caller),
+    privateShares(context, wallet),
+  ]);
+  await setExactAllowance(
+    context.token0, wallet, context.token0Address, context.address, preview.accepted,
+    `${label} token0 approval`,
+  );
+  await setExactAllowance(
+    context.token1, wallet, context.token1Address, context.address, preview.counterpart,
+    `${label} token1 approval`,
+  );
+  const selector = context.pool.interface.getFunction("addLiquidity")?.selector;
+  if (!selector) throw new Error("add-liquidity selector unavailable");
+  const bounds = confidentialLiquidityBounds(
+    preview.accepted,
+    context.token0Decimals,
+    preview.counterpart,
+    context.token1Decimals,
+    true,
+  );
+  const [amount0, amount1, minimumShares, minimumPrice, maximumPrice] = await Promise.all([
+    wallet.encryptValue256(preview.accepted, context.address, selector),
+    wallet.encryptValue256(preview.counterpart, context.address, selector),
+    wallet.encryptValue256(preview.shares, context.address, selector),
+    wallet.encryptValue256(bounds.minPriceX18, context.address, selector),
+    wallet.encryptValue256(bounds.maxPriceX18, context.address, selector),
+  ]);
+  const transaction = await submit(label, () => context.pool.addLiquidity(
+    amount0,
+    amount1,
+    minimumShares,
+    minimumPrice,
+    maximumPrice,
+    true,
+    deadline(),
+    { gasLimit: CALL_GAS_LIMIT },
+  ));
+  const [balance0After, balance1After, sharesAfter] = await Promise.all([
+    privateBalance(context.token0, wallet, caller),
+    privateBalance(context.token1, wallet, caller),
+    privateShares(context, wallet),
+  ]);
+  if (
+    balance0Before - balance0After !== preview.accepted ||
+    balance1Before - balance1After !== preview.counterpart ||
+    sharesAfter - sharesBefore !== preview.shares
+  ) throw new Error("preview-bound liquidity settlement did not match the encrypted preview");
+  await setExactAllowance(
+    context.token0, wallet, context.token0Address, context.address, 0n,
+    `${label} token0 cleanup`,
+  );
+  await setExactAllowance(
+    context.token1, wallet, context.token1Address, context.address, 0n,
+    `${label} token1 cleanup`,
+  );
+  context.model.reserve0 += preview.accepted;
+  context.model.reserve1 += preview.counterpart;
+  return transaction;
+}
+
+type PublicLiquidityScenario = Readonly<{
+  factoryDeployment: Awaited<ReturnType<typeof deployContract>>;
+  routerDeployment: Awaited<ReturnType<typeof deployContract>>;
+  tokenADeployment: Awaited<ReturnType<typeof deployContract>>;
+  tokenBDeployment: Awaited<ReturnType<typeof deployContract>>;
+  poolAddress: string;
+  createGasUsed: bigint;
+  addGasUsed: bigint;
+}>;
+
+async function setExactPublicAllowance(
+  token: any,
+  owner: string,
+  spender: string,
+  amount: bigint,
+  label: string,
+): Promise<void> {
+  const approve = token.getFunction("approve");
+  await submit(label, () => approve.send(spender, amount, { gasLimit: 500_000n }));
+  if (BigInt(await token.allowance(owner, spender)) !== amount) {
+    throw new Error("public token did not set the exact reviewed allowance");
+  }
+}
+
+async function runPublicLiquidityScenario(
+  wallet: CotiWallet,
+  feeVault: Awaited<ReturnType<typeof deployContract>>,
+): Promise<PublicLiquidityScenario> {
+  const owner = ethersLibrary.getAddress(await wallet.getAddress());
+  const factoryDeployment = await deployContract(
+    "PublicCPMMFactory",
+    wallet,
+    [feeVault.address],
+    8_000_000n,
+  );
+  await submit("bind disposable public factory", () =>
+    feeVault.contract.setPublicFactory(factoryDeployment.address, { gasLimit: 500_000n })
+  );
+  const routerDeployment = await deployContract(
+    "PublicCPMMLiquidityRouter",
+    wallet,
+    [factoryDeployment.address],
+    3_000_000n,
+  );
+  const tokenADeployment = await deployContract(
+    "MockERC20",
+    wallet,
+    ["Funded Public Token A", "FPA", 18],
+    2_000_000n,
+  );
+  const tokenBDeployment = await deployContract(
+    "MockERC20",
+    wallet,
+    ["Funded Public Token B", "FPB", 18],
+    2_000_000n,
+  );
+  const tokenA = tokenADeployment.contract;
+  const tokenB = tokenBDeployment.contract;
+  const router = routerDeployment.contract;
+  const initialA = ethersLibrary.parseEther("1");
+  const initialB = ethersLibrary.parseEther("2");
+  const secondA = ethersLibrary.parseEther("0.5");
+  const secondB = ethersLibrary.parseEther("2");
+  const totalA = initialA + secondA;
+  const totalB = initialB + secondB;
+  await submit("mint disposable public token A", () =>
+    tokenA.mint(owner, totalA, { gasLimit: 500_000n })
+  );
+  await submit("mint disposable public token B", () =>
+    tokenB.mint(owner, totalB, { gasLimit: 500_000n })
+  );
+  await setExactPublicAllowance(
+    tokenA,
+    owner,
+    routerDeployment.address,
+    totalA,
+    "approve public liquidity token A",
+  );
+  await setExactPublicAllowance(
+    tokenB,
+    owner,
+    routerDeployment.address,
+    totalB,
+    "approve public liquidity token B",
+  );
+  const key = await factoryDeployment.contract.poolKey(
+    tokenADeployment.address,
+    tokenBDeployment.address,
+    18,
+    18,
+    30,
+  );
+  await expectFailure("public atomic create rollback", () =>
+    router.createOrAddLiquidity(
+      tokenADeployment.address,
+      tokenBDeployment.address,
+      18,
+      18,
+      30,
+      initialA,
+      initialB,
+      ethersLibrary.MaxUint256,
+      0,
+      ethersLibrary.MaxUint256,
+      deadline(),
+      { gasLimit: CALL_GAS_LIMIT },
+    )
+  );
+  if (
+    ethersLibrary.getAddress(await factoryDeployment.contract.getPool(key)) !==
+      ethersLibrary.ZeroAddress ||
+    BigInt(await factoryDeployment.contract.allPoolsLength()) !== 0n
+  ) throw new Error("failed public initial seeding left a canonical pool");
+
+  const createTransaction = await submit("public atomic create and seed", () =>
+    router.createOrAddLiquidity(
+      tokenADeployment.address,
+      tokenBDeployment.address,
+      18,
+      18,
+      30,
+      initialA,
+      initialB,
+      1,
+      0,
+      ethersLibrary.MaxUint256,
+      deadline(),
+      { gasLimit: CALL_GAS_LIMIT },
+    )
+  );
+  const poolAddress = ethersLibrary.getAddress(
+    await factoryDeployment.contract.getPool(key),
+  );
+  if (poolAddress === ethersLibrary.ZeroAddress) {
+    throw new Error("public atomic create-and-seed did not register a pool");
+  }
+  const pool = await ethers.getContractAt("PublicCPMM", poolAddress, wallet);
+  await verifyDeployedRuntimeArtifact("PublicCPMM", poolAddress);
+  const [beforeSecondA, beforeSecondB] = await Promise.all([
+    tokenA.balanceOf(owner),
+    tokenB.balanceOf(owner),
+  ]);
+  const addTransaction = await submit("public proportional add and refund", () =>
+    router.createOrAddLiquidity(
+      tokenADeployment.address,
+      tokenBDeployment.address,
+      18,
+      18,
+      30,
+      secondA,
+      secondB,
+      1,
+      0,
+      ethersLibrary.MaxUint256,
+      deadline(),
+      { gasLimit: CALL_GAS_LIMIT },
+    )
+  );
+  const [afterSecondA, afterSecondB, shares] = await Promise.all([
+    tokenA.balanceOf(owner),
+    tokenB.balanceOf(owner),
+    pool.shares(owner),
+  ]);
+  if (
+    BigInt(beforeSecondA) - BigInt(afterSecondA) !== secondA ||
+    BigInt(beforeSecondB) - BigInt(afterSecondB) !== initialB / 2n ||
+    BigInt(shares) <= 0n
+  ) throw new Error("public proportional add did not return the excess token");
+  await submit("public full liquidity cleanup", () =>
+    pool.removeLiquidity(shares, 1, 1, deadline(), { gasLimit: CALL_GAS_LIMIT })
+  );
+  const [finalA, finalB, initialized, routerA, routerB, allowanceA, allowanceB] =
+    await Promise.all([
+      tokenA.balanceOf(owner),
+      tokenB.balanceOf(owner),
+      pool.initialized(),
+      tokenA.balanceOf(routerDeployment.address),
+      tokenB.balanceOf(routerDeployment.address),
+      tokenA.allowance(routerDeployment.address, poolAddress),
+      tokenB.allowance(routerDeployment.address, poolAddress),
+    ]);
+  if (
+    BigInt(finalA) !== totalA ||
+    BigInt(finalB) !== totalB ||
+    Boolean(initialized) ||
+    BigInt(routerA) !== 0n ||
+    BigInt(routerB) !== 0n ||
+    BigInt(allowanceA) !== 0n ||
+    BigInt(allowanceB) !== 0n
+  ) throw new Error("public atomic liquidity cleanup left assets, allowance, or state");
+  return {
+    factoryDeployment,
+    routerDeployment,
+    tokenADeployment,
+    tokenBDeployment,
+    poolAddress,
+    createGasUsed: createTransaction.gasUsed,
+    addGasUsed: addTransaction.gasUsed,
+  };
 }
 
 async function assertRequestAndCiphertextGuards(
@@ -1616,8 +1913,8 @@ async function main(): Promise<void> {
       privacyMode: 1,
       quoteTransport: "paid-transaction",
       candidateTiers: "5,30,100",
-      candidateStrategyClasses: "standard,launch-protected",
-      candidateBitmap: MIXED_THREE_CANDIDATE_BITMAP,
+      candidateStrategyClasses: "standard,launch-protected-a,launch-protected-b",
+      candidateBitmap: NINE_CANDIDATE_BITMAP,
       tokenA: tokenAAddress,
       tokenB: tokenBAddress,
       feeBeneficiary,
@@ -1967,8 +2264,14 @@ async function main(): Promise<void> {
     ) >= tiedOutput
   ) throw new Error("funded tier-selection witness is inconsistent");
 
-  const requiredA = pool5LiquidityA + pool30LiquidityA + pool100LiquidityA + 3n * swapA;
-  const requiredB = pool5LiquidityB + pool30LiquidityB + pool100LiquidityB + 5n * swapB;
+  const requiredA =
+    3n * (pool5LiquidityA + pool30LiquidityA + pool100LiquidityA) +
+    unitA +
+    3n * swapA;
+  const requiredB =
+    3n * (pool5LiquidityB + pool30LiquidityB + pool100LiquidityB) +
+    unitB +
+    5n * swapB;
   if (
     balanceA < requiredA ||
     balanceB < requiredB ||
@@ -2055,7 +2358,6 @@ async function main(): Promise<void> {
     [
       factoryDeployment.address,
       strategyRegistryDeployment.address,
-      quoteAddress,
     ],
     INITIALIZATION_STRATEGY_DEPLOY_GAS_LIMIT,
   );
@@ -2074,10 +2376,35 @@ async function main(): Promise<void> {
       primary,
     ),
   };
+  const secondStrategyDeployment = await deployContract(
+    "ConfidentialLaunchInitializationStrategy",
+    primary,
+    [factoryDeployment.address, strategyRegistryDeployment.address],
+    INITIALIZATION_STRATEGY_DEPLOY_GAS_LIMIT,
+  );
+  const secondMigratorAddress = ethersLibrary.getAddress(
+    String(await secondStrategyDeployment.contract.migrator()),
+  );
+  await verifyDeployedRuntimeArtifact("ConfidentialLaunchpadMigrator", secondMigratorAddress);
+  const secondMigratorDeployment = {
+    address: secondMigratorAddress,
+    contract: await ethers.getContractAt(
+      "ConfidentialLaunchpadMigrator",
+      secondMigratorAddress,
+      primary,
+    ),
+  };
   await submit(
     "register disposable initialization strategy",
     () => strategyRegistryDeployment.contract.registerInitializationStrategy(
       strategyDeployment.address,
+      { gasLimit: STACK_BIND_GAS_LIMIT },
+    ),
+  );
+  await submit(
+    "register second disposable initialization strategy",
+    () => strategyRegistryDeployment.contract.registerInitializationStrategy(
+      secondStrategyDeployment.address,
       { gasLimit: STACK_BIND_GAS_LIMIT },
     ),
   );
@@ -2110,8 +2437,11 @@ async function main(): Promise<void> {
     configuredPoolDeployer,
     configuredStrategyRegistry,
     registryFinalized,
+    configuredStrategyCount,
     configuredStrategy,
+    configuredSecondStrategy,
     configuredMigrator,
+    configuredSecondMigrator,
     tokenACompatible,
     tokenBCompatible,
   ] = await Promise.all([
@@ -2124,8 +2454,11 @@ async function main(): Promise<void> {
     factory.poolDeployer(),
     factory.initializationStrategyRegistry(),
     factory.initializationStrategyRegistryFinalized(),
+    factory.initializationStrategiesLength(),
     factory.initializationStrategyAt(1),
+    factory.initializationStrategyAt(2),
     strategyDeployment.contract.migrator(),
+    secondStrategyDeployment.contract.migrator(),
     factory.isCompatiblePrivateToken(tokenAAddress),
     factory.isCompatiblePrivateToken(tokenBAddress),
   ]);
@@ -2141,10 +2474,15 @@ async function main(): Promise<void> {
     ethersLibrary.getAddress(String(configuredStrategyRegistry)) !==
       strategyRegistryDeployment.address ||
     !Boolean(registryFinalized) ||
+    BigInt(configuredStrategyCount) !== 2n ||
     ethersLibrary.getAddress(String(configuredStrategy)) !==
       strategyDeployment.address ||
+    ethersLibrary.getAddress(String(configuredSecondStrategy)) !==
+      secondStrategyDeployment.address ||
     ethersLibrary.getAddress(String(configuredMigrator)) !==
       migratorDeployment.address ||
+    ethersLibrary.getAddress(String(configuredSecondMigrator)) !==
+      secondMigratorDeployment.address ||
     !tokenACompatible ||
     !tokenBCompatible
   ) throw new Error("canonical deployment binding verification failed");
@@ -2154,7 +2492,6 @@ async function main(): Promise<void> {
     strategyDeployment.contract,
     migratorDeployment.contract,
     primary,
-    quoteWallet,
     tokenAAddress,
     tokenBAddress,
     decimalsA,
@@ -2162,6 +2499,8 @@ async function main(): Promise<void> {
     30,
     pool30LiquidityA,
     pool30LiquidityB,
+    "pool-protected-a-30",
+    "initialize protected 30 bps pool",
   );
   const pool100 = await createPool(
     factory,
@@ -2171,6 +2510,7 @@ async function main(): Promise<void> {
     decimalsA,
     decimalsB,
     100,
+    "pool-standard-100",
   );
   await initializePool(
     pool100,
@@ -2203,6 +2543,7 @@ async function main(): Promise<void> {
     decimalsA,
     decimalsB,
     5,
+    "pool-standard-5",
   );
   const allPools = [pool5, pool30, pool100] as const;
   const uninitializedTierQuote = await requestBestQuote(
@@ -2346,10 +2687,187 @@ async function main(): Promise<void> {
     MIXED_THREE_CANDIDATE_BITMAP,
   );
 
+  stage = "nine-candidate namespace initialization";
+  const standard30 = await createPool(
+    factory,
+    primary,
+    tokenAAddress,
+    tokenBAddress,
+    decimalsA,
+    decimalsB,
+    30,
+    "pool-standard-30",
+  );
+  await initializePool(
+    standard30,
+    primary,
+    tokenAAddress,
+    pool30LiquidityA,
+    pool30LiquidityB,
+  );
+  const protectedA5 = await initializeProtectedPool(
+    factory,
+    strategyDeployment.contract,
+    migratorDeployment.contract,
+    primary,
+    tokenAAddress,
+    tokenBAddress,
+    decimalsA,
+    decimalsB,
+    5,
+    pool5LiquidityA,
+    pool5LiquidityB,
+    "pool-protected-a-5",
+    "initialize protected a 5 bps pool",
+  );
+  const protectedA100 = await initializeProtectedPool(
+    factory,
+    strategyDeployment.contract,
+    migratorDeployment.contract,
+    primary,
+    tokenAAddress,
+    tokenBAddress,
+    decimalsA,
+    decimalsB,
+    100,
+    pool100LiquidityA,
+    pool100LiquidityB,
+    "pool-protected-a-100",
+    "initialize protected a 100 bps pool",
+  );
+  const protectedB5 = await initializeProtectedPool(
+    factory,
+    secondStrategyDeployment.contract,
+    secondMigratorDeployment.contract,
+    primary,
+    tokenAAddress,
+    tokenBAddress,
+    decimalsA,
+    decimalsB,
+    5,
+    pool5LiquidityA,
+    pool5LiquidityB,
+    "pool-protected-b-5",
+    "initialize protected b 5 bps pool",
+  );
+  const protectedB30 = await initializeProtectedPool(
+    factory,
+    secondStrategyDeployment.contract,
+    secondMigratorDeployment.contract,
+    primary,
+    tokenAAddress,
+    tokenBAddress,
+    decimalsA,
+    decimalsB,
+    30,
+    pool30LiquidityA,
+    pool30LiquidityB,
+    "pool-protected-b-30",
+    "initialize protected b 30 bps pool",
+  );
+  const protectedB100 = await initializeProtectedPool(
+    factory,
+    secondStrategyDeployment.contract,
+    secondMigratorDeployment.contract,
+    primary,
+    tokenAAddress,
+    tokenBAddress,
+    decimalsA,
+    decimalsB,
+    100,
+    pool100LiquidityA,
+    pool100LiquidityB,
+    "pool-protected-b-100",
+    "initialize protected b 100 bps pool",
+  );
+  const quotePools = [
+    pool5,
+    protectedA5,
+    protectedB5,
+    standard30,
+    pool30,
+    protectedB30,
+    pool100,
+    protectedA100,
+    protectedB100,
+  ] as const;
+  const fourCandidateQuote = await requestBestQuote(
+    routerDeployment.address,
+    quoteWallet,
+    tokenBAddress,
+    tokenAAddress,
+    swapB,
+    "four-candidate populated quote",
+    quotePools,
+    FOUR_CANDIDATE_BITMAP,
+  );
+  const sixCandidateQuote = await requestBestQuote(
+    routerDeployment.address,
+    quoteWallet,
+    tokenBAddress,
+    tokenAAddress,
+    swapB,
+    "six-candidate populated quote",
+    quotePools,
+    SIX_CANDIDATE_BITMAP,
+  );
+  const nineCandidateQuote = await requestBestQuote(
+    routerDeployment.address,
+    quoteWallet,
+    tokenBAddress,
+    tokenAAddress,
+    swapB,
+    "nine-candidate populated quote",
+    quotePools,
+    NINE_CANDIDATE_BITMAP,
+  );
+  for (const quote of [fourCandidateQuote, sixCandidateQuote, nineCandidateQuote]) {
+    if (!quotePools.some((context) => context.address === quote.selectedPool)) {
+      throw new Error("populated candidate quote selected an unknown pool");
+    }
+  }
+
+  stage = "confidential proportional-liquidity preview";
+  const maximumToken0 = protectedB30.token0Address.toLowerCase() === tokenAAddress.toLowerCase()
+    ? unitA / 4n
+    : unitB / 4n;
+  const maximumToken1 = protectedB30.token1Address.toLowerCase() === tokenAAddress.toLowerCase()
+    ? unitA / 4n
+    : unitB / 4n;
+  if (maximumToken0 <= 0n || maximumToken1 <= 0n) {
+    throw new Error("balance-derived liquidity preview input is zero");
+  }
+  const token0Preview = await requestLiquidityPreview(
+    protectedB30,
+    primary,
+    maximumToken0,
+    true,
+    "confidential token0 proportional-liquidity preview",
+  );
+  await requestLiquidityPreview(
+    protectedB30,
+    primary,
+    maximumToken1,
+    false,
+    "confidential token1 proportional-liquidity preview",
+  );
+  const previewedLiquidity = await addPreviewedLiquidity(
+    protectedB30,
+    primary,
+    token0Preview,
+    "preview-bound proportional-liquidity add",
+  );
+  stage = "public atomic-liquidity periphery";
+  const publicScenario = await runPublicLiquidityScenario(primary, feeVaultDeployment);
+
   stage = "disposable candidate cleanup";
-  for (const context of allPools) {
+  for (const context of quotePools) {
     const recoveryTransactionHash = await removeAllLiquidity(context, primary);
-    recoveryJournal.markRecovered(`pool-${context.feeBps}`, [recoveryTransactionHash]);
+    const resource = recoveryJournal.activeResources.find((candidate) =>
+      candidate.address.toLowerCase() === context.address.toLowerCase()
+    );
+    if (!resource) throw new Error("candidate pool is missing from funded recovery state");
+    recoveryJournal.markRecovered(resource.id, [recoveryTransactionHash]);
   }
   const expectedProtocolFeeA = modeledProtocolFee(swapA, reverseQuote.selectedFeeBps);
   const expectedProtocolFeeB =
@@ -2369,7 +2887,7 @@ async function main(): Promise<void> {
 
   console.log(`confidentialFactory=${factoryDeployment.address}`);
   console.log(`confidentialBestExecutionRouter=${routerDeployment.address}`);
-  for (const context of allPools) {
+  for (const context of quotePools) {
     console.log(
       `canonicalPool feeBps=${context.feeBps} ` +
         `strategy=${context.initializationStrategy} address=${context.address}`,
@@ -2383,13 +2901,32 @@ async function main(): Promise<void> {
     `benchmark candidates=3 quoteGas=${threeCandidateQuote.transaction.gasUsed} ` +
       `quoteSwapGas=${threeCandidateSwap.gasUsed}`,
   );
+  console.log(`benchmark candidates=4 quoteGas=${fourCandidateQuote.transaction.gasUsed}`);
+  console.log(`benchmark candidates=6 quoteGas=${sixCandidateQuote.transaction.gasUsed}`);
+  console.log(`benchmark candidates=9 quoteGas=${nineCandidateQuote.transaction.gasUsed}`);
+  console.log(
+    `benchmark proportionalLiquidityPreview token0Gas=${token0Preview.transaction.gasUsed} ` +
+      `settlementGas=${previewedLiquidity.gasUsed}`,
+  );
+  console.log(
+    `benchmark publicAtomicLiquidity createGas=${publicScenario.createGasUsed} ` +
+      `proportionalAddGas=${publicScenario.addGasUsed}`,
+  );
   console.log(
     "COTI testnet production best execution passed: canonical discovery, paid quote-only, " +
     "private mixed-class selection, exact lower-tier tie-breaking, both directions, every v1 tier, encrypted candidate isolation, " +
-      "caller/replay/deadline protection, atomic rollback, exact escrow, quote parity, full LP exits, and zero-residue cleanup",
+      "caller/replay/deadline protection, 4/6/9 populated quote scaling, proportional LP preview parity, " +
+      "atomic rollback, exact escrow, quote parity, full LP exits, and zero-residue cleanup",
   );
-  const lpArtifacts = await Promise.all(allPools.map(async (context) => ({
-    label: `${context.feeBps} bps private LP token`,
+  const poolLabel = (context: PoolContext): string => {
+    if (context.initializationStrategy === ethersLibrary.ZeroAddress) {
+      return `${context.feeBps} bps standard canonical pool`;
+    }
+    const strategyClass = context.initializationStrategy === strategyDeployment.address ? "a" : "b";
+    return `${context.feeBps} bps launch-protected ${strategyClass} canonical pool`;
+  };
+  const lpArtifacts = await Promise.all(quotePools.map(async (context) => ({
+    label: `${poolLabel(context)} private LP token`,
     contractName: "PrivateLPToken",
     address: ethersLibrary.getAddress(await context.pool.lpToken()),
   })));
@@ -2447,7 +2984,6 @@ async function main(): Promise<void> {
         constructorArguments: [
           factoryDeployment.address,
           strategyRegistryDeployment.address,
-          quoteAddress,
         ],
       },
       {
@@ -2456,16 +2992,57 @@ async function main(): Promise<void> {
         address: migratorDeployment.address,
       },
       {
+        label: "disposable second launch initialization strategy",
+        contractName: "ConfidentialLaunchInitializationStrategy",
+        address: secondStrategyDeployment.address,
+        creationTransactionHash: secondStrategyDeployment.transaction.hash,
+        constructorArguments: [
+          factoryDeployment.address,
+          strategyRegistryDeployment.address,
+        ],
+      },
+      {
+        label: "disposable second launchpad migrator",
+        contractName: "ConfidentialLaunchpadMigrator",
+        address: secondMigratorDeployment.address,
+      },
+      {
         label: "disposable best execution router",
         contractName: "ConfidentialBestExecutionRouter",
         address: routerDeployment.address,
         creationTransactionHash: routerDeployment.transaction.hash,
         constructorArguments: [factoryDeployment.address],
       },
-      ...allPools.map((context) => ({
-        label: context.initializationStrategy === ethersLibrary.ZeroAddress
-          ? `${context.feeBps} bps standard canonical pool`
-          : `${context.feeBps} bps launch-protected canonical pool`,
+      {
+        label: "disposable public factory",
+        contractName: "PublicCPMMFactory",
+        address: publicScenario.factoryDeployment.address,
+        creationTransactionHash: publicScenario.factoryDeployment.transaction.hash,
+        constructorArguments: [feeVaultDeployment.address],
+      },
+      {
+        label: "disposable public liquidity router",
+        contractName: "PublicCPMMLiquidityRouter",
+        address: publicScenario.routerDeployment.address,
+        creationTransactionHash: publicScenario.routerDeployment.transaction.hash,
+        constructorArguments: [publicScenario.factoryDeployment.address],
+      },
+      {
+        label: "disposable public token A",
+        contractName: "MockERC20",
+        address: publicScenario.tokenADeployment.address,
+        creationTransactionHash: publicScenario.tokenADeployment.transaction.hash,
+        constructorArguments: ["Funded Public Token A", "FPA", 18],
+      },
+      {
+        label: "disposable public token B",
+        contractName: "MockERC20",
+        address: publicScenario.tokenBDeployment.address,
+        creationTransactionHash: publicScenario.tokenBDeployment.transaction.hash,
+        constructorArguments: ["Funded Public Token B", "FPB", 18],
+      },
+      ...quotePools.map((context) => ({
+        label: poolLabel(context),
         contractName: "ConfidentialCPMM",
         address: context.address,
       })),

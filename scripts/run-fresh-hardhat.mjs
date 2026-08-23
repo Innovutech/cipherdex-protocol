@@ -23,7 +23,47 @@ const ALLOWED_TARGETS = new Map([
     environment: [
       "COTI_DEPLOYMENT_RECORD",
       "CIPHERDEX_FEE_BENEFICIARY",
-      "CIPHERDEX_LAUNCH_AUTHORITY",
+    ],
+  }],
+  ["scripts/deploy-mainnet.ts", {
+    arguments: ["--network", "cotiMainnet"],
+    funded: true,
+    signerMode: "mainnet",
+    chainId: 2_632_500,
+    rpcEnvironment: "COTI_MAINNET_RPC_URL",
+    networkEnvironment: ["COTI_MAINNET_RPC_URL"],
+    fundedNetworkEnvironment: ["COTI_MAINNET_GAS_LIMIT"],
+    deploymentRecordSlug: "coti-mainnet",
+    environment: [
+      "COTI_DEPLOYMENT_RECORD",
+      "CIPHERDEX_FEE_BENEFICIARY",
+      "COTI_MAINNET_PRIVATE_KEY",
+      "CIPHERDEX_LEDGER_ADDRESS",
+      "CIPHERDEX_LEDGER_DERIVATION_PATH",
+      "CIPHERDEX_CAST_PATH",
+      "CIPHERDEX_CAST_SHA256",
+      "CIPHERDEX_DEPLOYMENT_RECOVERY_KEY",
+      "CIPHERDEX_MAINNET_APPROVED_COMMIT",
+    ],
+  }],
+  ["scripts/mainnet-preflight.ts", {
+    arguments: ["--network", "cotiMainnet"],
+    funded: true,
+    signerMode: "mainnet",
+    chainId: 2_632_500,
+    rpcEnvironment: "COTI_MAINNET_RPC_URL",
+    networkEnvironment: ["COTI_MAINNET_RPC_URL"],
+    fundedNetworkEnvironment: ["COTI_MAINNET_GAS_LIMIT"],
+    environment: [
+      "COTI_DEPLOYMENT_RECORD",
+      "CIPHERDEX_FEE_BENEFICIARY",
+      "COTI_MAINNET_PRIVATE_KEY",
+      "CIPHERDEX_LEDGER_ADDRESS",
+      "CIPHERDEX_LEDGER_DERIVATION_PATH",
+      "CIPHERDEX_CAST_PATH",
+      "CIPHERDEX_CAST_SHA256",
+      "CIPHERDEX_DEPLOYMENT_RECOVERY_KEY",
+      "CIPHERDEX_MAINNET_APPROVED_COMMIT",
     ],
   }],
   ["scripts/measure-deployment-gas.ts", {
@@ -355,8 +395,10 @@ async function main() {
     fileEnvironment: readReviewedEnvironment(environmentPath),
     systemNames: SYSTEM_ENVIRONMENT,
     configurationNames: [
-      ...NETWORK_ENVIRONMENT,
-      ...(targetPolicy.funded ? FUNDED_NETWORK_ENVIRONMENT : []),
+      ...(targetPolicy.networkEnvironment ?? NETWORK_ENVIRONMENT),
+      ...(targetPolicy.funded
+        ? (targetPolicy.fundedNetworkEnvironment ?? FUNDED_NETWORK_ENVIRONMENT)
+        : []),
       ...targetPolicy.environment,
     ],
     allowAmbientConfiguration: false,
@@ -372,18 +414,38 @@ async function main() {
   if (targetPolicy.funded) {
     const { JsonRpcProvider, Wallet } = await import("ethers");
     const { inspectFundedTransaction } = await import("./funded-rpc-confirmation.mjs");
-    const privateKeys = [
-      runtimeEnvironment.COTI_TESTNET_PRIVATE_KEY,
-      runtimeEnvironment.COTI_SECOND_LP_PRIVATE_KEY,
-      runtimeEnvironment.COTI_QUOTE_PRIVATE_KEY,
-    ].filter((value) => typeof value === "string" && value.length > 0);
-    if (privateKeys.length === 0) throw new Error("funded target has no reviewed signer key");
-    const signers = privateKeys.map((privateKey) => new Wallet(privateKey).address);
-    const signerLeases = acquireSignerExecutionLeases(7_082_400, signers);
+    const chainId = targetPolicy.chainId ?? 7_082_400;
+    let signers;
+    if (targetPolicy.signerMode === "mainnet") {
+      const ledgerAddress = runtimeEnvironment.CIPHERDEX_LEDGER_ADDRESS;
+      const privateKey = runtimeEnvironment.COTI_MAINNET_PRIVATE_KEY;
+      if (Boolean(ledgerAddress) === Boolean(privateKey)) {
+        throw new Error(
+          "mainnet target requires exactly one reviewed Ledger or private-key signer",
+        );
+      }
+      signers = [privateKey ? new Wallet(privateKey).address : ledgerAddress];
+    } else {
+      signers = [
+          runtimeEnvironment.COTI_TESTNET_PRIVATE_KEY,
+          runtimeEnvironment.COTI_SECOND_LP_PRIVATE_KEY,
+          runtimeEnvironment.COTI_QUOTE_PRIVATE_KEY,
+        ].filter((value) => typeof value === "string" && value.length > 0)
+          .map((privateKey) => new Wallet(privateKey).address);
+    }
+    if (
+      signers.length === 0 ||
+      signers.some((value) => typeof value !== "string" || value.length === 0)
+    ) throw new Error("funded target has no reviewed signer identity");
+    const signerLeases = acquireSignerExecutionLeases(chainId, signers);
     heldLeases.push(...signerLeases);
+    const rpcEnvironment = targetPolicy.rpcEnvironment ?? "COTI_TESTNET_RPC_URL";
+    const rpcUrl = runtimeEnvironment[rpcEnvironment] ??
+      (chainId === 7_082_400 ? "https://testnet.coti.io/rpc" : undefined);
+    if (!rpcUrl) throw new Error(`${rpcEnvironment} is required for this funded target`);
     const provider = new JsonRpcProvider(
-      runtimeEnvironment.COTI_TESTNET_RPC_URL ?? "https://testnet.coti.io/rpc",
-      7_082_400,
+      rpcUrl,
+      chainId,
       { staticNetwork: true },
     );
     try {
@@ -438,7 +500,11 @@ async function main() {
       throw new Error(`public output directory is invalid: ${directoryName}`);
     }
     const expectedName = directoryName === "deployments"
-      ? /^coti-testnet-(?:latest|[0-9a-f]{40})\.json$/u
+      ? new RegExp(
+          `^${targetPolicy.deploymentRecordSlug ?? "coti-testnet"}` +
+            "-(?:latest|[0-9a-f]{40})\\.json$",
+          "u",
+        )
       : /^coti-testnet-[0-9a-f]{40}\.json$/u;
     for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
       if (!entry.isFile() || !expectedName.test(entry.name)) continue;

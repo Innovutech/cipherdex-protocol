@@ -186,6 +186,25 @@ function deterministicValues(count: number): bigint[] {
   return values;
 }
 
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  return numerator / denominator + (numerator % denominator === 0n ? 0n : 1n);
+}
+
+function quoteProportionalLiquidity(
+  maximumSpecified: bigint,
+  specifiedReserve: bigint,
+  counterpartReserve: bigint,
+  totalShares: bigint,
+) {
+  const shares = maximumSpecified * totalShares / specifiedReserve;
+  if (shares <= 0n) throw new Error("private liquidity amount is too small");
+  return {
+    shares,
+    acceptedSpecified: ceilDiv(shares * specifiedReserve, totalShares),
+    counterpart: ceilDiv(shares * counterpartReserve, totalShares),
+  };
+}
+
 describe("Confidential best-execution model and invariants", function () {
   it("matches the published fee calculation and quote/settlement math across tiers", function () {
     const values = deterministicValues(768);
@@ -349,5 +368,38 @@ describe("Confidential best-execution model and invariants", function () {
       "settlement rejected",
     );
     expect(before).to.deep.equal(snapshot);
+  });
+
+  it("keeps proportional-liquidity previews within the specified maximum in both directions", function () {
+    const values = deterministicValues(768);
+    for (let index = 0; index < values.length; index += 4) {
+      const reserve0 = 1_000n + values[index] % 10n ** 18n;
+      const reserve1 = 1_000n + values[index + 1] % 10n ** 18n;
+      const totalShares = 1_000n + values[index + 2] % 10n ** 18n;
+      const maximum = reserve0 + values[index + 3] % 10n ** 18n;
+      for (const [specifiedReserve, counterpartReserve] of [
+        [reserve0, reserve1],
+        [reserve1, reserve0],
+      ] as const) {
+        const quote = quoteProportionalLiquidity(
+          maximum,
+          specifiedReserve,
+          counterpartReserve,
+          totalShares,
+        );
+        expect(quote.acceptedSpecified).to.be.greaterThan(0n);
+        expect(quote.acceptedSpecified).to.be.at.most(maximum);
+        expect(quote.counterpart).to.be.greaterThan(0n);
+        expect(quote.shares).to.equal(
+          quote.acceptedSpecified * totalShares / specifiedReserve,
+        );
+        expect(quote.shares).to.be.at.most(
+          quote.counterpart * totalShares / counterpartReserve,
+        );
+      }
+    }
+    expect(() => quoteProportionalLiquidity(1n, 10_000n, 20_000n, 1n)).to.throw(
+      "private liquidity amount is too small",
+    );
   });
 });

@@ -15,6 +15,9 @@ import {
   CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
   CONFIDENTIAL_BEST_QUOTE_SELECTOR,
   CONFIDENTIAL_BEST_SWAP_SELECTOR,
+  CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION,
+  CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC,
+  CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR,
   CONFIDENTIAL_LIQUIDITY_LOCKED_TOPIC,
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION,
@@ -25,8 +28,6 @@ import {
   CIPHERDEX_PROTOCOL_VERSION,
   CIPHERDEX_V1_FEE_POLICY,
   DISCLOSURE_SCHEMA_VERSION,
-  buildConfidentialLaunchCommitCall,
-  buildConfidentialLaunchCommitment,
   LAUNCHPAD_MIGRATION_EIP712_TYPES,
   LAUNCHPAD_LOCK_DISPOSITION_TOPIC,
   LAUNCHPAD_MIGRATE_SELECTOR,
@@ -39,9 +40,18 @@ import {
   PUBLIC_CPMM_FACTORY_ABI,
   PUBLIC_CPMM_QUOTER_ABI,
   PUBLIC_CPMM_ROUTER_ABI,
+  PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI,
+  ALL_CONFIDENTIAL_CANDIDATE_BITMAP,
+  MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES,
+  MAX_CONFIDENTIAL_QUOTE_CANDIDATES,
   calculateCipherDEXV1FeeBreakdown,
   buildConfidentialBestQuoteCall,
   buildConfidentialBestSwapCall,
+  buildConfidentialCandidateBitmap,
+  buildConfidentialBestQuoteWithCandidatesCall,
+  buildConfidentialBestSwapWithCandidatesCall,
+  buildConfidentialLiquidityQuoteCall,
+  buildPublicCreateOrAddLiquidityCall,
   buildVerifiedConfidentialBestQuoteTransaction,
   buildVerifiedConfidentialBestSwapTransaction,
   decryptConfidentialBestExecutionResult,
@@ -54,6 +64,7 @@ import {
   isLaunchpadMigrationMetadataShape,
   isPublicPoolDiscovery,
   minimumCipherDEXV1ConfidentialInput,
+  partitionConfidentialQuoteCandidateBitmap,
   verifyConfidentialPoolDiscovery,
   verifyConfidentialBestExecutionRouter,
   verifyLaunchpadMigrationMetadata,
@@ -61,103 +72,9 @@ import {
 } from "../../sdk/src/index";
 
 describe("stable SDK surface", function () {
-  it("canonicalizes and snapshots confidential launch commitments", function () {
-    const tokenHigh = "0x00000000000000000000000000000000000000f2";
-    const tokenLow = "0x0000000000000000000000000000000000000011";
-    const commitment = buildConfidentialLaunchCommitment({
-      launchId: `0x${"12".repeat(32)}`,
-      creator: "0x0000000000000000000000000000000000000022",
-      tokenA: tokenHigh,
-      tokenB: tokenLow,
-      decimalsA: 6,
-      decimalsB: 18,
-      feeBps: 30,
-      factory: "0x0000000000000000000000000000000000000033",
-      migrator: "0x0000000000000000000000000000000000000044",
-      initializationStrategy: "0x0000000000000000000000000000000000000055",
-      launchAuthority: "0x0000000000000000000000000000000000000066",
-      chainId: 2_632_500n,
-      authorizationDeadline: 1_000n,
-      migrationDeadline: 1_000n,
-    });
-
-    expect(commitment).to.deep.include({
-      token0: tokenLow,
-      token1: tokenHigh,
-      decimals0: 18,
-      decimals1: 6,
-      privacyMode: PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP,
-      poolVersion: CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION,
-    });
-    expect(Object.isFrozen(commitment)).to.equal(true);
-
-    const creatorAuthorization = new Uint8Array([0x12, 0x34]);
-    const call = buildConfidentialLaunchCommitCall(
-      commitment,
-      creatorAuthorization,
-      "0xabcd",
-    );
-    creatorAuthorization[0] = 0xff;
-    expect(call.functionName).to.equal("commitLaunch");
-    expect(call.args[0]).to.deep.equal(commitment);
-    expect(call.args[1]).to.equal("0x1234");
-    expect(call.args[2]).to.equal("0xabcd");
-    expect(Object.isFrozen(call)).to.equal(true);
-    expect(Object.isFrozen(call.args)).to.equal(true);
-  });
-
-  it("rejects invalid or noncanonical confidential launch commitments", function () {
-    const valid = {
-      launchId: `0x${"34".repeat(32)}`,
-      creator: "0x0000000000000000000000000000000000000022",
-      tokenA: "0x0000000000000000000000000000000000000011",
-      tokenB: "0x00000000000000000000000000000000000000f2",
-      decimalsA: 18,
-      decimalsB: 6,
-      feeBps: 30,
-      factory: "0x0000000000000000000000000000000000000033",
-      migrator: "0x0000000000000000000000000000000000000044",
-      initializationStrategy: "0x0000000000000000000000000000000000000055",
-      launchAuthority: "0x0000000000000000000000000000000000000066",
-      chainId: 2_632_500n,
-      authorizationDeadline: 1_000n,
-      migrationDeadline: 2_000n,
-    } as const;
-
-    expect(() =>
-      buildConfidentialLaunchCommitment({
-        ...valid,
-        launchAuthority: valid.creator,
-      }),
-    ).to.throw("Invalid confidential launch commitment");
-    expect(() =>
-      buildConfidentialLaunchCommitment({ ...valid, feeBps: 25 }),
-    ).to.throw("Invalid confidential launch commitment");
-    expect(() =>
-      buildConfidentialLaunchCommitment({
-        ...valid,
-        migrationDeadline: valid.authorizationDeadline - 1n,
-      }),
-    ).to.throw("Invalid confidential launch commitment");
-
-    const commitment = buildConfidentialLaunchCommitment(valid);
-    expect(() =>
-      buildConfidentialLaunchCommitCall(
-        {
-          ...commitment,
-          poolVersion: (CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION + 1) as typeof CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION,
-        },
-        "0x12",
-        "0x34",
-      ),
-    ).to.throw("Noncanonical confidential launch commitment");
-    expect(() =>
-      buildConfidentialLaunchCommitCall(commitment, "0x", "0x34"),
-    ).to.throw("Invalid launch authorization bytes");
-  });
 
   it("parses the published pool and factory ABI fragments", function () {
-    expect(DISCLOSURE_SCHEMA_VERSION).to.equal(6);
+    expect(DISCLOSURE_SCHEMA_VERSION).to.equal(7);
     const pool = new Interface(CONFIDENTIAL_CPMM_ABI);
     const factory = new Interface(CONFIDENTIAL_CPMM_FACTORY_ABI);
     const bestExecutionPool = new Interface(CONFIDENTIAL_BEST_EXECUTION_POOL_ABI);
@@ -168,6 +85,7 @@ describe("stable SDK surface", function () {
     const publicFactory = new Interface(PUBLIC_CPMM_FACTORY_ABI);
     const publicQuoter = new Interface(PUBLIC_CPMM_QUOTER_ABI);
     const publicRouter = new Interface(PUBLIC_CPMM_ROUTER_ABI);
+    const publicLiquidityRouter = new Interface(PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI);
     const feeVault = new Interface(CIPHERDEX_FEE_VAULT_ABI);
     expect(pool.getFunction("swapExactInput")).to.not.equal(null);
     expect(pool.getFunction("PRIVACY_MODE")).to.not.equal(null);
@@ -175,7 +93,9 @@ describe("stable SDK surface", function () {
     expect(pool.getFunction("removeLiquidity")).to.not.equal(null);
     expect(pool.getFunction("quoteExactInput")).to.not.equal(null);
     expect(pool.getFunction("requestQuoteExactInput")).to.not.equal(null);
+    expect(pool.getFunction("requestAddLiquidityQuote")).to.not.equal(null);
     expect(pool.getEvent("ConfidentialQuoteResult")).to.not.equal(null);
+    expect(pool.getEvent("ConfidentialLiquidityQuoteResult")).to.not.equal(null);
     expect(pool.getFunction("collectProtocolFees")).to.not.equal(null);
     expect(pool.getFunction("protocolFees0")).to.equal(null);
     expect(pool.getFunction("protocolFees1")).to.equal(null);
@@ -202,6 +122,7 @@ describe("stable SDK surface", function () {
     expect(bestExecutionPool.getFunction("quoteExactInputForRouter")).to.not.equal(null);
     expect(bestExecutionPool.getFunction("settleExactInputForRouter")).to.not.equal(null);
     expect(bestExecutionRouter.getFunction("requestBestQuoteExactInput")).to.not.equal(null);
+    expect(bestExecutionRouter.getFunction("MAX_QUOTE_CANDIDATES")).to.not.equal(null);
     expect(bestExecutionRouter.getFunction("swapBestExactInput")).to.not.equal(null);
     expect(bestExecutionRouter.getEvent("ConfidentialBestQuoteResult")).to.not.equal(null);
     expect(bestExecutionRouter.getEvent("ConfidentialBestSwapResult")).to.not.equal(null);
@@ -221,6 +142,8 @@ describe("stable SDK surface", function () {
     expect(publicFactory.getFunction("PRIVACY_MODE")).to.not.equal(null);
     expect(publicQuoter.getFunction("quoteExactInput")).to.not.equal(null);
     expect(publicRouter.getFunction("swapExactInput")).to.not.equal(null);
+    expect(publicPool.getFunction("addLiquidityFor")).to.not.equal(null);
+    expect(publicLiquidityRouter.getFunction("createOrAddLiquidity")).to.not.equal(null);
     expect(feeVault.getFunction("sweepPublicToken")).to.not.equal(null);
     expect(feeVault.getEvent("PublicFeesSweepReceipt")).to.not.equal(null);
     expect(feeVault.getFunction("sweepConfidentialToken")).to.not.equal(null);
@@ -229,7 +152,71 @@ describe("stable SDK surface", function () {
     expect(PRIVACY_MODE.TRANSPARENT).to.equal(0);
     expect(PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP).to.equal(1);
     expect(PRIVACY_MODE.UNSUPPORTED_FULLY_CONFIDENTIAL).to.equal(2);
-    expect(LAUNCHPAD_MIGRATION_EIP712_TYPES).to.have.length(14);
+    expect(LAUNCHPAD_MIGRATION_EIP712_TYPES).to.have.length(13);
+  });
+
+  it("builds operation-specific confidential route and liquidity calls", function () {
+    const tokenIn = "0x0000000000000000000000000000000000000001";
+    const tokenOut = "0x0000000000000000000000000000000000000002";
+    const encrypted = {
+      ciphertext: { ciphertextHigh: 1n, ciphertextLow: 2n },
+      signature: "0x1234",
+    } as const;
+    const requestId = `0x${"11".repeat(32)}`;
+    const deadline = 1_000n;
+
+    expect(buildConfidentialBestQuoteWithCandidatesCall(
+      tokenIn,
+      tokenOut,
+      encrypted,
+      ALL_CONFIDENTIAL_CANDIDATE_BITMAP,
+      requestId,
+      deadline,
+    ).args[3]).to.equal(ALL_CONFIDENTIAL_CANDIDATE_BITMAP);
+    expect(() => buildConfidentialBestSwapWithCandidatesCall(
+      tokenIn,
+      tokenOut,
+      encrypted,
+      encrypted,
+      0b1111,
+      requestId,
+      deadline,
+    )).to.throw("Invalid confidential route candidate bitmap");
+    expect(partitionConfidentialQuoteCandidateBitmap(
+      ALL_CONFIDENTIAL_CANDIDATE_BITMAP,
+      3,
+    )).to.deep.equal([0x7, 0x38, 0x1c0]);
+    expect(buildConfidentialCandidateBitmap(1)).to.equal(0x49);
+    expect(buildConfidentialCandidateBitmap(2)).to.equal(0xdb);
+    expect(buildConfidentialCandidateBitmap(3)).to.equal(0x1ff);
+    expect(MAX_CONFIDENTIAL_QUOTE_CANDIDATES).to.equal(9);
+    expect(MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES).to.equal(3);
+
+    const liquidityQuote = buildConfidentialLiquidityQuoteCall(
+      encrypted,
+      true,
+      requestId,
+      deadline,
+    );
+    expect(liquidityQuote.functionName).to.equal(CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION);
+    expect(CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR).to.equal("0x6ad558a9");
+    expect(CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC).to.match(/^0x[0-9a-f]{64}$/);
+
+    const publicLiquidity = buildPublicCreateOrAddLiquidityCall({
+      tokenA: tokenIn,
+      tokenB: tokenOut,
+      decimalsA: 18,
+      decimalsB: 6,
+      feeBps: 30n,
+      amountADesired: 100n,
+      amountBDesired: 200n,
+      minShares: 1n,
+      minPriceX18: 0n,
+      maxPriceX18: (1n << 256n) - 1n,
+      deadline,
+    });
+    expect(publicLiquidity.functionName).to.equal("createOrAddLiquidity");
+    expect(Object.isFrozen(publicLiquidity.args)).to.equal(true);
   });
 
   it("accepts only the public privacy-minimal discovery shape", function () {
@@ -306,7 +293,7 @@ describe("stable SDK surface", function () {
       isLaunchpadMigrationMetadata({
         disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
         launchId: `0x${"12".repeat(32)}`,
-        launchCommitmentHash: `0x${"13".repeat(32)}`,
+        authorizationHash: `0x${"13".repeat(32)}`,
         initializationStrategy: feeVault,
         creator: owner,
         pool,
@@ -389,7 +376,7 @@ describe("stable SDK surface", function () {
     const contradictoryMigration = {
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
       launchId: `0x${"31".repeat(32)}`,
-      launchCommitmentHash: `0x${"32".repeat(32)}`,
+      authorizationHash: `0x${"32".repeat(32)}`,
       initializationStrategy: "0x0000000000000000000000000000000000000044",
       creator,
       pool,
@@ -422,7 +409,7 @@ describe("stable SDK surface", function () {
     const lpToken = "0x0000000000000000000000000000000000000088";
     const initializationStrategy = "0x0000000000000000000000000000000000000099";
     const launchId = `0x${"bb".repeat(32)}`;
-    const launchCommitmentHash = `0x${"cc".repeat(32)}`;
+    const authorizationHash = `0x${"cc".repeat(32)}`;
     const transactionHash = `0x${"99".repeat(32)}`;
     const lockId = `0x${"aa".repeat(32)}`;
     const factoryCode = "0x6001600055";
@@ -431,7 +418,7 @@ describe("stable SDK surface", function () {
     const metadata = {
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
       launchId,
-      launchCommitmentHash,
+      authorizationHash,
       initializationStrategy,
       creator,
       pool,
@@ -455,7 +442,7 @@ describe("stable SDK surface", function () {
           ],
           data: abi.encode(
             ["address", "bytes32"],
-            [initializationStrategy, launchCommitmentHash],
+            [initializationStrategy, authorizationHash],
           ),
         },
         {
@@ -595,7 +582,7 @@ describe("stable SDK surface", function () {
           ],
           data: abi.encode(
             ["address", "bytes32"],
-            [initializationStrategy, launchCommitmentHash],
+            [initializationStrategy, authorizationHash],
           ),
         }],
       }),
@@ -1303,7 +1290,7 @@ describe("stable SDK surface", function () {
     expect(isLaunchpadMigrationMetadata({
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
       launchId: "0x" + "22".repeat(32),
-      launchCommitmentHash: "0x" + "33".repeat(32),
+      authorizationHash: "0x" + "33".repeat(32),
       initializationStrategy: valid.token1,
       creator: valid.token0,
       pool: valid.pool,
@@ -1340,7 +1327,7 @@ describe("stable SDK surface", function () {
     expect(isLaunchpadMigrationMetadata({
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
       launchId: "0x" + "22".repeat(32),
-      launchCommitmentHash: "0x" + "33".repeat(32),
+      authorizationHash: "0x" + "33".repeat(32),
       initializationStrategy: valid.token1,
       creator: valid.token0,
       pool: valid.pool,

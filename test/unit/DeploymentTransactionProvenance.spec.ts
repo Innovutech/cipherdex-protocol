@@ -155,13 +155,10 @@ describe("deployment transaction provenance", function () {
       [
         confidentialFactory.record.address,
         strategyRegistry.record.address,
-        deployer.address,
       ],
       confidentialFactory.record.address,
       strategyRegistry.record.address,
-      deployer.address,
     );
-    launchStrategy.record.launchAuthority = deployer.address;
     const migratorAddress = await launchStrategy.contract.migrator();
     const migrator = {
       record: {
@@ -231,6 +228,12 @@ describe("deployment transaction provenance", function () {
       [publicFactory.record.address],
       publicFactory.record.address,
     );
+    const publicLiquidityRouter = await deployed(
+      "publicLiquidityRouter",
+      "PublicCPMMLiquidityRouter",
+      [publicFactory.record.address],
+      publicFactory.record.address,
+    );
 
     return {
       contracts: {
@@ -252,6 +255,7 @@ describe("deployment transaction provenance", function () {
         publicFeeVaultBinding: publicVaultBinding,
         publicQuoter: publicQuoter.record,
         publicRouter: publicRouter.record,
+        publicLiquidityRouter: publicLiquidityRouter.record,
       },
       transactions,
     };

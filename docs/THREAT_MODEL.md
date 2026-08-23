@@ -21,11 +21,11 @@
 - launchpad price-bound checks bypassing the private normalized-price interval.
 - launchpad bootstrap redirecting assets into an arbitrary caller-selected or
   creator-specific pool;
-- launch commitment squatting without both creator and launch-authority
-  authorization;
+- launch-ID or protected-pool-slot squatting without the creator's exact signed
+  migration authorization and the pinned migrator code identity;
 - standard-pool initialization consuming a launch-protected initialization slot,
   or protected-pool commitment blocking the standard pool;
-- expired/canceled protected pools becoming permissionlessly initializable;
+- failed or expired migration attempts leaving an empty reserved protected pool;
 - completed launches being superseded or initialized twice;
 - a completed protected pool becoming permanently unusable after every LP exits;
 - a reused protected key accepting signed decimal metadata that differs from the
@@ -53,6 +53,8 @@
 - cross-selector/request ciphertext replay at the best-execution router;
 - losing confidential candidate outputs being offboarded or logged;
 - quote-only requests moving funds or mutating pool accounting;
+- liquidity-preview requests moving funds, mutating reserve/share accounting or
+  publishing the accepted amounts and expected shares in plaintext;
 - successful atomic routing leaving input escrow or candidate allowance residue;
 - selected settlement bypassing pool-owned fee, slippage, invariant, reserve,
   protocol-fee or exact-delta enforcement;
@@ -85,8 +87,14 @@
   reviewed pool/token code limits this to defects or external MPC failure; the
   router does not catch and reinterpret arbitrary failures;
 - gas cost and block-limit headroom as more variants are considered. The router
-  namespace is fixed to three fee tiers by three classes, rejects more than three
-  active candidates, and accepts no caller-provided pool addresses;
+  namespace is fixed to three fee tiers by three classes and accepts no
+  caller-provided pool addresses. Paid quotes permit up to nine candidates, but
+  only the three-candidate route has funded COTI gas evidence. Atomic execution
+  remains capped at three. Integrations must measure larger deployed quote sets
+  or use deterministic fresh-ciphertext quote batches;
+- pool-state movement between a confidential liquidity preview and settlement.
+  The preview reserves nothing; the later add must use fresh authenticated
+  inputs, nonzero minimum shares, normalized price bounds and a deadline;
 - active differencing of low-volume confidential fee batches by a beneficiary or
   adversary that already knows most constituent trades; pool count/time batching,
   fixed daily cross-pool epochs, terminal deposits and the vault sweep threshold
@@ -96,18 +104,13 @@
 - whether a launchpad's encrypted allowances are economically scoped to its
   migration transaction; a malicious launchpad can still spend whatever allowance
   a creator explicitly grants it.
-- abandonment of an empty launch-protected pool. Cancellation/expiry allow a
-  later fully authorized commitment to reuse that same protected complete key,
-  but neither condition recovers deployment gas or converts it to a standard pool;
-- creator-key compromise alone cannot commit a protected launch without the
-  fixed launch authority. Launch-authority compromise remains an admission and
-  liveness trust failure: the authority can create and co-sign with a second
-  self-controlled creator identity, fund that launch and occupy an unused
-  protected key. It still cannot spend an honest creator's assets, alter the
-  separate standard pool or bypass exact migration funding and authorization;
-- denial of service by a valid authorized commitment occupying one protected key
-  until cancellation or expiry. The standard pool and other reviewed strategy
-  identities remain unaffected.
+- creator-key compromise. A compromised creator can authorize and fund an atomic
+  protected launch using that creator's own allowances, but cannot spend another
+  account's private assets or alter the separate standard pool;
+- denial of service by completing a valid funded launch for an unused protected
+  key. There is no unfunded precommit state: failed, expired, or reverted
+  migrations leave no pool or active launch record. Completed keys remain
+  intentionally one-shot;
 - rollback or replacement of the encrypted funded-run journal by a malicious
   administrator of the test host. The same host necessarily has access to the
   funded private/AES keys, so local authenticated storage cannot provide an
@@ -124,12 +127,13 @@
   coordinator and recovery storage do reject other ordinary OS identities and
   fail closed on symlinks, hard links, changed source or changed runtime bytes;
 
-## Required review before release
+## Independent-review scope
 
-Independent review must cover MPC input authenticity/replay semantics, all token
-callbacks, gas griefing, pool initialization, LP rounding, event linkability,
-precompile behavior under `eth_call`, and testnet-to-mainnet compiler/deployment
-differences. No external audit is claimed.
+An external audit is not enforced by the deployment tooling. If an independent
+review is commissioned, it should cover MPC input authenticity/replay semantics,
+all token callbacks, gas griefing, pool initialization, LP rounding, event
+linkability, precompile behavior under `eth_call`, and testnet-to-mainnet
+compiler/deployment differences. No external audit is claimed.
 
 Public pool/factory contracts report version 2; confidential pool/factory
 contracts report version 3; the best-execution router reports version 2; the

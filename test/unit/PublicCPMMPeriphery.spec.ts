@@ -273,4 +273,212 @@ describe("PublicCPMM periphery", function () {
     expect(await taxed.balanceOf(trader.address)).to.equal(100n);
     expect(await taxed.allowance(routerAddress, poolAddress)).to.equal(0n);
   });
+
+  it("atomically creates and seeds a pool while minting shares to the provider", async function () {
+    const [provider] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const tokenA = await tokenFactory.deploy("Token A", "TKA", 18);
+    const tokenB = await tokenFactory.deploy("Token B", "TKB", 6);
+    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
+      await vault.getAddress(),
+    );
+    await factory.waitForDeployment();
+    const liquidityRouter = await (
+      await ethers.getContractFactory("PublicCPMMLiquidityRouter")
+    ).deploy(await factory.getAddress());
+    await liquidityRouter.waitForDeployment();
+
+    const amountA = ethers.parseEther("100");
+    const amountB = 100_000_000n;
+    await tokenA.mint(provider.address, amountA);
+    await tokenB.mint(provider.address, amountB);
+    await tokenA.approve(await liquidityRouter.getAddress(), amountA);
+    await tokenB.approve(await liquidityRouter.getAddress(), amountB);
+
+    const key = await factory.poolKey(
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      6,
+      30,
+    );
+    await liquidityRouter.createOrAddLiquidity(
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      6,
+      30,
+      amountA,
+      amountB,
+      1n,
+      0n,
+      ethers.MaxUint256,
+      0xffffffff,
+    );
+
+    const poolAddress = await factory.getPool(key);
+    const pool = await ethers.getContractAt("PublicCPMM", poolAddress);
+    expect(poolAddress).to.not.equal(ethers.ZeroAddress);
+    expect(await pool.initialized()).to.equal(true);
+    expect(await pool.shares(provider.address)).to.be.greaterThan(0n);
+    expect(await tokenA.balanceOf(await liquidityRouter.getAddress())).to.equal(0n);
+    expect(await tokenB.balanceOf(await liquidityRouter.getAddress())).to.equal(0n);
+    expect(await tokenA.allowance(await liquidityRouter.getAddress(), poolAddress)).to.equal(0n);
+    expect(await tokenB.allowance(await liquidityRouter.getAddress(), poolAddress)).to.equal(0n);
+    expect(await liquidityRouter.PROTOCOL_VERSION()).to.equal(1n);
+  });
+
+  it("rolls pool creation back when atomic initial seeding fails", async function () {
+    const [provider] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const tokenA = await tokenFactory.deploy("Token A", "TKA", 18);
+    const tokenB = await tokenFactory.deploy("Token B", "TKB", 6);
+    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
+      await vault.getAddress(),
+    );
+    const liquidityRouter = await (
+      await ethers.getContractFactory("PublicCPMMLiquidityRouter")
+    ).deploy(await factory.getAddress());
+    await Promise.all([factory.waitForDeployment(), liquidityRouter.waitForDeployment()]);
+    const amountA = ethers.parseEther("10");
+    const amountB = 10_000_000n;
+    await tokenA.mint(provider.address, amountA);
+    await tokenB.mint(provider.address, amountB);
+    await tokenA.approve(await liquidityRouter.getAddress(), amountA);
+    await tokenB.approve(await liquidityRouter.getAddress(), amountB);
+    const key = await factory.poolKey(
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      6,
+      30,
+    );
+
+    await expect(liquidityRouter.createOrAddLiquidity(
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      6,
+      30,
+      amountA,
+      amountB,
+      ethers.MaxUint256,
+      0n,
+      ethers.MaxUint256,
+      0xffffffff,
+    )).to.be.revert(ethers);
+
+    expect(await factory.getPool(key)).to.equal(ethers.ZeroAddress);
+    expect(await factory.allPoolsLength()).to.equal(0n);
+    expect(await tokenA.balanceOf(provider.address)).to.equal(amountA);
+    expect(await tokenB.balanceOf(provider.address)).to.equal(amountB);
+  });
+
+  it("uses only the proportional amounts and refunds excess for an existing pool", async function () {
+    const [provider, secondProvider] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const tokenA = await tokenFactory.deploy("Token A", "TKA", 18);
+    const tokenB = await tokenFactory.deploy("Token B", "TKB", 6);
+    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
+      await vault.getAddress(),
+    );
+    const liquidityRouter = await (
+      await ethers.getContractFactory("PublicCPMMLiquidityRouter")
+    ).deploy(await factory.getAddress());
+    await Promise.all([factory.waitForDeployment(), liquidityRouter.waitForDeployment()]);
+    const routerAddress = await liquidityRouter.getAddress();
+
+    await tokenA.mint(provider.address, ethers.parseEther("100"));
+    await tokenB.mint(provider.address, 100_000_000n);
+    await tokenA.approve(routerAddress, ethers.MaxUint256);
+    await tokenB.approve(routerAddress, ethers.MaxUint256);
+    await liquidityRouter.createOrAddLiquidity(
+      await tokenA.getAddress(), await tokenB.getAddress(), 18, 6, 30,
+      ethers.parseEther("100"), 100_000_000n, 1n, 0n, ethers.MaxUint256, 0xffffffff,
+    );
+
+    const desiredA = ethers.parseEther("10");
+    const desiredB = 20_000_000n;
+    await tokenA.mint(secondProvider.address, desiredA);
+    await tokenB.mint(secondProvider.address, desiredB);
+    await tokenA.connect(secondProvider).approve(routerAddress, desiredA);
+    await tokenB.connect(secondProvider).approve(routerAddress, desiredB);
+    const result = await liquidityRouter.connect(secondProvider)
+      .createOrAddLiquidity.staticCall(
+        await tokenA.getAddress(), await tokenB.getAddress(), 18, 6, 30,
+        desiredA, desiredB, 1n, 0n, ethers.MaxUint256, 0xffffffff,
+      );
+    await liquidityRouter.connect(secondProvider).createOrAddLiquidity(
+      await tokenA.getAddress(), await tokenB.getAddress(), 18, 6, 30,
+      desiredA, desiredB, 1n, 0n, ethers.MaxUint256, 0xffffffff,
+    );
+
+    const pool = await ethers.getContractAt("PublicCPMM", result[0]);
+    expect(result[2]).to.equal(desiredA);
+    expect(result[3]).to.equal(10_000_000n);
+    expect(await tokenA.balanceOf(secondProvider.address)).to.equal(0n);
+    expect(await tokenB.balanceOf(secondProvider.address)).to.equal(10_000_000n);
+    expect(await pool.shares(secondProvider.address)).to.equal(result[1]);
+    expect(await tokenA.balanceOf(routerAddress)).to.equal(0n);
+    expect(await tokenB.balanceOf(routerAddress)).to.equal(0n);
+  });
+
+  it("preserves caller token ordering when tokenA is canonical token1", async function () {
+    const [provider, secondProvider] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const first = await tokenFactory.deploy("First Token", "FIRST", 18);
+    const second = await tokenFactory.deploy("Second Token", "SECOND", 18);
+    await Promise.all([first.waitForDeployment(), second.waitForDeployment()]);
+    const vault = await deployFeeVault();
+    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
+      await vault.getAddress(),
+    );
+    const liquidityRouter = await (
+      await ethers.getContractFactory("PublicCPMMLiquidityRouter")
+    ).deploy(await factory.getAddress());
+    await Promise.all([factory.waitForDeployment(), liquidityRouter.waitForDeployment()]);
+    const routerAddress = await liquidityRouter.getAddress();
+    const firstAddress = await first.getAddress();
+    const secondAddress = await second.getAddress();
+    const tokenA = firstAddress.toLowerCase() > secondAddress.toLowerCase() ? first : second;
+    const tokenB = tokenA === first ? second : first;
+    const tokenAAddress = await tokenA.getAddress();
+    const tokenBAddress = await tokenB.getAddress();
+
+    await tokenA.mint(provider.address, 1_000n);
+    await tokenB.mint(provider.address, 1_000n);
+    await tokenA.approve(routerAddress, 1_000n);
+    await tokenB.approve(routerAddress, 1_000n);
+    await liquidityRouter.createOrAddLiquidity(
+      tokenAAddress, tokenBAddress, 18, 18, 30,
+      1_000n, 1_000n, 1n, 0n, ethers.MaxUint256, 0xffffffff,
+    );
+
+    await tokenA.mint(secondProvider.address, 200n);
+    await tokenB.mint(secondProvider.address, 100n);
+    await tokenA.connect(secondProvider).approve(routerAddress, 200n);
+    await tokenB.connect(secondProvider).approve(routerAddress, 100n);
+    const result = await liquidityRouter.connect(secondProvider)
+      .createOrAddLiquidity.staticCall(
+        tokenAAddress, tokenBAddress, 18, 18, 30,
+        200n, 100n, 1n, 0n, ethers.MaxUint256, 0xffffffff,
+      );
+    await liquidityRouter.connect(secondProvider).createOrAddLiquidity(
+      tokenAAddress, tokenBAddress, 18, 18, 30,
+      200n, 100n, 1n, 0n, ethers.MaxUint256, 0xffffffff,
+    );
+
+    expect(result[2]).to.equal(100n);
+    expect(result[3]).to.equal(100n);
+    expect(await tokenA.balanceOf(secondProvider.address)).to.equal(100n);
+    expect(await tokenB.balanceOf(secondProvider.address)).to.equal(0n);
+    expect(await tokenA.balanceOf(routerAddress)).to.equal(0n);
+    expect(await tokenB.balanceOf(routerAddress)).to.equal(0n);
+  });
 });

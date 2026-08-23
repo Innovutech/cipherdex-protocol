@@ -1,5 +1,6 @@
 export const CONFIDENTIAL_OPERATION = Object.freeze({
   QUOTE: "quote",
+  ADD_LIQUIDITY_QUOTE: "add-liquidity-quote",
   SWAP: "swap",
   ADD_LIQUIDITY: "add-liquidity",
   REMOVE_LIQUIDITY: "remove-liquidity",
@@ -12,6 +13,7 @@ export type ConfidentialOperation =
 export const CONFIDENTIAL_SIGNATURE_PURPOSE = Object.freeze({
   TOKEN_APPROVAL: "token-approval",
   AMOUNT_IN: "amount-in",
+  SPECIFIED_AMOUNT: "specified-amount",
   MINIMUM_OUT: "minimum-out",
   TOKEN0_AMOUNT: "token0-amount",
   TOKEN1_AMOUNT: "token1-amount",
@@ -43,6 +45,7 @@ export type ConfidentialSignatureStep = Readonly<{
 export type ConfidentialTransactionPurpose =
   | "token-approval"
   | "quote"
+  | "liquidity-quote"
   | "swap"
   | "add-liquidity"
   | "remove-liquidity"
@@ -199,25 +202,56 @@ function approvalTransaction(
 
 export function buildConfidentialQuoteOperationPlan(input: Readonly<{
   route?: "direct" | "best-execution";
+  candidateBatchCount?: number;
 }> = {}): ConfidentialOperationPlan {
   const route = input.route ?? "direct";
   assertRoute(route);
+  const candidateBatchCount = input.candidateBatchCount ?? 1;
+  if (
+    !Number.isSafeInteger(candidateBatchCount) ||
+    candidateBatchCount <= 0 ||
+    candidateBatchCount > 9 ||
+    (route === "direct" && candidateBatchCount !== 1)
+  ) {
+    throw new TypeError("Invalid confidential quote candidate batch count");
+  }
   return buildOperationPlan({
     operation: CONFIDENTIAL_OPERATION.QUOTE,
     route,
-    signatures: [{
-      id: "quote-amount-in",
+    signatures: Array.from({ length: candidateBatchCount }, (_, index) => ({
+      id: candidateBatchCount === 1 ? "quote-amount-in" : `quote-amount-in-${index + 1}`,
       purpose: CONFIDENTIAL_SIGNATURE_PURPOSE.AMOUNT_IN,
-      field: "amountIn",
-      assetRole: "input",
-      label: "Sign private quote amount",
+      field: candidateBatchCount === 1 ? "amountIn" : `amountInBatch${index + 1}`,
+      assetRole: "input" as const,
+      label: candidateBatchCount === 1
+        ? "Sign private quote amount"
+        : `Sign private quote amount ${index + 1} of ${candidateBatchCount}`,
+    })),
+    transactions: Array.from({ length: candidateBatchCount }, (_, index) => ({
+      id: candidateBatchCount === 1 ? "request-quote" : `request-quote-${index + 1}`,
+      purpose: "quote" as const,
+      label: route === "best-execution"
+        ? candidateBatchCount === 1
+          ? "Request private best quote"
+          : `Request private quote batch ${index + 1} of ${candidateBatchCount}`
+        : "Request private quote",
+    })),
+  });
+}
+
+export function buildConfidentialAddLiquidityQuoteOperationPlan(): ConfidentialOperationPlan {
+  return buildOperationPlan({
+    operation: CONFIDENTIAL_OPERATION.ADD_LIQUIDITY_QUOTE,
+    signatures: [{
+      id: "liquidity-quote-specified-amount",
+      purpose: CONFIDENTIAL_SIGNATURE_PURPOSE.SPECIFIED_AMOUNT,
+      field: "specifiedAmount",
+      label: "Sign private liquidity amount",
     }],
     transactions: [{
-      id: "request-quote",
-      purpose: "quote",
-      label: route === "best-execution"
-        ? "Request private best quote"
-        : "Request private quote",
+      id: "request-liquidity-quote",
+      purpose: "liquidity-quote",
+      label: "Preview private liquidity ratio",
     }],
   });
 }

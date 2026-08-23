@@ -22,7 +22,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     bytes32 public constant PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH =
         hex"9c796ceca64fdb8f1b780ed50588dfce7d75b5674ef5faa06bc1d5d4f063a0de";
     bytes32 public constant BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH =
-        hex"31c3c39f2cde3690860a232d55cbc071b7c9cf6a6803500e39db1a984ad447f7";
+        hex"680b74fefaee9c2673ac78962712502d552f947e9d770ce3b3f869379c838b08";
 
     mapping(bytes32 => address) public getPool;
     mapping(address => bool) public isPool;
@@ -291,7 +291,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     function bootstrapPool(
         address initializationStrategy,
         bytes32 launchId,
-        bytes32 launchCommitmentHash,
+        bytes32 authorizationHash,
         address pool,
         address provider,
         uint256 amount0,
@@ -303,7 +303,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         _authorizeProtectedBootstrap(
             initializationStrategy,
             launchId,
-            launchCommitmentHash,
+            authorizationHash,
             pool,
             provider
         );
@@ -321,7 +321,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     function bootstrapPoolWithDisposition(
         address initializationStrategy,
         bytes32 launchId,
-        bytes32 launchCommitmentHash,
+        bytes32 authorizationHash,
         address pool,
         address provider,
         uint256 amount0,
@@ -335,7 +335,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         _authorizeProtectedBootstrap(
             initializationStrategy,
             launchId,
-            launchCommitmentHash,
+            authorizationHash,
             pool,
             provider
         );
@@ -355,7 +355,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
     function _authorizeProtectedBootstrap(
         address initializationStrategy,
         bytes32 launchId,
-        bytes32 launchCommitmentHash,
+        bytes32 authorizationHash,
         address pool,
         address provider
     ) internal {
@@ -374,7 +374,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
             msg.sender,
             pool,
             provider,
-            launchCommitmentHash
+            authorizationHash
         );
         _requireCanonicalProtectedPool(pool, initializationStrategy, expectedKey);
     }

@@ -13,6 +13,7 @@ const requiredNonReentrant = new Map([
     [
       "swapExactInput",
       "settleExactInputForRouter",
+      "requestAddLiquidityQuote",
       "addLiquidity",
       "bootstrapLiquidity",
       "bootstrapLiquidityWithDisposition",
@@ -26,12 +27,13 @@ const requiredNonReentrant = new Map([
     "contracts/ConfidentialLaunchpadMigrator.sol",
     ["migrate", "migrateWithDisposition"],
   ],
-  ["contracts/PublicCPMM.sol", ["swapExactInput", "addLiquidity", "removeLiquidity", "collectProtocolFees", "lockShares", "unlockShares"]],
+  ["contracts/PublicCPMM.sol", ["swapExactInput", "addLiquidity", "addLiquidityFor", "removeLiquidity", "collectProtocolFees", "lockShares", "unlockShares"]],
   [
     "contracts/CipherDEXFeeVault.sol",
     ["depositPublicFees", "depositConfidentialFees", "sweepPublicToken", "sweepConfidentialToken"],
   ],
   ["contracts/PublicCPMMRouter.sol", ["swapExactInput"]],
+  ["contracts/PublicCPMMLiquidityRouter.sol", ["createOrAddLiquidity"]],
   [
     "contracts/ConfidentialBestExecutionRouter.sol",
     ["requestBestQuoteExactInput", "swapBestExactInput"],
@@ -57,6 +59,9 @@ const publicSource = maskSourceCommentsAndLiterals(
 const publicRouterSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicCPMMRouter.sol", "utf8"),
 );
+const publicLiquidityRouterSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/PublicCPMMLiquidityRouter.sol", "utf8"),
+);
 const runtimeArtifactRawSource = await readFile("scripts/runtime-artifact.ts", "utf8");
 const runtimeArtifactSource = maskSourceCommentsAndLiterals(runtimeArtifactRawSource);
 if (
@@ -81,6 +86,34 @@ for (const line of confidentialSource.split("\n")) {
 }
 if (/\bdelegatecall\b|\bselfdestruct\b/.test(confidentialSource)) {
   throw new Error("ConfidentialCPMM contains an unsafe dynamic execution primitive");
+}
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(publicLiquidityRouterSource)) {
+  throw new Error("Public liquidity router contains an unsafe dynamic execution primitive");
+}
+
+const publicLiquidityRouteBody = functionBody(
+  publicLiquidityRouterSource,
+  "createOrAddLiquidity",
+);
+for (const fragment of [
+  "canonicalFactory.getPool(key)",
+  "canonicalFactory.createPool(",
+  "_requireCanonicalPool(",
+  "_pullExact(first, msg.sender, desired0, starting0)",
+  "_pullExact(second, msg.sender, desired1, starting1)",
+  "first.forceApprove(pool, desired0)",
+  "second.forceApprove(pool, desired1)",
+  "addLiquidityFor(",
+  "first.forceApprove(pool, 0)",
+  "second.forceApprove(pool, 0)",
+  "first.safeTransfer(msg.sender, refund0)",
+  "second.safeTransfer(msg.sender, refund1)",
+  "first.balanceOf(address(this)) != starting0",
+  "second.balanceOf(address(this)) != starting1",
+]) {
+  if (!publicLiquidityRouteBody.includes(fragment)) {
+    throw new Error("Public liquidity router omits atomic custody or cleanup enforcement");
+  }
 }
 
 for (const forbidden of [
@@ -426,33 +459,39 @@ for (const fragment of [
 const launchStrategySource = maskSourceCommentsAndLiterals(
   await readFile("contracts/ConfidentialLaunchInitializationStrategy.sol", "utf8"),
 );
-for (const source of [launchStrategySource, maskSourceCommentsAndLiterals(
+const launchMigratorSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/ConfidentialLaunchpadMigrator.sol", "utf8"),
-)]) {
-  if (!source.includes("SignatureValidation.isValidSignatureNow(")) {
-    throw new Error("Launch authorization paths do not share EOA/ERC-1271 validation");
-  }
+);
+if (!launchMigratorSource.includes("SignatureValidation.isValidSignatureNow(")) {
+  throw new Error("Launch migration omits EOA/ERC-1271 creator authorization");
 }
 if (/\bdelegatecall\b|\bselfdestruct\b/.test(launchStrategySource)) {
   throw new Error("Launch initialization strategy contains an unsafe execution primitive");
 }
 for (const fragment of [
-  "commitment.creator == launchAuthority",
-  "_isValidSignature(\n                commitment.creator",
-  "_isValidSignature(\n                launchAuthority",
+  "msg.sender != migrator",
+  "msg.sender.codehash != migratorRuntimeCodehash",
+  "authorizationHash == bytes32(0)",
   "canonicalFactory.getOrCreatePoolForCommitment(",
-  "activeLaunchForPoolKey[poolKey]",
+  "activeLaunchForPoolKey[record.poolKey]",
   "CompletedPoolCannotBeSuperseded()",
   "if (msg.sender != factory) revert InitializationUnauthorized()",
   "migratorCaller.codehash != migratorRuntimeCodehash",
   "record.status = LaunchStatus.COMPLETED",
   "IConfidentialCPMM(pool).initialized()",
-  "commitment.chainId != block.chainid",
-  "commitment.initializationStrategy != address(this)",
 ]) {
   if (!launchStrategySource.includes(fragment)) {
-    throw new Error("Launch strategy omits dual authorization or one-shot pool binding");
+    throw new Error("Launch strategy omits pinned atomic one-shot pool binding");
   }
+}
+if (
+  launchStrategySource.includes("commitLaunch(") ||
+  launchStrategySource.includes("launchAuthority") ||
+  launchMigratorSource.indexOf(".prepareLaunch(") < 0 ||
+  launchMigratorSource.indexOf(".prepareLaunch(") >
+    launchMigratorSource.indexOf("gtUint256 gtAmount0 = _validateAndConsume(")
+) {
+  throw new Error("Launch flow retains precommit authority or prepares after token consumption");
 }
 
 const feeVaultSource = maskSourceCommentsAndLiterals(
@@ -509,10 +548,11 @@ if (/\bdelegatecall\b|\bselfdestruct\b/.test(bestExecutionRouterSource)) {
 }
 for (const fragment of [
   "MAX_CANDIDATES = 3",
+  "MAX_QUOTE_CANDIDATES = 9",
   "MAX_POOL_CLASSES = 3",
   "CANDIDATE_BITMAP_BITS = 9",
   "DEFAULT_STANDARD_CANDIDATE_BITMAP",
-  "_populationCount(candidateBitmap) > MAX_CANDIDATES",
+  "_populationCount(candidateBitmap) > maximumCandidates",
   "canonicalFactory.initializationStrategyAt(",
   "_selectIf(replace, candidateOutput, bestOutput)",
   "MpcCore.setPublic256(index),\n                bestIndex",
@@ -543,9 +583,12 @@ if (/transfer(?:From)?GT|approveGT/.test(bestQuoteBody)) {
   throw new Error("Confidential best quote unexpectedly moves funds or grants allowance");
 }
 
-const deploymentRawSource = await readFile("scripts/deploy-testnet.ts", "utf8");
+const deploymentRawSource = await readFile("scripts/deploy-protocol.ts", "utf8");
 const deploymentSource = maskSourceCommentsAndLiterals(deploymentRawSource);
-const deploymentAst = parseTypeScript(deploymentRawSource, "scripts/deploy-testnet.ts");
+const deploymentAst = parseTypeScript(deploymentRawSource, "scripts/deploy-protocol.ts");
+const mainnetDeploymentSource = await readFile("scripts/deploy-mainnet.ts", "utf8");
+const mainnetPreflightSource = await readFile("scripts/mainnet-preflight.ts", "utf8");
+const castLedgerWalletSource = await readFile("scripts/cast-ledger-wallet.ts", "utf8");
 const transactionEvidenceSource = await readFile(
   "scripts/testnet-transaction-evidence.ts",
   "utf8",
@@ -639,8 +682,8 @@ if (/\b(?:sendTransaction|broadcastTransaction|withFundedTransactionEvidence)\b/
 )) {
   throw new Error("Funded evidence recovery contains a transaction submission path");
 }
-if (!freshRunnerSource.includes('"CIPHERDEX_LAUNCH_AUTHORITY"')) {
-  throw new Error("Fresh deployment runner strips the required launch authority");
+if (freshRunnerSource.includes('"CIPHERDEX_LAUNCH_AUTHORITY"')) {
+  throw new Error("Fresh deployment runner retains obsolete launch authority input");
 }
 for (const script of [
   "testnet:harness",
@@ -653,10 +696,56 @@ for (const script of [
   "evidence:finalize",
   "evidence:verify",
   "deploy:testnet",
+  "deploy:mainnet",
+  "mainnet:preflight",
   "secure:funded-env",
 ]) {
   if (packageManifest.scripts?.[script] !== undefined) {
     throw new Error(`${script} exposes a repository-local funded entry point`);
+  }
+}
+for (const required of [
+  'runDeploymentCommand("coti-mainnet")',
+  "CIPHERDEX_MAINNET_APPROVED_COMMIT",
+  "mainnet deployment refuses COTI_TESTNET_PRIVATE_KEY",
+  "openFundedRecoveryJournalWithSecret",
+  'type: "ledger-via-cast"',
+  'type: "private-key"',
+  "COTI_MAINNET_PRIVATE_KEY",
+  "configure exactly one mainnet signer",
+]) {
+  if (!mainnetDeploymentSource.includes(required) && !deploymentRawSource.includes(required)) {
+    throw new Error(`Mainnet deployment omits Ledger control: ${required}`);
+  }
+}
+for (const required of [
+  'REVIEWED_CAST_VERSION = "1.7.1"',
+  'createHash("sha256")',
+  "isInside(repositoryRoot, canonical)",
+  "assertCastExecutableUnchanged(this.castIdentity)",
+  "validateCastLedgerSignedTransaction(",
+  "sendPreparedFundedTransaction(this, transaction)",
+  '"--ledger"',
+]) {
+  if (!castLedgerWalletSource.includes(required)) {
+    throw new Error(`Ledger signer omits reviewed boundary: ${required}`);
+  }
+}
+if (/\b(?:sendTransaction|broadcastTransaction|signTransaction)\s*\(/u.test(
+  maskSourceCommentsAndLiterals(mainnetPreflightSource),
+)) {
+  throw new Error("Mainnet preflight contains a transaction signing or submission path");
+}
+for (const required of [
+  '"scripts/mainnet-preflight.ts"',
+  '"scripts/deploy-mainnet.ts"',
+  'signerMode: "mainnet"',
+  "chainId: 2_632_500",
+  'rpcEnvironment: "COTI_MAINNET_RPC_URL"',
+  'deploymentRecordSlug: "coti-mainnet"',
+]) {
+  if (!freshRunnerSource.includes(required)) {
+    throw new Error(`Fresh runner omits mainnet isolation control: ${required}`);
   }
 }
 if (packageManifest.scripts?.["gas:measure"] !== "hardhat run scripts/measure-deployment-gas.ts") {
@@ -765,6 +854,11 @@ if (/^import[\s\S]*?from\s+["'](?!node:)/mu.test(operatorLauncherSource)) {
 const hardhatConfigSource = await readFile("hardhat.config.ts", "utf8");
 if (/dotenv(?:\/config)?/.test(hardhatConfigSource)) {
   throw new Error("Hardhat configuration eagerly loads a secret-bearing env file");
+}
+for (const required of ["cotiMainnet:", "chainId: 2632500", "accounts: []"]) {
+  if (!hardhatConfigSource.includes(required)) {
+    throw new Error(`Hardhat mainnet config omits external-signer control: ${required}`);
+  }
 }
 const sourceCheckPosition = freshRunnerSource.indexOf(
   'runGit(git, executionRoot, ["status", "--porcelain=v1", "--untracked-files=all"])',
@@ -905,7 +999,7 @@ for (const required of [
   }
 }
 for (const path of [
-  "scripts/deploy-testnet.ts",
+  "scripts/deploy-protocol.ts",
   "scripts/funded-suite-evidence.ts",
   "scripts/testnet-deployment-provenance.ts",
   "scripts/testnet-quote-call-probe.ts",
@@ -953,6 +1047,9 @@ for (const path of [
 if (!hasStringCall(deploymentAst, "getContractFactory", "ConfidentialBestExecutionRouter")) {
   throw new Error("Testnet deployment does not deploy the confidential best-execution router");
 }
+if (!hasStringCall(deploymentAst, "getContractFactory", "PublicCPMMLiquidityRouter")) {
+  throw new Error("Protocol deployment does not deploy the public liquidity router");
+}
 for (const contractName of [
   "ConfidentialCPMMDeployer",
   "ConfidentialInitializationStrategyRegistry",
@@ -980,6 +1077,9 @@ for (const fragment of [
 if (!hasStringCall(deploymentAst, "recordDeployment", "confidentialBestExecutionRouter")) {
   throw new Error("Testnet deployment omits the confidential router deployment journal");
 }
+if (!hasStringCall(deploymentAst, "recordDeployment", "publicLiquidityRouter")) {
+  throw new Error("Protocol deployment omits the public liquidity-router journal");
+}
 
 const sdkSource = maskSourceCommentsAndLiterals(
   await readFile("sdk/src/index.ts", "utf8"),
@@ -1004,9 +1104,8 @@ for (const fragment of [
   "CONFIDENTIAL_POOL_POLICY_FIELDS",
   "PUBLIC_POOL_POLICY_FIELDS",
   "LAUNCHPAD_MIGRATION_POLICY_FIELDS",
-  "buildConfidentialLaunchCommitment(",
-  "buildConfidentialLaunchCommitCall(",
-  "LAUNCH_COMMITMENT_EIP712_TYPES",
+  "LAUNCHPAD_MIGRATION_EIP712_TYPES",
+  "authorizationHash",
 ]) {
   if (!sdkSource.includes(fragment)) {
     throw new Error("SDK omits canonical best-execution target or result binding");
@@ -1149,7 +1248,7 @@ for (const [file, ast] of [
   }
 }
 
-const deploymentSourceBody = functionBody(deploymentSource, "main");
+const deploymentSourceBody = functionBody(deploymentSource, "deployProtocol");
 if (
   !functionBody(deploymentSource, "requiredDeploymentRecordPath").includes("if (!outputPath)") ||
   !functionBody(deploymentSource, "requiredDeploymentRecordPath").includes("throw new Error(") ||
@@ -1227,7 +1326,7 @@ for (const file of [
 const fundedEvidenceRawSource = await readFile("scripts/funded-run-evidence.ts", "utf8");
 const fundedEvidenceSource = maskSourceCommentsAndLiterals(fundedEvidenceRawSource);
 if (!fundedEvidenceSource.includes("input.expectedStrategyArtifactLabel")) {
-  throw new Error("Funded launch commitment evidence hardcodes one strategy artifact label");
+  throw new Error("Funded launchpad migration evidence hardcodes one strategy artifact label");
 }
 const fundedRecoveryRawSource = await readFile(
   "scripts/funded-recovery-journal.ts",
@@ -1407,6 +1506,22 @@ for (const file of [
     throw new Error(`${file}: private allowances bypass durable recovery obligations`);
   }
 }
+const bestExecutionAllowanceSource = await readFile(
+  "scripts/testnet-best-execution.ts",
+  "utf8",
+);
+for (const required of [
+  "async function setExactPublicAllowance(",
+  'token.getFunction("approve")',
+  "token.allowance(owner, spender)",
+  "public token did not set the exact reviewed allowance",
+]) {
+  if (!bestExecutionAllowanceSource.includes(required)) {
+    throw new Error(
+      `Best-execution public allowance proof omits required control: ${required}`,
+    );
+  }
+}
 for (const required of [
   "FundedWallet",
   "openFundedRecoveryJournal",
@@ -1472,7 +1587,7 @@ for (const required of [
   }
 }
 for (const required of [
-  "cipherdex.funded-run-evidence/v6",
+  "cipherdex.funded-run-evidence/v7",
   "funded run cannot produce evidence with unresolved transactions",
   "funded evidence lacks a selector-bound semantic transaction",
   "funded artifact constructor calldata is invalid",
@@ -1480,8 +1595,8 @@ for (const required of [
   "funded launchpad migrator lacks constructor-child provenance",
   "funded feasibility requests are not independently replay-bound",
   "funded vault epoch does not match the correlated aggregate deposits",
-  "funded launch commitment lacks independent creator and authority signatures",
-  "funded protected-pool lifecycle is not strictly commit/reject/migrate/replay/exit/reseed/exit ordered",
+  "funded launchpad authorization is not bound to its caller",
+  "funded protected-pool lifecycle is not strictly reject/migrate/replay/exit/reseed/exit ordered",
   "premature confidential protocol fee collection",
   "collectionReadyAt",
   "confidentialSwapCountByEpoch",
@@ -1646,7 +1761,7 @@ if (!launchpadRecoveryBody.includes("recoverPrivateAllowanceObligations({")) {
 for (const literal of [
   "full disposable launchpad-pool exit",
   "full configured launchpad-pool exit",
-  "successful launch commitment has no canonical pool to recover",
+  "successful launchpad migration has no canonical pool to recover",
   "launchpad pool recovery canonical provenance changed",
   "launchpad recovery cannot uniquely prove canonical pool creation",
   "factory.filters.PoolCreated(token0Address, token1Address)",
@@ -1792,7 +1907,7 @@ if (
   throw new Error("Best-execution funded runner can mutate the reviewed deployment");
 }
 for (const required of [
-  "for (const context of allPools)",
+  "for (const context of quotePools)",
   "await removeAllLiquidity(context, primary)",
   "sharesAfter !== 0n",
   "balance0 !== 0n",
@@ -1873,9 +1988,8 @@ if (bestExecutionRunnerRaw.includes("CIPHERDEX_FEE_BENEFICIARY")) {
   throw new Error("Best-execution funded runner accepts an unreviewed fee beneficiary");
 }
 for (const required of [
-  "buildConfidentialLaunchCommitment({",
-  "buildConfidentialLaunchCommitCall(",
-  "initializationStrategy.commitLaunch(",
+  "LAUNCHPAD_MIGRATION_EIP712_TYPES",
+  "creator.signTypedData(",
   "migrator.migrate(",
   "requestBestQuoteExactInputWithCandidates(",
   "swapBestExactInputWithCandidates(",
@@ -1887,14 +2001,18 @@ for (const required of [
     throw new Error(`Best-execution funded runner omits mixed-class proof: ${required}`);
   }
 }
-if (!bestExecutionRunnerRaw.includes('candidateStrategyClasses: "standard,launch-protected"')) {
+if (
+  !bestExecutionRunnerRaw.includes(
+    'candidateStrategyClasses: "standard,launch-protected-a,launch-protected-b"',
+  )
+) {
   throw new Error("Best-execution funded evidence omits mixed-class configuration");
 }
 if (!bestExecutionRunner.includes("BEST_EXECUTION_FUNDED_ASSERTIONS")) {
   throw new Error("Best-execution runner does not consume the canonical funded assertion list");
 }
 for (const required of [
-  '"signed launch commitment initialized the protected 30 bps candidate"',
+  '"creator-authorized migration atomically initialized the protected 30 bps candidate"',
   '"bounded mixed standard and launch-protected candidate bitmap exercised"',
   '"protected candidate selected and settled through the shared router"',
 ]) {
@@ -1935,7 +2053,7 @@ for (const required of [
 }
 
 for (const file of [
-  "scripts/deploy-testnet.ts",
+  "scripts/deploy-protocol.ts",
   "scripts/testnet-harness.ts",
   "scripts/testnet-quote-call-probe.ts",
   "scripts/testnet-launchpad.ts",

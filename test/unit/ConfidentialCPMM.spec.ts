@@ -54,7 +54,9 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     expect(abi.getFunction("publicPriceCumulativeX18SecondsNow")).to.equal(null);
     expect(abi.getFunction("quoteExactInput")).to.not.equal(null);
     expect(abi.getFunction("requestQuoteExactInput")).to.not.equal(null);
+    expect(abi.getFunction("requestAddLiquidityQuote")).to.not.equal(null);
     expect(abi.getEvent("ConfidentialQuoteResult")).to.not.equal(null);
+    expect(abi.getEvent("ConfidentialLiquidityQuoteResult")).to.not.equal(null);
     expect(abi.getFunction("collectProtocolFees")).to.not.equal(null);
     expect(abi.getEvent("ConfidentialProtocolFeesCollected")).to.not.equal(null);
     expect(abi.getFunction("protocolFees0")).to.equal(null);
@@ -193,6 +195,26 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     await expect(
       pool.swapExactInput(emptyInput, emptyInput, true, 0),
     ).to.be.revertedWithCustomError(pool, "DeadlineExpired");
+  });
+
+  it("rejects invalid liquidity previews before touching pool state or MPC inputs", async function () {
+    const { pool } = await deploy();
+    const emptyInput = {
+      ciphertext: { ciphertextHigh: 0n, ciphertextLow: 0n },
+      signature: "0x",
+    };
+    await expect(pool.requestAddLiquidityQuote(
+      emptyInput,
+      true,
+      ethers.ZeroHash,
+      0,
+    )).to.be.revertedWithCustomError(pool, "DeadlineExpired");
+    await expect(pool.requestAddLiquidityQuote(
+      emptyInput,
+      true,
+      ethers.ZeroHash,
+      (1n << 64n) - 1n,
+    )).to.be.revertedWithCustomError(pool, "InvalidRequestId");
   });
 
   it("rejects an empty confidential collection request before MPC work", async function () {

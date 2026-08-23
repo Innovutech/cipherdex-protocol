@@ -81,6 +81,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
     error ProtocolFeeAccountingMismatch();
     error NoProtocolFees();
     error ResidualAllowance();
+    error InvalidLiquidityRecipient();
 
     event SwapExecuted(
         address indexed trader,
@@ -214,6 +215,53 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint256 maxPriceX18,
         uint64 deadline
     ) external nonReentrant returns (uint256 mintedShares) {
+        return _addLiquidity(
+            msg.sender,
+            amount0,
+            amount1,
+            minShares,
+            minPriceX18,
+            maxPriceX18,
+            deadline
+        );
+    }
+
+    /**
+     * @notice Adds liquidity funded by the caller and mints shares to `recipient`.
+     * @dev This additive payer/recipient split lets the canonical liquidity
+     *      periphery atomically create and seed a pool without taking custody of
+     *      the user's non-transferable pool share accounting.
+     */
+    function addLiquidityFor(
+        address recipient,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18,
+        uint64 deadline
+    ) external nonReentrant returns (uint256 mintedShares) {
+        if (recipient == address(0)) revert InvalidLiquidityRecipient();
+        return _addLiquidity(
+            recipient,
+            amount0,
+            amount1,
+            minShares,
+            minPriceX18,
+            maxPriceX18,
+            deadline
+        );
+    }
+
+    function _addLiquidity(
+        address recipient,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18,
+        uint64 deadline
+    ) internal returns (uint256 mintedShares) {
         _requireBeforeDeadline(deadline);
         if (amount0 == 0 || amount1 == 0) revert InvalidAmount();
         if (minPriceX18 > maxPriceX18) revert InvalidPriceBounds();
@@ -294,8 +342,8 @@ contract PublicCPMM is CipherDEXFeePolicy {
 
         if (mintedShares < minShares) revert SlippageExceeded();
         totalShares += mintedShares;
-        shares[msg.sender] += mintedShares;
-        emit LiquidityAdded(msg.sender, cache.received0, cache.received1, mintedShares);
+        shares[recipient] += mintedShares;
+        emit LiquidityAdded(recipient, cache.received0, cache.received1, mintedShares);
     }
 
     function removeLiquidity(

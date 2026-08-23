@@ -8,7 +8,7 @@ export * from "./walletCallBatch.js";
  * position read model. Clients must obtain private values through the official
  * COTI SDK and the caller's AES key.
  */
-export declare const DISCLOSURE_SCHEMA_VERSION: 6;
+export declare const DISCLOSURE_SCHEMA_VERSION: 7;
 export declare const CIPHERDEX_PUBLIC_PROTOCOL_VERSION: 2;
 export declare const CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION: 3;
 export declare const CIPHERDEX_PROTOCOL_VERSION: 3;
@@ -46,14 +46,14 @@ export declare const LP_DISPOSITION: {
     readonly TIMED_LOCK: 1;
     readonly PERMANENT_LOCK: 2;
 };
-export declare const CONFIDENTIAL_CPMM_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function LP_DISPOSITION_CREATOR_HELD() view returns (uint8)", "function LP_DISPOSITION_TIMED_LOCK() view returns (uint8)", "function LP_DISPOSITION_PERMANENT_LOCK() view returns (uint8)", "function token0() view returns (address)", "function token1() view returns (address)", "function token0Decimals() view returns (uint8)", "function token1Decimals() view returns (uint8)", "function scale0() view returns (uint256)", "function scale1() view returns (uint256)", "function feeBps() view returns (uint256)", "function feeVault() view returns (address)", "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)", "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)", "function MIN_CONFIDENTIAL_COLLECTION_SWAPS() view returns (uint32)", "function MIN_CONFIDENTIAL_COLLECTION_DELAY() view returns (uint64)", "function protocolFeeSwapCount0() view returns (uint32)", "function protocolFeeSwapCount1() view returns (uint32)", "function protocolFeeWindowStart0() view returns (uint64)", "function protocolFeeWindowStart1() view returns (uint64)", "function bootstrapper() view returns (address)", "function initializationStrategy() view returns (address)", "function lpToken() view returns (address)", "function initialized() view returns (bool)", "function protectedInitializationCompleted() view returns (bool)", "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))", "function requestQuoteExactInput(((uint256,uint256),bytes),bool,bytes32) returns ((uint256,uint256))", "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))", "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))", "function bootstrapLiquidity(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))", "function bootstrapLiquidityWithDisposition(address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)", "function removeLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256),(uint256,uint256))", "function collectProtocolFees(bool,bool)", "function myShares() view returns ((uint256,uint256))", "function lockInfo(bytes32) view returns (address,uint64,bool,bool)", "function lockShares(((uint256,uint256),bytes),uint64,bool,uint64) returns (bytes32)", "function unlockShares(bytes32)", "event SwapExecuted(address indexed trader,bool indexed zeroForOne)", "event LiquidityAdded(address indexed provider)", "event PoolBootstrapped(address indexed provider)", "event LiquidityRemoved(address indexed provider)", "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent)", "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner)", "event ConfidentialQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed zeroForOne,(uint256,uint256) result)", "event ConfidentialProtocolFeesCollected(address indexed token,address indexed feeVault,uint32 aggregatedSwapCount)"];
+export declare const CONFIDENTIAL_CPMM_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function LP_DISPOSITION_CREATOR_HELD() view returns (uint8)", "function LP_DISPOSITION_TIMED_LOCK() view returns (uint8)", "function LP_DISPOSITION_PERMANENT_LOCK() view returns (uint8)", "function token0() view returns (address)", "function token1() view returns (address)", "function token0Decimals() view returns (uint8)", "function token1Decimals() view returns (uint8)", "function scale0() view returns (uint256)", "function scale1() view returns (uint256)", "function feeBps() view returns (uint256)", "function feeVault() view returns (address)", "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)", "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)", "function MIN_CONFIDENTIAL_COLLECTION_SWAPS() view returns (uint32)", "function MIN_CONFIDENTIAL_COLLECTION_DELAY() view returns (uint64)", "function protocolFeeSwapCount0() view returns (uint32)", "function protocolFeeSwapCount1() view returns (uint32)", "function protocolFeeWindowStart0() view returns (uint64)", "function protocolFeeWindowStart1() view returns (uint64)", "function bootstrapper() view returns (address)", "function initializationStrategy() view returns (address)", "function lpToken() view returns (address)", "function initialized() view returns (bool)", "function protectedInitializationCompleted() view returns (bool)", "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))", "function requestQuoteExactInput(((uint256,uint256),bytes),bool,bytes32) returns ((uint256,uint256))", "function requestAddLiquidityQuote(((uint256,uint256),bytes),bool,bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256))", "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))", "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))", "function bootstrapLiquidity(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))", "function bootstrapLiquidityWithDisposition(address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)", "function removeLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256),(uint256,uint256))", "function collectProtocolFees(bool,bool)", "function myShares() view returns ((uint256,uint256))", "function lockInfo(bytes32) view returns (address,uint64,bool,bool)", "function lockShares(((uint256,uint256),bytes),uint64,bool,uint64) returns (bytes32)", "function unlockShares(bytes32)", "event SwapExecuted(address indexed trader,bool indexed zeroForOne)", "event LiquidityAdded(address indexed provider)", "event PoolBootstrapped(address indexed provider)", "event LiquidityRemoved(address indexed provider)", "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent)", "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner)", "event ConfidentialQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed zeroForOne,(uint256,uint256) result)", "event ConfidentialLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed token0Specified,(uint256,uint256) acceptedCiphertext,(uint256,uint256) counterpartCiphertext,(uint256,uint256) lpCiphertext)", "event ConfidentialProtocolFeesCollected(address indexed token,address indexed feeVault,uint32 aggregatedSwapCount)"];
 export declare const CONFIDENTIAL_CPMM_FACTORY_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH() view returns (bytes32)", "function lpTokenFactory() view returns (address)", "function poolDeployer() view returns (address)", "function poolDeployerRuntimeCodehash() view returns (bytes32)", "function feeVault() view returns (address)", "function initializationStrategyRegistry() view returns (address)", "function initializationStrategyRegistryRuntimeCodehash() view returns (bytes32)", "function initializationStrategyRegistryFinalized() view returns (bool)", "function initializationStrategiesLength() view returns (uint256)", "function initializationStrategyAt(uint8) view returns (address)", "function initializationStrategyClass(address) view returns (uint8)", "function initializationStrategyRuntimeCodehash(address) view returns (bytes32)", "function initializationStrategyRegistration(address) view returns (bytes32)", "function isCompatiblePrivateToken(address) view returns (bool)", "function isApprovedFeeTier(uint256) pure returns (bool)", "function bootstrapConfigurator() view returns (address)", "function bestExecutionRouter() view returns (address)", "function BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH() view returns (bytes32)", "function getPool(bytes32) view returns (address)", "function isPool(address) view returns (bool)", "function createPool(address,address,uint8,uint8,uint256) returns (address)", "function getOrCreatePoolForCommitment(address,address,uint8,uint8,uint256) returns (address)", "function setBestExecutionRouter(address)", "function poolKey(address,address,uint8,uint8,uint256,address) pure returns (bytes32)", "function allPoolsLength() view returns (uint256)", "function allPools(uint256) view returns (address)", "function bootstrapPool(address,bytes32,bytes32,address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))", "function bootstrapPoolWithDisposition(address,bytes32,bytes32,address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)", "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address initializationStrategy,address pool)", "event PrivateLPTokenCreated(address indexed pool,address indexed token)", "event BestExecutionRouterConfigured(address indexed router)"];
 export declare const PRIVATE_LP_TOKEN_FACTORY_ABI: readonly ["function poolByToken(address) view returns (address)", "function issuerByToken(address) view returns (address)", "function isIssuedToken(address,address,address) view returns (bool)", "event PrivateLPTokenIssued(address indexed pool,address indexed token,address indexed issuer)"];
 export declare const CONFIDENTIAL_BEST_EXECUTION_POOL_ABI: readonly ["function quoteExactInputForRouter(uint256,bool) returns (uint256,uint256)", "function settleExactInputForRouter(address,uint256,uint256,bool,uint64) returns (uint256)"];
-export declare const CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function factory() view returns (address)", "function MAX_CANDIDATES() view returns (uint8)", "function MAX_POOL_CLASSES() view returns (uint8)", "function DEFAULT_STANDARD_CANDIDATE_BITMAP() view returns (uint16)", "function usedRequestIds(address,bytes4,bytes32) view returns (bool)", "function requestBestQuoteExactInput(address,address,((uint256,uint256),bytes),bytes32,uint64) returns ((uint256,uint256))", "function requestBestQuoteExactInputWithCandidates(address,address,((uint256,uint256),bytes),uint16,bytes32,uint64) returns ((uint256,uint256))", "function swapBestExactInput(address,address,((uint256,uint256),bytes),((uint256,uint256),bytes),bytes32,uint64) returns ((uint256,uint256))", "function swapBestExactInputWithCandidates(address,address,((uint256,uint256),bytes),((uint256,uint256),bytes),uint16,bytes32,uint64) returns ((uint256,uint256))", "event ConfidentialBestQuoteResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,address selectedInitializationStrategy,uint16 candidateBitmap,bool zeroForOne,(uint256,uint256) result)", "event ConfidentialBestSwapResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,address selectedInitializationStrategy,uint16 candidateBitmap,bool zeroForOne,(uint256,uint256) result)"];
+export declare const CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function factory() view returns (address)", "function MAX_CANDIDATES() view returns (uint8)", "function MAX_QUOTE_CANDIDATES() view returns (uint8)", "function MAX_POOL_CLASSES() view returns (uint8)", "function DEFAULT_STANDARD_CANDIDATE_BITMAP() view returns (uint16)", "function usedRequestIds(address,bytes4,bytes32) view returns (bool)", "function requestBestQuoteExactInput(address,address,((uint256,uint256),bytes),bytes32,uint64) returns ((uint256,uint256))", "function requestBestQuoteExactInputWithCandidates(address,address,((uint256,uint256),bytes),uint16,bytes32,uint64) returns ((uint256,uint256))", "function swapBestExactInput(address,address,((uint256,uint256),bytes),((uint256,uint256),bytes),bytes32,uint64) returns ((uint256,uint256))", "function swapBestExactInputWithCandidates(address,address,((uint256,uint256),bytes),((uint256,uint256),bytes),uint16,bytes32,uint64) returns ((uint256,uint256))", "event ConfidentialBestQuoteResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,address selectedInitializationStrategy,uint16 candidateBitmap,bool zeroForOne,(uint256,uint256) result)", "event ConfidentialBestSwapResult(address indexed caller,bytes32 indexed requestId,address indexed selectedPool,uint256 selectedFeeBps,address selectedInitializationStrategy,uint16 candidateBitmap,bool zeroForOne,(uint256,uint256) result)"];
 export declare const PRIVATE_LP_TOKEN_ABI: readonly ["function pool() view returns (address)", "function name() view returns (string)", "function symbol() view returns (string)", "function decimals() view returns (uint8)", "function publicAmountsEnabled() view returns (bool)", "function balanceOf() returns (uint256)", "function transfer(address,((uint256,uint256),bytes))", "function approve(address,((uint256,uint256),bytes))", "event Transfer(address indexed from,address indexed to,(uint256,uint256),(uint256,uint256))", "event Approval(address indexed owner,address indexed spender,(uint256,uint256),(uint256,uint256))", "event AllowanceReencrypted(address indexed owner,address indexed spender,bool isSpender)"];
-export declare const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function factory() view returns (address)", "function initializationStrategy() view returns (address)", "function migrate((bytes32,bytes32,address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,bytes)) returns (address,(uint256,uint256))", "function migrateWithDisposition((bytes32,bytes32,address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,bytes),uint8,uint64) returns (address,(uint256,uint256),bytes32)", "event LaunchpadMigration(bytes32 indexed launchId,address indexed creator,address indexed pool,address initializationStrategy,bytes32 launchCommitmentHash)", "event LaunchpadLockDisposition(address indexed creator,address indexed pool,uint8 disposition,bytes32 lockId,uint64 unlockTime)"];
-export declare const CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI: readonly ["function STRATEGY_VERSION() view returns (uint256)", "function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function factory() view returns (address)", "function strategyRegistry() view returns (address)", "function migrator() view returns (address)", "function migratorRuntimeCodehash() view returns (bytes32)", "function launchAuthority() view returns (address)", "function configurationFinalized() view returns (bool)", "function factoryRegistration() view returns (bytes32)", "function launchCommitmentDigest((bytes32 launchId,address creator,address token0,address token1,uint8 decimals0,uint8 decimals1,uint256 feeBps,uint8 privacyMode,uint256 poolVersion,address factory,address migrator,address initializationStrategy,address launchAuthority,uint256 chainId,uint64 authorizationDeadline,uint64 migrationDeadline) commitment) view returns (bytes32)", "function commitLaunch((bytes32 launchId,address creator,address token0,address token1,uint8 decimals0,uint8 decimals1,uint256 feeBps,uint8 privacyMode,uint256 poolVersion,address factory,address migrator,address initializationStrategy,address launchAuthority,uint256 chainId,uint64 authorizationDeadline,uint64 migrationDeadline) commitment,bytes creatorAuthorization,bytes authorityAuthorization) returns (address pool,bytes32 commitmentHash)", "function cancelLaunch(bytes32)", "function expireLaunch(bytes32)", "function getLaunch(bytes32) view returns (bytes32,bytes32,address,address,uint64,uint8)", "function activeLaunchForPoolKey(bytes32) view returns (bytes32)", "event LaunchCommitted(bytes32 indexed launchId,bytes32 indexed poolKey,address indexed pool,address creator,uint64 migrationDeadline,bytes32 commitmentHash)", "event LaunchCanceled(bytes32 indexed launchId,bytes32 indexed poolKey)", "event LaunchExpired(bytes32 indexed launchId,bytes32 indexed poolKey)"];
+export declare const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function factory() view returns (address)", "function initializationStrategy() view returns (address)", "function migrate((bytes32,address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,bytes)) returns (address,(uint256,uint256))", "function migrateWithDisposition((bytes32,address,address,uint8,uint8,uint256,((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64,bytes),uint8,uint64) returns (address,(uint256,uint256),bytes32)", "event LaunchpadMigration(bytes32 indexed launchId,address indexed creator,address indexed pool,address initializationStrategy,bytes32 authorizationHash)", "event LaunchpadLockDisposition(address indexed creator,address indexed pool,uint8 disposition,bytes32 lockId,uint64 unlockTime)"];
+export declare const CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI: readonly ["function STRATEGY_VERSION() view returns (uint256)", "function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function factory() view returns (address)", "function strategyRegistry() view returns (address)", "function migrator() view returns (address)", "function migratorRuntimeCodehash() view returns (bytes32)", "function configurationFinalized() view returns (bool)", "function factoryRegistration() view returns (bytes32)", "function prepareLaunch(bytes32,address,address,address,uint8,uint8,uint256,uint64,bytes32) returns (address pool,bytes32 poolKey)", "function getLaunch(bytes32) view returns (bytes32,bytes32,address,address,uint64,uint8)", "function activeLaunchForPoolKey(bytes32) view returns (bytes32)", "event LaunchPrepared(bytes32 indexed launchId,bytes32 indexed poolKey,address indexed pool,address creator,uint64 migrationDeadline,bytes32 authorizationHash)"];
 export declare const CONFIDENTIAL_INITIALIZATION_STRATEGY_REGISTRY_ABI: readonly ["function REGISTRY_VERSION() view returns (uint256)", "function MAX_INITIALIZATION_STRATEGIES() view returns (uint8)", "function factory() view returns (address)", "function finalized() view returns (bool)", "function initializationStrategiesLength() view returns (uint256)", "function initializationStrategyAt(uint8) view returns (address)", "function initializationStrategyClass(address) view returns (uint8)", "function initializationStrategyRuntimeCodehash(address) view returns (bytes32)", "function initializationStrategyRegistration(address) view returns (bytes32)", "function isRegisteredStrategy(address) view returns (bool)"];
 export declare const CIPHERDEX_FEE_VAULT_ABI: readonly ["function beneficiary() view returns (address)", "function deployedAt() view returns (uint64)", "function confidentialFactoryConfigurator() view returns (address)", "function confidentialFactory() view returns (address)", "function publicFactory() view returns (address)", "function publicFees(address) view returns (uint256)", "function MIN_CONFIDENTIAL_SWEEP_DELAY() view returns (uint64)", "function CONFIDENTIAL_EPOCH_SECONDS() view returns (uint64)", "function MIN_CONFIDENTIAL_AGGREGATED_SWAPS() view returns (uint64)", "function MAX_CONFIDENTIAL_SWEEP_EPOCHS() view returns (uint256)", "function confidentialSwapCountByEpoch(address,uint64) view returns (uint64)", "function nextConfidentialEpochIndex(address) view returns (uint256)", "function confidentialEpochCount(address) view returns (uint256)", "function confidentialEpochAt(address,uint256) view returns (uint64)", "function nextConfidentialSweepAt(address) view returns (uint64)", "function setConfidentialFactory(address)", "function setPublicFactory(address)", "function depositPublicFees(address,uint256) returns (uint256)", "function depositConfidentialFees(address,uint256,uint32)", "function sweepPublicToken(address) returns (uint256)", "function sweepConfidentialToken(address)", "event PublicFeesSwept(address indexed token,address indexed beneficiary,uint256 amount)", "event PublicFeesSweepReceipt(address indexed token,address indexed beneficiary,uint256 debitedAmount,uint256 beneficiaryReceived)", "event PublicFactoryConfigured(address indexed factory)", "event PublicFeesDeposited(address indexed token,address indexed pool,uint256 amount)", "event ConfidentialFeesSwept(address indexed token,address indexed beneficiary,uint64 aggregatedSwapCount)", "event ConfidentialFactoryConfigured(address indexed factory)", "event ConfidentialFeesDeposited(address indexed token,address indexed pool,uint64 indexed epoch,uint32 aggregatedSwapCount)"];
 export declare const LAUNCHPAD_MIGRATOR_EIP712_DOMAIN: {
@@ -62,9 +62,6 @@ export declare const LAUNCHPAD_MIGRATOR_EIP712_DOMAIN: {
 };
 export declare const LAUNCHPAD_MIGRATION_EIP712_TYPES: readonly [{
     readonly name: "launchId";
-    readonly type: "bytes32";
-}, {
-    readonly name: "launchCommitmentHash";
     readonly type: "bytes32";
 }, {
     readonly name: "initializationStrategy";
@@ -103,107 +100,11 @@ export declare const LAUNCHPAD_MIGRATION_EIP712_TYPES: readonly [{
     readonly name: "unlockTime";
     readonly type: "uint64";
 }];
-export declare const LAUNCH_INITIALIZATION_EIP712_DOMAIN: {
-    readonly name: "CipherDEX Launch Initialization";
-    readonly version: "1";
-};
-export declare const LAUNCH_COMMITMENT_EIP712_TYPES: readonly [{
-    readonly name: "launchId";
-    readonly type: "bytes32";
-}, {
-    readonly name: "creator";
-    readonly type: "address";
-}, {
-    readonly name: "token0";
-    readonly type: "address";
-}, {
-    readonly name: "token1";
-    readonly type: "address";
-}, {
-    readonly name: "decimals0";
-    readonly type: "uint8";
-}, {
-    readonly name: "decimals1";
-    readonly type: "uint8";
-}, {
-    readonly name: "feeBps";
-    readonly type: "uint256";
-}, {
-    readonly name: "privacyMode";
-    readonly type: "uint8";
-}, {
-    readonly name: "poolVersion";
-    readonly type: "uint256";
-}, {
-    readonly name: "factory";
-    readonly type: "address";
-}, {
-    readonly name: "migrator";
-    readonly type: "address";
-}, {
-    readonly name: "initializationStrategy";
-    readonly type: "address";
-}, {
-    readonly name: "launchAuthority";
-    readonly type: "address";
-}, {
-    readonly name: "chainId";
-    readonly type: "uint256";
-}, {
-    readonly name: "authorizationDeadline";
-    readonly type: "uint64";
-}, {
-    readonly name: "migrationDeadline";
-    readonly type: "uint64";
-}];
-export type ConfidentialLaunchCommitmentInput = Readonly<{
-    launchId: string;
-    creator: string;
-    tokenA: string;
-    tokenB: string;
-    decimalsA: number;
-    decimalsB: number;
-    feeBps: number;
-    factory: string;
-    migrator: string;
-    initializationStrategy: string;
-    launchAuthority: string;
-    chainId: bigint;
-    authorizationDeadline: bigint;
-    migrationDeadline: bigint;
-}>;
-export type ConfidentialLaunchCommitment = Readonly<{
-    launchId: string;
-    creator: string;
-    token0: string;
-    token1: string;
-    decimals0: number;
-    decimals1: number;
-    feeBps: number;
-    privacyMode: typeof PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP;
-    poolVersion: typeof CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION;
-    factory: string;
-    migrator: string;
-    initializationStrategy: string;
-    launchAuthority: string;
-    chainId: bigint;
-    authorizationDeadline: bigint;
-    migrationDeadline: bigint;
-}>;
-export type ConfidentialLaunchCommitCall = Readonly<{
-    functionName: "commitLaunch";
-    args: readonly [ConfidentialLaunchCommitment, string, string];
-}>;
-/**
- * Canonicalizes the complete protected-pool commitment before EIP-712 signing.
- * The caller still signs with its chosen reviewed signing implementation.
- */
-export declare function buildConfidentialLaunchCommitment(input: ConfidentialLaunchCommitmentInput): ConfidentialLaunchCommitment;
-export declare function buildConfidentialLaunchCommitCall(commitment: ConfidentialLaunchCommitment, creatorAuthorization: string | Uint8Array, authorityAuthorization: string | Uint8Array): ConfidentialLaunchCommitCall;
-export declare const PUBLIC_CPMM_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function token0() view returns (address)", "function token1() view returns (address)", "function token0Decimals() view returns (uint8)", "function token1Decimals() view returns (uint8)", "function scale0() view returns (uint256)", "function scale1() view returns (uint256)", "function feeBps() view returns (uint256)", "function feeVault() view returns (address)", "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)", "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)", "function protocolFees0() view returns (uint256)", "function protocolFees1() view returns (uint256)", "function initialized() view returns (bool)", "function totalShares() view returns (uint256)", "function shares(address) view returns (uint256)", "function quoteExactInput(uint256,bool) view returns (uint256)", "function swapExactInput(uint256,uint256,bool,uint64) returns (uint256)", "function addLiquidity(uint256,uint256,uint256,uint256,uint256,uint64) returns (uint256)", "function removeLiquidity(uint256,uint256,uint256,uint64) returns (uint256,uint256)", "function collectProtocolFees(bool,bool) returns (uint256,uint256)", "function effectiveReserves() view returns (uint256,uint256)", "function lockShares(uint256,uint64,bool,uint64) returns (bytes32)", "function unlockShares(bytes32)", "function lockInfo(bytes32) view returns (address,uint64,bool,bool,uint256)", "event SwapExecuted(address indexed trader,bool indexed zeroForOne,uint256 amountIn,uint256 amountOut)", "event LiquidityAdded(address indexed provider,uint256 amount0,uint256 amount1,uint256 shares)", "event LiquidityRemoved(address indexed provider,uint256 amount0,uint256 amount1,uint256 shares)", "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent,uint256 shares)", "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner,uint256 shares)", "event ProtocolFeeAccrued(address indexed token,uint256 amount)", "event ProtocolFeeCollected(address indexed token,address indexed feeVault,uint256 debitedAmount,uint256 receivedAmount)", "event UnmanagedBalanceSwept(address indexed token,address indexed feeVault,uint256 debitedAmount,uint256 receivedAmount)", "event ProtocolFeeLossReconciled(address indexed token,uint256 previousClaim,uint256 remainingClaim,uint256 loss)"];
+export declare const PUBLIC_CPMM_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function token0() view returns (address)", "function token1() view returns (address)", "function token0Decimals() view returns (uint8)", "function token1Decimals() view returns (uint8)", "function scale0() view returns (uint256)", "function scale1() view returns (uint256)", "function feeBps() view returns (uint256)", "function feeVault() view returns (address)", "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)", "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)", "function protocolFees0() view returns (uint256)", "function protocolFees1() view returns (uint256)", "function initialized() view returns (bool)", "function totalShares() view returns (uint256)", "function shares(address) view returns (uint256)", "function quoteExactInput(uint256,bool) view returns (uint256)", "function swapExactInput(uint256,uint256,bool,uint64) returns (uint256)", "function addLiquidity(uint256,uint256,uint256,uint256,uint256,uint64) returns (uint256)", "function addLiquidityFor(address,uint256,uint256,uint256,uint256,uint256,uint64) returns (uint256)", "function removeLiquidity(uint256,uint256,uint256,uint64) returns (uint256,uint256)", "function collectProtocolFees(bool,bool) returns (uint256,uint256)", "function effectiveReserves() view returns (uint256,uint256)", "function lockShares(uint256,uint64,bool,uint64) returns (bytes32)", "function unlockShares(bytes32)", "function lockInfo(bytes32) view returns (address,uint64,bool,bool,uint256)", "event SwapExecuted(address indexed trader,bool indexed zeroForOne,uint256 amountIn,uint256 amountOut)", "event LiquidityAdded(address indexed provider,uint256 amount0,uint256 amount1,uint256 shares)", "event LiquidityRemoved(address indexed provider,uint256 amount0,uint256 amount1,uint256 shares)", "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent,uint256 shares)", "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner,uint256 shares)", "event ProtocolFeeAccrued(address indexed token,uint256 amount)", "event ProtocolFeeCollected(address indexed token,address indexed feeVault,uint256 debitedAmount,uint256 receivedAmount)", "event UnmanagedBalanceSwept(address indexed token,address indexed feeVault,uint256 debitedAmount,uint256 receivedAmount)", "event ProtocolFeeLossReconciled(address indexed token,uint256 previousClaim,uint256 remainingClaim,uint256 loss)"];
 export declare const PUBLIC_CPMM_FACTORY_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function feeVault() view returns (address)", "function isApprovedFeeTier(uint256) pure returns (bool)", "function getPool(bytes32) view returns (address)", "function isPool(address) view returns (bool)", "function createPool(address,address,uint8,uint8,uint256) returns (address)", "function poolKey(address,address,uint8,uint8,uint256) pure returns (bytes32)", "function allPoolsLength() view returns (uint256)", "function allPools(uint256) view returns (address)", "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)"];
 export declare const PUBLIC_CPMM_QUOTER_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function factory() view returns (address)", "function quoteExactInput(address,uint256,bool) view returns (uint256)"];
 export declare const PUBLIC_CPMM_ROUTER_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function factory() view returns (address)", "function swapExactInput(address,uint256,uint256,bool,uint64) returns (uint256)", "event SwapRouted(address indexed trader,address indexed pool,address indexed inputToken,address outputToken,uint256 amountIn,uint256 amountOut)"];
+export declare const PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function factory() view returns (address)", "function createOrAddLiquidity(address,address,uint8,uint8,uint256,uint256,uint256,uint256,uint256,uint256,uint64) returns (address,uint256,uint256,uint256)", "event PublicLiquidityRouted(address indexed provider,address indexed pool,bool indexed poolCreated,uint256 amount0,uint256 amount1,uint256 shares)"];
 export type Ciphertext256 = {
     ciphertextHigh: bigint;
     ciphertextLow: bigint;
@@ -221,13 +122,20 @@ export declare const CONFIDENTIAL_BEST_QUOTE_WITH_CANDIDATES_SELECTOR: "0xc636ee
 export declare const CONFIDENTIAL_BEST_SWAP_SELECTOR: "0x310481d3";
 export declare const CONFIDENTIAL_BEST_SWAP_WITH_CANDIDATES_SELECTOR: "0xc55b572d";
 export declare const DEFAULT_STANDARD_CANDIDATE_BITMAP: 73;
+export declare const ALL_CONFIDENTIAL_CANDIDATE_BITMAP: 511;
+export declare const MAX_CONFIDENTIAL_QUOTE_CANDIDATES: 9;
+export declare const MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES: 3;
+/** @deprecated Use the operation-specific quote or atomic-swap limit. */
 export declare const MAX_CONFIDENTIAL_ROUTE_CANDIDATES: 3;
+export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION: "requestAddLiquidityQuote";
+export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR: "0x6ad558a9";
+export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC: "0x4069fd369ee96a414b638a1f85119a2360ab4a7e05df9b1816582b1baf87a147";
 export declare const CONFIDENTIAL_BEST_QUOTE_RESULT_TOPIC: "0x74d60457cef138a4b1c57bac9346b347c04566dfa22699c3a3eab54267d0fdb7";
 export declare const CONFIDENTIAL_BEST_SWAP_RESULT_TOPIC: "0x4a0ef2bdc006487857271fcf656bebd35d04c28f1fc35b8aa460ded5ca8fc3dc";
 export declare const LAUNCHPAD_MIGRATION_TOPIC: "0x6227c8fb63c7ea6dc2225fbf219a361b834ac2a7bf43da0b32f1ef9f3b779956";
 export declare const LAUNCHPAD_LOCK_DISPOSITION_TOPIC: "0x75e334dcb38a552c1315b5412176e01190962bbb6774c5b3964f221b4a2eb53c";
-export declare const LAUNCHPAD_MIGRATE_SELECTOR: "0xb3f48f47";
-export declare const LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR: "0xf1134089";
+export declare const LAUNCHPAD_MIGRATE_SELECTOR: "0x28eec19d";
+export declare const LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR: "0x7e75f4d5";
 export declare const CONFIDENTIAL_LIQUIDITY_LOCKED_TOPIC: "0xda0ee1246c7c735db57cd30fc8444456fd8e002c807a94c88bf4495ea01707bd";
 export type ConfidentialBestQuoteCall = Readonly<{
     functionName: typeof CONFIDENTIAL_BEST_QUOTE_FUNCTION;
@@ -250,6 +158,26 @@ export type ConfidentialBestSwapWithCandidatesCall = Readonly<{
         InputText256,
         number,
         string,
+        bigint
+    ];
+}>;
+export type ConfidentialLiquidityQuoteCall = Readonly<{
+    functionName: typeof CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION;
+    args: readonly [InputText256, boolean, string, bigint];
+}>;
+export type PublicCreateOrAddLiquidityCall = Readonly<{
+    functionName: "createOrAddLiquidity";
+    args: readonly [
+        string,
+        string,
+        number,
+        number,
+        bigint,
+        bigint,
+        bigint,
+        bigint,
+        bigint,
+        bigint,
         bigint
     ];
 }>;
@@ -338,6 +266,15 @@ export interface ConfidentialBestExecutionDecryptionAdapter {
     getCanonicalPool(factory: string, tokenIn: string, tokenOut: string, feeBps: number, initializationStrategy: string): Promise<string>;
     decryptValue256(value: Ciphertext256): Promise<bigint>;
 }
+/** Builds the complete candidate bitmap for the factory's active pool classes. */
+export declare function buildConfidentialCandidateBitmap(poolClassCount: number): number;
+/**
+ * Deterministically partitions the canonical nine-bit namespace for a network
+ * that cannot process every quote candidate in one transaction. Each returned
+ * bitmap preserves ascending fee/class slot order and requires a fresh caller-
+ * bound encrypted input and request ID.
+ */
+export declare function partitionConfidentialQuoteCandidateBitmap(candidateBitmap: number, maximumCandidates?: number): readonly number[];
 /**
  * Builds the canonical paid best-quote call after the caller encrypts amountIn
  * for the router address and this function's selector with the COTI SDK.
@@ -350,6 +287,25 @@ export declare function buildConfidentialBestQuoteCall(tokenIn: string, tokenOut
 export declare function buildConfidentialBestSwapCall(tokenIn: string, tokenOut: string, amountIn: InputText256, minimumOut: InputText256, requestId: string, deadline: bigint): ConfidentialBestSwapCall;
 export declare function buildConfidentialBestQuoteWithCandidatesCall(tokenIn: string, tokenOut: string, amountIn: InputText256, candidateBitmap: number, requestId: string, deadline: bigint): ConfidentialBestQuoteWithCandidatesCall;
 export declare function buildConfidentialBestSwapWithCandidatesCall(tokenIn: string, tokenOut: string, amountIn: InputText256, minimumOut: InputText256, candidateBitmap: number, requestId: string, deadline: bigint): ConfidentialBestSwapWithCandidatesCall;
+/**
+ * Builds the paid confidential proportional-liquidity preview. The encrypted
+ * specified amount must be bound to the target pool and this function selector.
+ */
+export declare function buildConfidentialLiquidityQuoteCall(specifiedAmount: InputText256, amount0Specified: boolean, requestId: string, deadline: bigint): ConfidentialLiquidityQuoteCall;
+/** Builds the public atomic create-or-add-liquidity periphery call. */
+export declare function buildPublicCreateOrAddLiquidityCall(input: Readonly<{
+    tokenA: string;
+    tokenB: string;
+    decimalsA: number;
+    decimalsB: number;
+    feeBps: bigint;
+    amountADesired: bigint;
+    amountBDesired: bigint;
+    minShares: bigint;
+    minPriceX18: bigint;
+    maxPriceX18: bigint;
+    deadline: bigint;
+}>): PublicCreateOrAddLiquidityCall;
 /**
  * Returns the exact router/function binding required by COTI encryptValue256.
  * Quote inputs and swap inputs are not interchangeable because the function
@@ -500,7 +456,7 @@ export type ConfidentialLockDiscovery = {
 export type LaunchpadMigrationMetadata = {
     disclosureSchemaVersion: typeof DISCLOSURE_SCHEMA_VERSION;
     launchId: string;
-    launchCommitmentHash: string;
+    authorizationHash: string;
     initializationStrategy: string;
     creator: string;
     pool: string;

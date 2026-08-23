@@ -30,6 +30,20 @@ candidate validation and selected-pool settlement exceed the general 30M test
 cap, while remaining below the currently verified COTI testnet block limit.
 Always use receipt `gasUsed`, not this safety cap, for benchmarks.
 
+The current source permits up to nine candidates for paid quote-only selection,
+but the funded runner and recorded gas evidence cover at most three. Before a
+production release enables a larger bitmap, extend the source-bound runner to
+measure the exact deployed router at every intended candidate count and retain
+block-limit headroom. Atomic best execution remains capped at three candidates.
+If a larger quote does not fit, integrations must use deterministic quote groups
+with a fresh encrypted input and request ID for each group.
+
+The atomic public create-or-add liquidity router and confidential paid liquidity
+preview also require fresh source-bound funded COTI scenarios before their first
+production deployment. Those scenarios must prove rollback/no residue for the
+public router and both preview directions, rounding, deadline/request binding,
+pool-state immutability and settlement bounds for the confidential path.
+
 The basic `testnet:harness` first submits the proven paid per-pool encrypted
 quote, decrypts only the caller result locally, and creates a fresh swap-bound
 minimum using `COTI_TESTNET_SLIPPAGE_BPS` (default 100 bps). It never substitutes
@@ -72,12 +86,12 @@ deploys runtime-verified disposable instances of the same fee vault, LP-token
 factory, pool deployer, initialization-strategy registry, launch strategy,
 migrator, confidential factory and production `ConfidentialBestExecutionRouter`.
 It binds them exactly as the deployment runner does. Its bounded candidate set
-contains a standard 5 bps pool, a dual-authorized launch-protected 30 bps pool,
+contains a standard 5 bps pool, a creator-authorized launch-protected 30 bps pool,
 and a standard 100 bps pool in that disposable factory. The deployment record
 must already be reviewed and tracked in a separate evidence commit, and the
 worktree must be completely clean. It validates:
 
-- signed launch commitment, exact protected initialization and completed
+- signed migration authorization, atomic protected-pool creation and exact initialization, and completed
   one-shot launch state;
 - explicit 9-bit candidate selection across standard and protected classes;
 - two- and three-candidate GT reuse, private comparison and deterministic ties;
@@ -116,12 +130,11 @@ Run the atomic canonical bootstrap proof separately through that launcher:
 It first verifies the tracked deployment, clean source/evidence state, and exact
 technical compatibility of both private tokens. It then deploys and
 runtime-verifies a disposable fresh
-pool deployer, strategy registry, factory, dual-authorized launch strategy and
-migrator. The commitment creates the protected complete pool key before any
-assets move. Exact encrypted creator allowances and normalized price bounds are
-consumed only by the migrator's atomic initialization. An impossible price
-interval proves that token pulls and initialization roll back without changing
-the committed pool. A valid migration completes the one-shot launch, replay
+pool deployer, strategy registry, factory, atomic launch strategy and pinned
+migrator. Exact encrypted creator allowances and normalized price bounds are
+consumed only by the migrator's atomic pool creation and initialization. An
+impossible price interval proves that launch state, pool creation, token pulls,
+and initialization all roll back. A valid migration completes the one-shot launch, replay
 proves there is no additional movement or discovery change, and a full
 creator-held LP exit proves the completed protected pool can be re-seeded through
 ordinary permissionless liquidity addition. A second full exit plus allowance

@@ -14,8 +14,9 @@
   is the standard `address(0)` strategy and at most two nonzero classes may be
   registered.
 - `contracts/ConfidentialLaunchInitializationStrategy.sol`: initialization-only
-  launch commitment policy requiring creator and launch-authority signatures.
-  It never receives tokens or participates in swaps.
+  atomic launch-state policy callable only by its constructor-created,
+  runtime-codehash-pinned migrator. It never receives tokens or participates in
+  swaps.
 - `contracts/PrivateLPToken.sol`: pool-bound encrypted LP-share token using the
   official COTI `PrivateERC20` implementation.
 - `contracts/PrivateLPTokenFactory.sol`: permissionless deployer that keeps COTI
@@ -36,13 +37,18 @@
   pools.
 - `contracts/PublicCPMMRouter.sol`: factory-gated exact-input routing for
   public pools only.
+- `contracts/PublicCPMMLiquidityRouter.sol`: factory-gated atomic create-or-add
+  liquidity periphery. It mints pool shares directly to the funding user and
+  refunds unused proportional token maxima in the same transaction.
 - `contracts/ConfidentialBestExecutionRouter.sol`: factory-bound, single-hop
   encrypted best quote and atomic best execution over a bounded nine-bit
-  fee-tier/strategy-class namespace. Callers choose at most three bits, never
-  candidate addresses.
+  fee-tier/strategy-class namespace. Quote requests may select up to nine bits;
+  atomic swap requests may select at most three. Callers never supply candidate
+  addresses.
 - `contracts/ConfidentialLaunchpadMigrator.sol`: atomic creator-signed encrypted
-  allowance pulls and price-bounded bootstrap of a previously committed
-  launch-protected pool.
+  allowance pulls, protected-pool creation, and price-bounded bootstrap. It
+  requires one exact creator EIP-712 migration authorization and leaves no
+  persistent precommit state on failure.
 - `contracts/interfaces/`: stable ABI surface for clients and future factory/router
   work.
 - `periphery/`: documented boundary for routing, quoter and future adapters;
@@ -171,7 +177,8 @@ Dashboards must not infer private TVL or aggregate LP supply from that method.
 - no assumption that public/public and confidential pools share event or balance
   disclosure; their pool kinds are explicit in discovery metadata;
 - no COTI PoD assets in the synchronous pool;
-- no mainnet deployment;
+- no implicit mainnet address defaults or claim of deployment without a reviewed
+  commit-bound deployment record;
 - no admin withdrawal or mutable fee authority;
 - no extra native-COTI fee on swaps and no v1 pool-creation fee;
 - no dependency on CipherTools, CipherTrade, a centralized API or an indexer;
@@ -182,7 +189,11 @@ Dashboards must not infer private TVL or aggregate LP supply from that method.
 `PublicCPMMRouter` is intentionally limited to factory-registered ordinary
 ERC-20 pools. It temporarily holds the caller's public input, calls the pool,
 and forwards the public output; it has no admin withdrawal or token rescue path.
-The public quoter applies the same factory gate.
+The public quoter applies the same factory gate. `PublicCPMMLiquidityRouter`
+atomically resolves or creates a canonical pool, exact-pulls both desired token
+maxima, grants exact temporary pool allowances, mints shares to the caller and
+returns unused amounts. A revert rolls back pool creation, token movement and
+allowances. Existing direct creation and liquidity methods remain compatible.
 
 Confidential direct pool execution remains available. For best execution, COTI
 authenticated `itUint256` inputs bind the user to the router and exact quote or
@@ -194,8 +205,9 @@ cross-contract GT reuse.
 
 Candidate identity is not caller controlled. The router interprets a nine-bit
 bitmap as three fee tiers multiplied by three pool classes: standard class zero
-plus at most two finalized reviewed strategy classes. It rejects unknown bits
-and more than three selected candidates. For each bit it derives the complete
+plus at most two finalized reviewed strategy classes. It rejects unknown bits.
+Paid quote requests may select all nine slots; atomic swap requests reject more
+than three selected slots. For each bit it derives the complete
 factory key, verifies canonical pool metadata, and skips absent or uninitialized
 variants. Iteration order is fee first, then class; equal encrypted outputs keep
 the first candidate, so lower fee wins and the standard class wins within that
@@ -217,6 +229,13 @@ future runtime may replace only the quote transport after parity and privacy
 review; any oracle or snapshot alternative requires a separate leakage and
 manipulation review.
 
+The nine-slot quote cap bounds the complete v1 canonical namespace rather than
+silently dropping pools. Its source and arithmetic are unit/invariant tested;
+funded COTI evidence currently covers up to three candidates. Integrations must
+measure the deployed runtime before enabling larger quote sets. The SDK provides
+deterministic bitmap partitioning when a quote set must be split, but every
+partition is a separate paid request with fresh authenticated ciphertext.
+
 ## Launchpad migration boundary
 
 The complete confidential pool key is:
@@ -230,26 +249,21 @@ interface, factory/migrator binding and registration are authenticated by the
 finalized bounded registry. One pool may exist for each complete key, so a
 standard and launch-protected pool can coexist without creator-specific ad hoc
 namespaces. Resolving an existing protected key revalidates the complete immutable
-pool metadata, including both token decimal values; the signed launch cannot be
-silently bound to metadata from an earlier incompatible commitment.
+pool metadata, including both token decimal values; the signed migration cannot
+be silently bound to an earlier incompatible pool.
 
-At launch configuration, both creator and fixed launch authority sign an EIP-712
-commitment binding launch ID, creator, canonical tokens/decimals, fee, privacy
-mode, protocol version, factory, migrator, strategy, chain and deadlines. The
-strategy creates or resolves its empty protected pool and records one active
-commitment for that complete key. Cancellation and expiry keep the pool empty;
-they never make it permissionlessly initializable. A later authorized launch may
-supersede an inactive empty commitment, while completed pools cannot be
-superseded.
-
-At graduation, the creator separately authorizes all five encrypted migration
-values for the migrator selector. The migrator validates the migration EIP-712
-authorization, resolves the committed pool, pulls exact amounts into
-transaction-scoped escrow and grants exact pool allowances. The factory calls
+At graduation, the creator authorizes all five encrypted migration values and
+the full public migration envelope in one EIP-712 signature for the exact
+migrator selector. The pinned migrator validates that authorization and asks the
+strategy to create or resolve the empty protected pool inside the same
+transaction. The migrator then pulls exact amounts into transaction-scoped escrow
+and grants exact pool allowances. The factory calls
 the strategy's factory-only one-shot authorization and then invokes the pool
 bootstrap. The pool verifies logical empty reserves, encrypted final-price bounds,
 minimum shares, LP disposition and exact transfer deltas. Any failure reverts
-authorization consumption, escrow, approvals, reserve state and token pulls.
+launch state, pool creation, authorization consumption, escrow, approvals,
+reserve state and token pulls. There is no launch authority or persistent
+precommit to block automated launchpads.
 Each registered strategy carries its own one-time pinned migrator address and
 runtime codehash. The factory authenticates that strategy-specific caller and has
 no global launch-adapter authority, so the two reviewed strategy classes can use
@@ -280,3 +294,10 @@ normalized token1-per-token0 price to caller-supplied inclusive bounds, preventi
 a front-run initialization from silently changing deposit economics. It uses
 OpenZeppelin full-precision multiplication/division and rounds
 the retained reserve upward, matching the confidential invariant convention.
+
+Confidential incremental joins preserve the same proportional economics without
+publishing the pool ratio. A paid `requestAddLiquidityQuote` accepts one encrypted
+maximum side and returns caller-encrypted accepted specified amount, counterpart
+amount and expected shares. This is a preview, not an authorization: the later
+`addLiquidity` call independently enforces fresh encrypted maxima, minimum shares,
+normalized price bounds and deadline against current pool state.

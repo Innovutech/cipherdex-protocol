@@ -21,6 +21,7 @@ interface IPublicCPMM {
     function quoteExactInput(uint256 amountIn, bool zeroForOne) external view returns (uint256);
     function swapExactInput(uint256,uint256,bool,uint64) external returns (uint256);
     function addLiquidity(uint256,uint256,uint256,uint256,uint256,uint64) external returns (uint256);
+    function addLiquidityFor(address,uint256,uint256,uint256,uint256,uint256,uint64) external returns (uint256);
     function removeLiquidity(uint256,uint256,uint256,uint64) external returns (uint256,uint256);
     function collectProtocolFees(bool,bool) external returns (uint256,uint256);
     function effectiveReserves() external view returns (uint256,uint256);

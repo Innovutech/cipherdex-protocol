@@ -85,6 +85,8 @@ for (const script of [
   "evidence:finalize",
   "evidence:verify",
   "deploy:testnet",
+  "deploy:mainnet",
+  "mainnet:preflight",
   "secure:funded-env",
 ]) {
   assert.equal(packageJson.scripts[script], undefined);
@@ -254,7 +256,7 @@ assert.deepEqual(
   },
 );
 const trustedGitConsumers = [
-  "scripts/deploy-testnet.ts",
+  "scripts/deploy-protocol.ts",
   "scripts/funded-suite-evidence.ts",
   "scripts/testnet-deployment-provenance.ts",
   "scripts/testnet-quote-call-probe.ts",

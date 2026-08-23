@@ -1,7 +1,98 @@
-# Testnet Deployment
+# Deployment
 
-This repository intentionally exposes only the COTI testnet Hardhat network. There
-is no mainnet deployment script or mainnet network entry.
+## COTI mainnet deployment
+
+The mainnet deployment path reuses the same factories, bindings, runtime-codehash
+checks, receipt reconciliation and commit-bound record writer as testnet. Hardhat
+does not configure a mainnet account. The authenticated runner requires exactly
+one signer mode: a Ledger through a separately installed, hash-pinned Foundry
+`cast` v1.7.1 binary, or `COTI_MAINNET_PRIVATE_KEY`. Both modes populate the
+transaction locally, validate signer, chain, nonce, destination, calldata, value,
+gas limit and fee envelope, persist the deterministic signed transaction before
+broadcast, and block blind retries after an uncertain submission. The deployer
+receives no lasting protocol role.
+
+An external audit is recommended but is not an executable deployment gate. The
+deployment record explicitly retains the current review status so it cannot be
+mistaken for an audited release.
+
+1. Review and commit the exact source to deploy. Do not deploy a dirty worktree.
+   Record the full 40-character commit.
+2. For Ledger mode, install Foundry `v1.7.1` outside this repository from the immutable official
+   release at <https://github.com/foundry-rs/foundry/releases/tag/v1.7.1>.
+   Verify the release archive's published SHA-256, Sigstore/SLSA attestation and
+   SBOM before extraction. Do not use `foundryup` or an unpinned latest release
+   for production deployment. Compute the SHA-256 of the extracted `cast`
+   executable; that executable digest is the value of `CIPHERDEX_CAST_SHA256`.
+   Skip this step for private-key mode.
+3. Create a new owner-only external file. The recommended Windows location is
+   `C:\Users\<user>\.cipherdex\funded\coti-mainnet.env`; the recommended POSIX
+   location is `$HOME/.cipherdex/funded/coti-mainnet.env`. Do not reuse the
+   testnet file, place the file in this repository, use a symlink/hardlink, or
+   expose these values as ambient shell variables.
+4. Put only the following deployment configuration in that file:
+
+   ```text
+   COTI_MAINNET_RPC_URL=https://mainnet.coti.io/rpc
+   COTI_MAINNET_GAS_LIMIT=30000000
+   COTI_DEPLOYMENT_RECORD=deployments/coti-mainnet-<40-character-commit>.json
+   CIPHERDEX_MAINNET_APPROVED_COMMIT=<40-character-commit>
+   COTI_MAINNET_PRIVATE_KEY=
+   CIPHERDEX_LEDGER_ADDRESS=
+   CIPHERDEX_LEDGER_DERIVATION_PATH=m/44'/60'/0'/0/0
+   CIPHERDEX_CAST_PATH=
+   CIPHERDEX_CAST_SHA256=
+   CIPHERDEX_DEPLOYMENT_RECOVERY_KEY=<0x-prefixed-32-byte-random-key>
+   CIPHERDEX_FEE_BENEFICIARY=<dedicated-fee-vault-beneficiary>
+   ```
+
+   Fill exactly one of `COTI_MAINNET_PRIVATE_KEY` or
+   `CIPHERDEX_LEDGER_ADDRESS`. In Ledger mode, also fill the derivation path and
+   reviewed `cast` path/digest. In private-key mode, leave every Ledger/cast value
+   empty. The fee beneficiary is the only lasting beneficiary role and should be
+   a reviewed multisig where practical; it may equal the deployer but need not.
+   `CIPHERDEX_DEPLOYMENT_RECOVERY_KEY` only encrypts the local durable
+   transaction-recovery journal; it cannot sign or spend. Generate it with an OS
+   cryptographic RNG and do not reuse a wallet private key or COTI AES key.
+5. Do not add `COTI_TESTNET_PRIVATE_KEY` or a COTI AES key. Deployment does not onboard an account or construct/decrypt private
+   token inputs, so AES material is neither required nor loaded. Keep any later
+   confidential operational wallet configuration in a different external file.
+6. Install `scripts/operator-funded-launcher.mjs` from the exact approved commit
+   into owner-only storage, following the authenticated extraction procedure in
+   the testnet section below. In Ledger mode, connect and unlock the Ledger and
+   open its Ethereum application.
+7. Run the transaction-free preflight first:
+
+   ```text
+   node <external-launcher> --repository <repository> --commit <commit> --environment <absolute-mainnet-env> --target scripts/mainnet-preflight.ts -- --network cotiMainnet
+   ```
+
+   It validates the clean approved commit, chain ID `2632500`, record path,
+   selected signer identity and native COTI gas budget. Ledger mode also validates
+   the external `cast` identity and device-derived address. Private-key mode only
+   derives the address locally. The preflight signs and sends no transaction.
+8. Only after reviewing the preflight output, run the deployment target:
+
+   ```text
+   node <external-launcher> --repository <repository> --commit <commit> --environment <absolute-mainnet-env> --target scripts/deploy-mainnet.ts -- --network cotiMainnet
+   ```
+
+   In Ledger mode, review every device screen and cancel if the chain, value, or
+   operation is unexpected. An uncertain broadcast is retained in the encrypted recovery
+   journal and blocks another signature; never blindly retry or start a second
+   deployment.
+9. Review every public address, transaction, constructor argument, binding and
+   runtime codehash in `deployments/coti-mainnet-<commit>.json` against COTI Scan
+   and the source. Then force-add only that record plus the public verification
+   report in a separate evidence commit. Source code is never amended to
+   hard-code deployed addresses.
+
+## COTI testnet deployment and funded validation
+
+The existing funded testnet deployment target remains supported and uses a separate
+external environment. On the current Windows workstation that file is
+`C:\Users\Acer\.cipherdex\funded\coti-testnet.env`; its values are intentionally
+not present in `.env.example` or Git.
 
 1. Copy `.env.example` to a regular file in a dedicated directory outside this
    repository. Restrict the directory and file to the current OS identity plus
@@ -16,10 +107,7 @@ is no mainnet deployment script or mainnet network entry.
 3. Set `CIPHERDEX_FEE_BENEFICIARY` to the dedicated testnet fee recipient. The
    deployment creates one immutable `CipherDEXFeeVault` and binds both factories
    to it. A production beneficiary should be a reviewed multisig; it cannot be
-   changed for deployed pools.
-   Set `CIPHERDEX_LAUNCH_AUTHORITY` to a distinct immutable launch-review
-   authority. It must not be the deployer/creator identity used by funded launch
-   tests.
+   changed for deployed pools. There is no launch-authority setting.
 4. Confidential factory deployment does not require sample token addresses or an
    external-token codehash policy. Set `COTI_TOKEN0` and `COTI_TOKEN1` only for
    funded test scenarios. Pool creation accepts any deployed contract that
@@ -171,8 +259,9 @@ official COTI SDK and the documented scenario/launchpad harness for those operat
 
 Public pools/factory report protocol version 2; confidential pools/factory report
 version 3; the confidential best-execution router reports version 2; the
-launchpad migrator reports version 4; and the pool deployer, strategy registry
-and launch strategy report version 1. Integration allowlists must pin the
+launchpad migrator reports version 4; and the public liquidity router, pool
+deployer, strategy registry and launch strategy report version 1. Integration
+allowlists must pin the
 deployed factory, fee vault, pool deployer/codehash, finalized strategy registry,
 registered strategy/codehash, migrator, configured router, all versions and the
 complete canonical pool mapping. They should also verify that each confidential

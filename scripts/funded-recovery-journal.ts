@@ -393,15 +393,16 @@ export async function verifyRecoveryResourceCreation(
 
   if (resource.kind === "launchpad-pool") {
     const factoryAddress = requiredMetadataAddress(resource, "factoryAddress");
+    const migratorAddress = requiredMetadataAddress(resource, "migratorAddress");
     const initializationStrategyAddress = requiredMetadataAddress(
       resource,
       "initializationStrategyAddress",
     );
     if (
       transaction.to === null ||
-      getAddress(transaction.to) !== initializationStrategyAddress
+      getAddress(transaction.to) !== migratorAddress
     ) {
-      throw new Error("funded recovery protected-pool creator is not the bound strategy");
+      throw new Error("funded recovery protected-pool creator is not the bound migrator");
     }
     const matches = (receipt.logs ?? []).flatMap((log) => {
       if (getAddress(log.address) !== factoryAddress) return [];

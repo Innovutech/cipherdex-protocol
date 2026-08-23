@@ -55,6 +55,35 @@ describe("deployment record persistence", function () {
     }
   });
 
+  it("supports a distinct commit-bound COTI mainnet record namespace", async function () {
+    const cwd = await mkdtemp(join(tmpdir(), "cipherdex-mainnet-record-"));
+    const output = `deployments/coti-mainnet-${sourceCommit}.json`;
+    try {
+      expect(() => resolveNewDeploymentRecordPath(
+        output,
+        sourceCommit,
+        cwd,
+        "coti-mainnet",
+      )).not.to.throw();
+      expect(() => resolveNewDeploymentRecordPath(
+        `deployments/coti-testnet-${sourceCommit}.json`,
+        sourceCommit,
+        cwd,
+        "coti-mainnet",
+      )).to.throw("coti-mainnet-<commit>");
+      const writer = await DeploymentRecordWriter.reserve(
+        output,
+        sourceCommit,
+        { schemaVersion: 2, sourceCommit },
+        cwd,
+        "coti-mainnet",
+      );
+      await writer.close();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("durably replaces partial checkpoints with terminal evidence", async function () {
     const cwd = await mkdtemp(join(tmpdir(), "cipherdex-deployment-journal-"));
     const output = `deployments/coti-testnet-${sourceCommit}.json`;

@@ -94,20 +94,23 @@ as a synchronous CPMM leg without a separate pending-state, timeout, refund and
 recovery protocol. PoD support remains outside this v1 rather than being treated
 as an implicit `PrivateERC20` fallback.
 
-## Remaining gates
+## Remaining production checks
 
-The testnet behavior is demonstrated, not audited. Before any mainnet decision:
+The testnet behavior is demonstrated, not externally audited. An independent
+audit remains recommended and its absence must stay visible in release records,
+but it is not an executable mainnet deployment gate. The operator has explicitly
+accepted proceeding without that gate. Before deployment:
 
-1. Obtain independent contract and COTI MPC integration review.
-2. Run sustained stateful/fuzz campaigns beyond the deterministic local suite,
-   including router gas/liveness under future candidate tiers.
-3. Operationally validate the fixed-epoch confidential vault sweep after its
+1. Run sustained stateful/fuzz campaigns beyond the deterministic local suite,
+   including paid router quote gas/liveness at four through nine candidates.
+   Atomic execution remains capped at the already measured three candidates.
+2. Operationally validate the fixed-epoch confidential vault sweep after its
    real two-epoch maturity boundary without shortening or bypassing the delay.
-4. Re-exercise timed-lock and permanent-lock launchpad dispositions on any final
+3. Re-exercise timed-lock and permanent-lock launchpad dispositions on any final
    release candidate when operational custody of intentionally locked test
    liquidity is explicitly approved; their contract paths are covered locally,
    while the normal funded evidence runner remains creator-held and recoverable.
-5. Use a reviewed multisig/governance beneficiary instead of a testnet EOA.
-6. Revalidate compiler, RPC and MPC behavior against the target mainnet release.
+4. Use a reviewed multisig/governance beneficiary instead of a testnet EOA.
+5. Revalidate compiler, RPC and MPC behavior against the target mainnet release.
 
-No external audit or mainnet readiness is claimed.
+No external audit is claimed.

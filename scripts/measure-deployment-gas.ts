@@ -179,6 +179,11 @@ async function main(): Promise<void> {
     await ethers.getContractFactory("PublicCPMMRouter"),
     await publicFactory.getAddress(),
   );
+  await deployAndMeasure(
+    "PublicCPMMLiquidityRouter",
+    await ethers.getContractFactory("PublicCPMMLiquidityRouter"),
+    await publicFactory.getAddress(),
+  );
 }
 
 void main().catch((error: unknown) => {

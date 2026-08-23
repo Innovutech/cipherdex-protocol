@@ -65,16 +65,12 @@ export async function deployConfidentialFactory() {
 
 export async function configureConfidentialLaunch(
   deployment: Awaited<ReturnType<typeof deployConfidentialFactory>>,
-  launchAuthority?: string,
 ) {
-  const [, defaultAuthority] = await ethers.getSigners();
-  const authority = launchAuthority ?? defaultAuthority.address;
   const strategy = await (
     await ethers.getContractFactory("ConfidentialLaunchInitializationStrategy")
   ).deploy(
     await deployment.factory.getAddress(),
     await deployment.strategyRegistry.getAddress(),
-    authority,
   );
   await strategy.waitForDeployment();
   const migrator = await ethers.getContractAt(
@@ -86,5 +82,5 @@ export async function configureConfidentialLaunch(
   );
   await deployment.strategyRegistry.finalize();
 
-  return { authority, migrator, strategy };
+  return { migrator, strategy };
 }

@@ -48,6 +48,7 @@ describe("ConfidentialBestExecutionRouter canonical boundary", function () {
     expect(await router.factory()).to.equal(await factory.getAddress());
     expect(await router.PROTOCOL_VERSION()).to.equal(2n);
     expect(await router.MAX_CANDIDATES()).to.equal(3n);
+    expect(await router.MAX_QUOTE_CANDIDATES()).to.equal(9n);
     expect(await router.DEFAULT_STANDARD_CANDIDATE_BITMAP()).to.equal(73n);
 
     const abi = new Interface(router.interface.fragments);
@@ -97,6 +98,17 @@ describe("ConfidentialBestExecutionRouter canonical boundary", function () {
       router.requestBestQuoteExactInputWithCandidates(
         token0Address,
         token1Address,
+        emptyInput,
+        0xdb,
+        requestId,
+        2n ** 63n,
+      ),
+    ).to.be.revertedWithCustomError(router, "NoViablePool");
+    await expect(
+      router.swapBestExactInputWithCandidates(
+        token0Address,
+        token1Address,
+        emptyInput,
         emptyInput,
         0b1111,
         requestId,

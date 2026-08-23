@@ -8,7 +8,6 @@ import {
 const migrationTypes = {
   Migration: [
     { name: "launchId", type: "bytes32" },
-    { name: "launchCommitmentHash", type: "bytes32" },
     { name: "initializationStrategy", type: "address" },
     { name: "creator", type: "address" },
     { name: "tokenA", type: "address" },
@@ -75,7 +74,6 @@ describe("ConfidentialLaunchpadMigrator", function () {
     };
     const values = {
       launchId: ethers.id("committed-launch"),
-      launchCommitmentHash: ethers.id("launch-commitment"),
       initializationStrategy: await launch.strategy.getAddress(),
       creator: creator.address,
       tokenA: "0x0000000000000000000000000000000000000011",
@@ -96,7 +94,6 @@ describe("ConfidentialLaunchpadMigrator", function () {
     );
     const request = {
       launchId: values.launchId,
-      launchCommitmentHash: values.launchCommitmentHash,
       tokenA: values.tokenA,
       tokenB: values.tokenB,
       decimalsA: values.decimalsA,
@@ -166,7 +163,7 @@ describe("ConfidentialLaunchpadMigrator", function () {
       .to.match(/^0x[0-9a-f]{64}$/);
     expect(await launch.migrator.MIGRATION_TYPEHASH()).to.equal(
       ethers.id(
-        "Migration(bytes32 launchId,bytes32 launchCommitmentHash,address initializationStrategy,address creator,address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,bytes32 encryptedInputsHash,uint64 deadline,bool withDisposition,uint8 disposition,uint64 unlockTime)",
+        "Migration(bytes32 launchId,address initializationStrategy,address creator,address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,bytes32 encryptedInputsHash,uint64 deadline,bool withDisposition,uint8 disposition,uint64 unlockTime)",
       ),
     );
     expect(authorization).to.match(/^0x[0-9a-f]{130}$/);
@@ -225,11 +222,21 @@ describe("ConfidentialLaunchpadMigrator", function () {
       .to.be.revertedWithCustomError(launch.migrator, "InvalidAuthorization");
 
     await expect(launch.migrator.migrate(request))
-      .to.be.revertedWithCustomError(launch.migrator, "InvalidLaunchCommitment");
+      .to.be.revertedWithCustomError(deployment.factory, "UnsupportedPrivateToken");
+    const protectedKey = await deployment.factory.poolKey(
+      request.tokenA,
+      request.tokenB,
+      request.decimalsA,
+      request.decimalsB,
+      request.feeBps,
+      await launch.strategy.getAddress(),
+    );
+    expect(await deployment.factory.getPool(protectedKey)).to.equal(ethers.ZeroAddress);
+    expect((await launch.strategy.getLaunch(request.launchId)).status).to.equal(0n);
   });
 
   it("accepts ERC-1271 creator authorization before launch-state validation", async function () {
-    const { creator, domain, launch, migrationValues, request } = await fixture();
+    const { creator, deployment, domain, launch, migrationValues, request } = await fixture();
     const wallet = await (
       await ethers.getContractFactory("MockERC1271Wallet")
     ).deploy(creator.address);
@@ -250,6 +257,6 @@ describe("ConfidentialLaunchpadMigrator", function () {
 
     await expect(
       wallet.connect(creator).execute(await launch.migrator.getAddress(), call),
-    ).to.be.revertedWithCustomError(launch.migrator, "InvalidLaunchCommitment");
+    ).to.be.revertedWithCustomError(deployment.factory, "UnsupportedPrivateToken");
   });
 });

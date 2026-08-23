@@ -15,12 +15,16 @@ import "./interfaces/IConfidentialCPMMFactory.sol";
  *
  * The nine-bit candidate namespace is factory-derived: three approved fee tiers
  * multiplied by the standard class plus at most two reviewed strategy classes.
- * A request may select at most three bits, preventing arbitrary pool injection
- * and bounding COTI MPC work to the already measured three-candidate ceiling.
+ * Quote requests may select the complete nine-candidate namespace. Atomic
+ * quote-plus-swap remains capped at the independently measured three-candidate
+ * settlement ceiling; integrations can quote all pools first and then execute
+ * directly against the authenticated selected pool with a fresh minimumOut.
  */
 contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
     uint256 public constant PROTOCOL_VERSION = 2;
+    // Retained as the atomic best-swap ceiling for ABI compatibility.
     uint8 public constant MAX_CANDIDATES = 3;
+    uint8 public constant MAX_QUOTE_CANDIDATES = 9;
     uint8 public constant MAX_POOL_CLASSES = 3;
     uint8 public constant CANDIDATE_BITMAP_BITS = 9;
     uint16 public constant DEFAULT_STANDARD_CANDIDATE_BITMAP =
@@ -35,9 +39,9 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
     uint256 private reentrancyState = 1;
 
     struct CandidateSet {
-        address[MAX_CANDIDATES] pools;
-        address[MAX_CANDIDATES] initializationStrategies;
-        uint256[MAX_CANDIDATES] feeTiers;
+        address[MAX_QUOTE_CANDIDATES] pools;
+        address[MAX_QUOTE_CANDIDATES] initializationStrategies;
+        uint256[MAX_QUOTE_CANDIDATES] feeTiers;
         uint8 count;
         bool zeroForOne;
         address inputToken;
@@ -149,7 +153,8 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         CandidateSet memory candidates = _resolveCandidates(
             tokenIn,
             tokenOut,
-            candidateBitmap
+            candidateBitmap,
+            MAX_QUOTE_CANDIDATES
         );
         _consumeRequestId(requestId);
         gtUint256 input = _validateAndConsume(amountIn);
@@ -225,7 +230,8 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         CandidateSet memory candidates = _resolveCandidates(
             tokenIn,
             tokenOut,
-            candidateBitmap
+            candidateBitmap,
+            MAX_CANDIDATES
         );
         _consumeRequestId(requestId);
         gtUint256 input = _validateAndConsume(amountIn);
@@ -282,7 +288,8 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
     function _resolveCandidates(
         address tokenIn,
         address tokenOut,
-        uint16 candidateBitmap
+        uint16 candidateBitmap,
+        uint8 maximumCandidates
     ) internal view returns (CandidateSet memory candidates) {
         if (
             tokenIn == address(0) ||
@@ -292,7 +299,9 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         if (
             candidateBitmap == 0 ||
             candidateBitmap >= (uint16(1) << CANDIDATE_BITMAP_BITS) ||
-            _populationCount(candidateBitmap) > MAX_CANDIDATES
+            maximumCandidates == 0 ||
+            maximumCandidates > MAX_QUOTE_CANDIDATES ||
+            _populationCount(candidateBitmap) > maximumCandidates
         ) revert InvalidCandidateBitmap();
 
         IConfidentialCPMMFactory canonicalFactory =

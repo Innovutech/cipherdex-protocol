@@ -48,6 +48,26 @@ dependency, `patch-package` flow, or runtime download step. New dependencies,
 new lifecycle scripts, native binaries, and new overrides require an explicit
 provenance review before installation or execution.
 
+## External Ledger signing tool
+
+Mainnet deployment deliberately adds no Ledger npm dependency. The official
+`@nomicfoundation/hardhat-ledger@3.0.10` graph was evaluated and rejected because
+its legacy Ledger/native-HID graph retained unresolved high-severity advisories.
+The newer official Ledger Device SDK Node HID transport was also rejected for
+this boundary because it is still marked under development and does not declare
+support for the repository's pinned Node 24 runtime. Neither graph was installed
+or executed.
+
+The reviewed alternative is the official immutable Foundry `cast@1.7.1` release:
+<https://github.com/foundry-rs/foundry/releases/tag/v1.7.1>. It is installed
+separately outside the repository after verifying the release archive checksum,
+Sigstore/SLSA attestation and SBOM. The operator pins the extracted executable's
+SHA-256 in the external deployment environment. CipherDEX requires the absolute
+path, exact `1.7.1` version and digest, rejects repository/runtime-local binaries,
+and rechecks the canonical path and executable bytes before every Ledger access.
+The tool returns a signed raw transaction only; CipherDEX validates every bound
+field and durably journals it before using the ordinary RPC broadcast boundary.
+
 ## Required verification
 
 `npm run verify` fails unless all of the following pass:

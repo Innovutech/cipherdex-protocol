@@ -8,14 +8,17 @@ parties. `privacyMode` is explicit: `0` is transparent public settlement and
 `1` is amount-confidential settlement with private LP accounting. `2` is a
 reserved, explicitly unsupported fully-confidential recipient/identity mode;
 clients must reject it rather than infer support. Public pool users can use the
-factory-gated quoter and exact-input router ABI fragments. Confidential pool
+factory-gated quoter, exact-input router and atomic create-or-add liquidity
+router ABI fragments. Confidential pool
 discovery reports `encrypted-transaction-event-v1`: current COTI testnet requires
 paid MPC transactions because fresh MPC execution is rejected under `eth_call`.
 Paid per-pool transactions are the only proven primary exact-quote transport.
-The confidential router can evaluate a bounded factory-derived set in one paid
-transaction, but it is not gasless and becomes a preferred integration path only
-after a fresh funded deployment proves the final router. Per-pool transactions
-remain direct protocol operations rather than being mislabeled as a fallback.
+The confidential router can evaluate up to the complete nine-slot canonical
+fee/strategy namespace in one paid quote transaction. Atomic best execution is
+limited to three candidates because only that execution bound has funded COTI
+gas evidence. Larger quote sets require live-runtime measurement before release.
+Per-pool transactions remain direct protocol operations rather than being
+mislabeled as a fallback.
 
 The SDK also exports exact-by-default token approval planning, canonical
 confidential-operation signature/transaction steps, and optional EIP-5792 v2
@@ -24,6 +27,22 @@ are dependency-free and provider-agnostic: clients query their connected wallet,
 use a prepared batch only when supported, and retain sequential execution as the
 fallback. Partial non-atomic batches involving approvals are marked for explicit
 allowance review. The SDK never signs, sends, polls or persists wallet requests.
+
+`buildConfidentialCandidateBitmap` derives the active bitmap from the standard
+class plus the factory's finalized registered strategy count.
+`partitionConfidentialQuoteCandidateBitmap` deterministically groups that bitmap
+when a live chain cannot fit one larger paid quote. Each group requires a fresh
+request ID and encrypted input. `buildConfidentialQuoteOperationPlan` accepts the
+resulting batch count so signing UI can present the real number of signatures and
+transactions instead of hiding them.
+
+`PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI` and
+`buildPublicCreateOrAddLiquidityCall` cover atomic public pool creation/seeding
+and proportional joins. `buildConfidentialLiquidityQuoteCall` and
+`buildConfidentialAddLiquidityQuoteOperationPlan` cover the paid private
+liquidity preview. The preview takes one encrypted side and returns the accepted
+specified amount, counterpart and expected shares encrypted for the caller; it
+does not reserve state or replace the bounded `addLiquidity` settlement call.
 
 The SDK exposes shape parsers and semantic guards for privacy-minimal lock and
 launchpad migration records. Shape or semantic validity is not chain
@@ -57,7 +76,7 @@ confidential pools expose a pool-bound `PrivateLPToken`; its ABI fragment is
 available for encrypted LP transfers and approvals, while aggregate
 `totalSupply()` must not be used as a private-supply oracle.
 
-Discovery schema version 6 also binds every pool to the immutable CipherDEX v1
+Discovery schema version 7 also binds every pool to the immutable CipherDEX v1
 fee policy and fee vault. Integrations can present the complete total fee and
 its LP/protocol split without exposing accrued confidential amounts. The SDK's
 `calculateCipherDEXV1FeeBreakdown` mirrors pool integer rounding; it does not add
@@ -132,10 +151,16 @@ outputs into execution-grade route evidence. Integrators must disclose quote
 latency/cost, use fresh router/swap-selector-bound inputs for execution, and
 never substitute zero minimum output or a public reserve approximation.
 
-Launch integrations should build the EIP-712 value with
-`buildConfidentialLaunchCommitment`, sign `LAUNCH_COMMITMENT_EIP712_TYPES` with
-both creator and launch-authority identities, then build immutable calldata with
-`buildConfidentialLaunchCommitCall`. These builders canonicalize token order and
-pin confidential protocol version 3 and privacy mode 1; they do not sign or hold
-keys. Discovery must distinguish a standard pool (`initializationStrategy` zero,
-class 0), an empty committed launch pool, and an initialized active launch pool.
+The default best quote covers the three standard fee tiers. Candidate-aware paid
+quotes accept at most `MAX_CONFIDENTIAL_QUOTE_CANDIDATES` (nine), while atomic
+swaps accept at most `MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES` (three). Do not use
+`ALL_CONFIDENTIAL_CANDIDATE_BITMAP` unless the factory actually has all three
+pool classes; inactive strategy bits are invalid rather than empty candidates.
+
+Launch integrations should encrypt all five private inputs for the exact migrator
+and selector, then sign `LAUNCHPAD_MIGRATION_EIP712_TYPES` once with the creator.
+That authorization binds the strategy, caller, pair/decimals, fee tier, ordered
+encrypted inputs, deadline and LP disposition. The migration atomically creates
+and initializes the protected pool; there is no launch-authority precommit.
+Discovery must distinguish a standard pool (`initializationStrategy` zero, class
+0) from an initialized protected pool and must not route uninitialized pools.

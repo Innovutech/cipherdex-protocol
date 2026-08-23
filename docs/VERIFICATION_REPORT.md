@@ -90,29 +90,25 @@ are disposable and unsupported by current discovery.
 
 ## Launch authorization boundary
 
-The launch strategy is an initialization-only authority. A protected launch
-requires independent creator and fixed launch-authority EIP-712 signatures over
-the complete pair, decimals, fee, privacy/version identity, factory, migrator,
-strategy, chain, launch ID and deadlines. The strategy creates the protected
-pool when the launch is committed and records one active commitment for the
-complete key. Existing-key resolution revalidates token ordering, both decimals,
-fee, protocol/privacy versions and strategy against that exact canonical pool.
+The launch strategy is an initialization-only policy callable only by its
+constructor-created, runtime-codehash-pinned migrator. A protected launch uses
+one creator EIP-712 authorization over the launch ID, strategy, creator,
+pair/decimals, fee tier, ordered encrypted migration inputs, deadline and LP
+disposition. There is no fixed launch authority or persistent precommit.
 
-At graduation, the creator separately authorizes the five encrypted migration
-inputs for the exact migrator and selector. The migrator performs exact private
-escrow and allowances. The factory consumes the strategy's factory-only,
-one-shot initialization authorization in the same transaction as protected-pool
-bootstrap. Failed migration rolls back authorization consumption, token pulls,
-allowances, LP state and pool state.
+The migrator verifies that signature before asking the strategy to prepare the
+canonical protected pool inside the same transaction. It then performs exact
+private escrow and allowances. The factory consumes the strategy's factory-only,
+one-shot authorization in the same transaction as protected-pool bootstrap.
+Failed migration rolls back launch state, pool creation, authorization
+consumption, token pulls, allowances, LP state and pool state.
 Each strategy owns a distinct pinned migrator/codehash binding. The obsolete
 factory-global launch-adapter surface is absent, so a second reviewed strategy is
 not forced through the first strategy's migrator. EOA and ERC-1271 creator
-authorizations are accepted consistently by both commitment and migration
-verification.
+authorizations are accepted consistently by migration verification.
 
-Cancellation and expiry never make a protected pool permissionlessly
-initializable. An inactive empty launch may be superseded only by another fully
-authorized commitment. A completed pool cannot be superseded or reinitialized.
+Failed or expired migration attempts leave no protected pool or active launch
+record. A completed pool cannot be superseded or reinitialized.
 The strategy receives no tokens and has no post-initialization swap callback,
 fee, reserve, LP, lock, rescue or withdrawal authority.
 A completed protected pool that later reaches a true full exit retains its
@@ -124,10 +120,10 @@ again.
 
 The router accepts no candidate addresses. Its nine-bit namespace represents
 the three approved fee tiers multiplied by standard class zero plus at most two
-reviewed, finalized strategy classes. It rejects unknown bits and more than
-three selected candidates, derives every candidate through the factory's
-complete key, verifies canonical metadata, and skips absent or uninitialized
-variants.
+reviewed, finalized strategy classes. It rejects unknown bits. Paid quote calls
+accept up to all nine slots; atomic swap calls reject more than three selected
+candidates. Both derive every candidate through the factory's complete key,
+verify canonical metadata, and skip absent or uninitialized variants.
 
 Iteration is fee-first and class-second. Equal encrypted outputs retain the
 first candidate, so the lower fee wins and standard wins within the same fee.
@@ -162,6 +158,22 @@ Exact permissionless quotes also permit active curve probing: encryption hides
 the request/result from passive observers, but a caller can query and decrypt
 its own deterministic outputs. The protocol therefore does not claim
 information-theoretic reserve secrecy from an active funded quote operator.
+
+The current undeployed source extends paid quote-only selection from three to
+the complete nine-slot canonical v1 namespace while retaining the three-candidate
+atomic execution cap. Unit and invariant tests prove bitmap bounds, canonical
+candidate derivation, deterministic grouping and quote/swap cap separation.
+This is not yet funded evidence that a nine-candidate request fits the live COTI
+block limit. Production enablement must measure the exact deployed artifact; the
+SDK provides deterministic multi-request grouping with fresh ciphertext when a
+larger set cannot fit.
+
+The current undeployed source also adds an atomic public create-or-add liquidity
+router and a paid confidential proportional-liquidity preview. Local tests cover
+atomic rollback, proportional refunds, zero router residue/allowance, both
+private preview directions, rounding and tiny-input rejection. No document in
+this report claims funded COTI execution for those new paths until a fresh
+source-bound deployment and funded suite record it.
 
 ## Fee and LP parity
 
@@ -213,9 +225,9 @@ The review sequence and current results are:
    34 inventory rows across the 137-file change set and completed with zero
    reportable findings. Its source snapshot digest is
    `codex-security-snapshot/v1:sha256:a31b1563df3e62ed926b79db0b828cee3c7d76ff7ce98da08f6712469aaa1917`.
-   A suppressed launch-authority candidate was retained as an explicit trust
-   assumption: authority compromise can occupy an unused protected namespace
-   with a self-controlled creator, but cannot spend an honest creator's assets.
+   That scan evaluated the now-superseded fixed launch-authority model. The
+   current atomic creator-authorized design removes that authority and its
+   namespace-occupation/liveness trust assumption.
 7. Complete-tree scan `f07e531a-4c0e-4825-bed7-f29428632db8` reviewed all 149
    registered files and reported seven high-severity funded-runtime,
    filesystem, secret and RPC-reconciliation issues plus one medium-severity

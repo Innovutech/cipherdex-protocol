@@ -22,6 +22,7 @@ import {
   verifyRecoveryResourceTerminalState,
 } from "../../scripts/funded-recovery-journal";
 import {
+  deriveFundedRecoveryKeyFromSecret,
   FundedWallet,
   openFundedRecoveryJournal,
   sendPreparedFundedTransaction,
@@ -133,6 +134,27 @@ describe("funded recovery journal", function () {
 
   afterEach(function () {
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("derives a domain-bound recovery key without a signer private key", function () {
+    const identity = {
+      runner: "deployment",
+      sourceCommit: COMMIT,
+      chainId: 2_632_500,
+      owner: OWNER,
+      deployment: DEPLOYMENT,
+      directory,
+    };
+    const first = deriveFundedRecoveryKeyFromSecret(RECOVERY_KEY, identity);
+    const second = deriveFundedRecoveryKeyFromSecret(RECOVERY_KEY, identity);
+    const otherChain = deriveFundedRecoveryKeyFromSecret(RECOVERY_KEY, {
+      ...identity,
+      chainId: 7_082_400,
+    });
+    expect(first.equals(second)).to.equal(true);
+    expect(first.equals(otherChain)).to.equal(false);
+    expect(() => deriveFundedRecoveryKeyFromSecret("0x12", identity))
+      .to.throw("exactly 32 bytes");
   });
 
   it("recovers dead process leases but never steals a live lease", function () {
@@ -1435,7 +1457,7 @@ describe("funded recovery journal", function () {
     }), "pool creation event is missing or ambiguous");
   });
 
-  it("binds protected-pool recovery to the strategy commitment and complete key", async function () {
+  it("binds protected-pool recovery to the atomic migrator and complete key", async function () {
     const factory = `0x${"66".repeat(20)}`;
     const migrator = `0x${"77".repeat(20)}`;
     const poolFactoryInterface = new Interface([
@@ -1446,7 +1468,7 @@ describe("funded recovery journal", function () {
       [TOKEN0, TOKEN1, 18, 6, 30, STRATEGY, RESOURCE],
     );
     const journal = open();
-    recordBroadcast(journal, "launch commitment", TX1);
+    recordBroadcast(journal, "atomic launchpad migration", TX1);
     journal.recordTransaction(TX1, "mined-success", 123);
     journal.recordResource({
       id: "protected-pool-30",
@@ -1467,7 +1489,7 @@ describe("funded recovery journal", function () {
     const provider = {
       async getCode() { return "0x6000"; },
       async getTransaction() {
-        return { from: OWNER, to: STRATEGY, chainId: 7_082_400 };
+        return { from: OWNER, to: migrator, chainId: 7_082_400 };
       },
       async getTransactionReceipt() {
         return {
@@ -1483,9 +1505,9 @@ describe("funded recovery journal", function () {
     await expectRejected(verifyRecoveryResourceCreation(journal, journal.resources[0], {
       ...provider,
       async getTransaction() {
-        return { from: OWNER, to: migrator, chainId: 7_082_400 };
+        return { from: OWNER, to: STRATEGY, chainId: 7_082_400 };
       },
-    }), "creator is not the bound strategy");
+    }), "creator is not the bound migrator");
 
     const wrongStrategyEvent = poolFactoryInterface.encodeEventLog(
       poolFactoryInterface.getEvent("PoolCreated")!,

@@ -20,10 +20,10 @@ import {
   CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI,
   CONFIDENTIAL_CPMM_ABI,
   CONFIDENTIAL_CPMM_FACTORY_ABI,
-  CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI,
   CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI,
-  LAUNCH_COMMITMENT_EIP712_TYPES,
-  LAUNCH_INITIALIZATION_EIP712_DOMAIN,
+  PUBLIC_CPMM_ABI,
+  PUBLIC_CPMM_FACTORY_ABI,
+  PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI,
   LAUNCHPAD_MIGRATION_EIP712_TYPES,
   LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
   LAUNCHPAD_MIGRATE_SELECTOR,
@@ -52,7 +52,7 @@ import {
 } from "./runtime-artifact";
 import { writeUtf8FileAtomic } from "./secure-atomic-file";
 
-const SCHEMA = "cipherdex.funded-run-evidence/v6" as const;
+const SCHEMA = "cipherdex.funded-run-evidence/v7" as const;
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 const SOURCE_COMMIT = /^[0-9a-f]{40}$/;
 const LABEL = /^[a-zA-Z0-9][a-zA-Z0-9 .:_+\-/()]{0,159}$/;
@@ -90,23 +90,24 @@ const SELECTOR = Object.freeze({
   ),
   createConfidentialPool: requireSelector(CONFIDENTIAL_CPMM_FACTORY_ABI, "createPool"),
   addLiquidity: requireSelector(CONFIDENTIAL_CPMM_ABI, "addLiquidity"),
+  liquidityQuote: requireSelector(CONFIDENTIAL_CPMM_ABI, "requestAddLiquidityQuote"),
   directQuote: requireSelector(CONFIDENTIAL_CPMM_ABI, "requestQuoteExactInput"),
   collectProtocolFees: requireSelector(CONFIDENTIAL_CPMM_ABI, "collectProtocolFees"),
   confidentialSwap: requireSelector(CONFIDENTIAL_CPMM_ABI, "swapExactInput"),
   removeLiquidity: requireSelector(CONFIDENTIAL_CPMM_ABI, "removeLiquidity"),
-  commitLaunch: requireSelector(
-    CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI,
-    "commitLaunch",
+  publicCreateOrAdd: requireSelector(
+    PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI,
+    "createOrAddLiquidity",
   ),
+  publicRemoveLiquidity: requireSelector(PUBLIC_CPMM_ABI, "removeLiquidity"),
   launchpadMigrate: LAUNCHPAD_MIGRATE_SELECTOR,
   launchpadMigrateWithDisposition: LAUNCHPAD_MIGRATE_WITH_DISPOSITION_SELECTOR,
   mockDeployment: "0x60a06040",
 } as const);
 const BEST_EXECUTION_INTERFACE = new Interface(CONFIDENTIAL_BEST_EXECUTION_ROUTER_ABI);
-const INITIALIZATION_STRATEGY_INTERFACE = new Interface(
-  CONFIDENTIAL_INITIALIZATION_STRATEGY_ABI,
-);
 const LAUNCHPAD_INTERFACE = new Interface(CONFIDENTIAL_LAUNCHPAD_MIGRATOR_ABI);
+const PUBLIC_LIQUIDITY_INTERFACE = new Interface(PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI);
+const PUBLIC_FACTORY_INTERFACE = new Interface(PUBLIC_CPMM_FACTORY_ABI);
 const PROBE_CONFIGURATION_INTERFACE = new Interface([
   "function configureRouter(address router)",
 ]);
@@ -128,8 +129,9 @@ type RunnerPolicy = Readonly<{
 
 export const BEST_EXECUTION_FUNDED_ASSERTIONS = Object.freeze([
   "canonical candidates resolved from factory",
-  "signed launch commitment initialized the protected 30 bps candidate",
+  "creator-authorized migration atomically initialized the protected 30 bps candidate",
   "bounded mixed standard and launch-protected candidate bitmap exercised",
+  "four six and nine populated quote candidates exercised",
   "protected candidate selected and settled through the shared router",
   "paid quote selected best encrypted output",
   "deterministic lower-tier tie break enforced",
@@ -138,6 +140,10 @@ export const BEST_EXECUTION_FUNDED_ASSERTIONS = Object.freeze([
   "both swap directions exercised",
   "all approved fee tiers exercised",
   "request replay caller and deadline guards enforced",
+  "confidential proportional-liquidity preview exercised in both directions",
+  "preview-bound proportional add matched encrypted quote",
+  "public atomic create rollback left no canonical pool",
+  "public create seed proportional refund and full exit left zero router residue",
   "failed encrypted-minimum transactions were correlated with successful controls",
   "router escrow and allowances returned to zero",
   "full LP exits used positive modeled minima",
@@ -187,14 +193,19 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       ConfidentialCPMMDeployer: 1,
       ConfidentialInitializationStrategyRegistry: 1,
       ConfidentialCPMMFactory: 1,
-      ConfidentialLaunchInitializationStrategy: 1,
-      ConfidentialLaunchpadMigrator: 1,
+      ConfidentialLaunchInitializationStrategy: 2,
+      ConfidentialLaunchpadMigrator: 2,
       ConfidentialBestExecutionRouter: 1,
-      ConfidentialCPMM: 3,
-      PrivateLPToken: 3,
+      ConfidentialCPMM: 9,
+      PrivateLPToken: 9,
+      PublicCPMMFactory: 1,
+      PublicCPMMLiquidityRouter: 1,
+      MockERC20: 2,
     },
     requiredTransactions: [
-      { label: /^commit protected 30 bps launch$/, status: 1, targetArtifactLabel: "disposable launch initialization strategy", selectors: [SELECTOR.commitLaunch] },
+      { label: /^initialize protected 30 bps pool$/, status: 1, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate] },
+      { label: /^initialize protected a (?:5|100) bps pool$/, status: 1, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate], minimumCount: 2 },
+      { label: /^initialize protected b (?:5|30|100) bps pool$/, status: 1, targetArtifactLabel: "disposable second launchpad migrator", selectors: [SELECTOR.launchpadMigrate], minimumCount: 3 },
       { label: /^best quote request-id replay$/, status: 0, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
       { label: /^best quote ciphertext replay$/, status: 0, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
       { label: /^best quote expired deadline$/, status: 0, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
@@ -211,6 +222,14 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       { label: /^encrypted-invalid candidate isolation quote$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
       { label: /^reverse three-candidate quote$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
       { label: /^reverse three-candidate quote-plus-swap$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestSwap] },
+      { label: /^four-candidate populated quote$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
+      { label: /^six-candidate populated quote$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
+      { label: /^nine-candidate populated quote$/, status: 1, targetArtifactLabel: "disposable best execution router", selectors: [SELECTOR.bestQuote] },
+      { label: /^confidential token[01] proportional-liquidity preview$/, status: 1, targetArtifactLabel: "30 bps launch-protected b canonical pool", selectors: [SELECTOR.liquidityQuote], minimumCount: 2 },
+      { label: /^preview-bound proportional-liquidity add$/, status: 1, targetArtifactLabel: "30 bps launch-protected b canonical pool", selectors: [SELECTOR.addLiquidity] },
+      { label: /^public atomic create rollback$/, status: 0, targetArtifactLabel: "disposable public liquidity router", selectors: [SELECTOR.publicCreateOrAdd] },
+      { label: /^public atomic create and seed$/, status: 1, targetArtifactLabel: "disposable public liquidity router", selectors: [SELECTOR.publicCreateOrAdd] },
+      { label: /^public proportional add and refund$/, status: 1, targetArtifactLabel: "disposable public liquidity router", selectors: [SELECTOR.publicCreateOrAdd] },
     ],
   },
   "configured-compatibility": {
@@ -281,8 +300,8 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
     ],
     assertions: [
       "empty protected pool slot verified",
-      "dual-authorized launch commitment created one uninitialized protected pool",
-      "failed signed alternate-bound launch request rolled back atomically",
+      "creator-authorized migration created and initialized one protected pool atomically",
+      "failed signed alternate-bound migration rolled back launch and pool creation atomically",
       "launchpad migration used canonical pool",
       "LP disposition and lock state verified",
       "replay protection rolled back atomically",
@@ -304,7 +323,6 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       PrivateLPToken: 1,
     },
     requiredTransactions: [
-      { label: /^launch commitment$/, status: 1, targetArtifactLabel: "disposable launch initialization strategy", selectors: [SELECTOR.commitLaunch] },
       { label: /^rejected launchpad price-bound probe$/, status: 0, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
       { label: /^atomic launchpad migration$/, status: 1, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
       { label: /^launchpad replay probe$/, status: 0, targetArtifactLabel: "disposable launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
@@ -325,8 +343,8 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
     ],
     assertions: [
       "empty protected pool slot verified",
-      "dual-authorized launch commitment created one uninitialized protected pool",
-      "failed signed alternate-bound launch request rolled back atomically",
+      "creator-authorized migration created and initialized one protected pool atomically",
+      "failed signed alternate-bound migration rolled back launch and pool creation atomically",
       "launchpad migration used canonical pool",
       "LP disposition and lock state verified",
       "replay protection rolled back atomically",
@@ -346,7 +364,6 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       PrivateLPToken: 1,
     },
     requiredTransactions: [
-      { label: /^launch commitment$/, status: 1, targetArtifactLabel: "configured launch initialization strategy", selectors: [SELECTOR.commitLaunch] },
       { label: /^rejected launchpad price-bound probe$/, status: 0, targetArtifactLabel: "configured launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
       { label: /^atomic launchpad migration$/, status: 1, targetArtifactLabel: "configured launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
       { label: /^launchpad replay probe$/, status: 0, targetArtifactLabel: "configured launchpad migrator", selectors: [SELECTOR.launchpadMigrate, SELECTOR.launchpadMigrateWithDisposition] },
@@ -905,49 +922,206 @@ async function requireMigratorConstructorChildBinding(
     artifact.contractName === "ConfidentialLaunchpadMigrator"
   );
   if (migrators.length === 0) return;
-  if (migrators.length !== 1) throw new Error("funded evidence has ambiguous launchpad migrators");
-  const migrator = migrators[0];
-  const strategy = artifactByContractName(
-    evidenceArtifacts,
-    "ConfidentialLaunchInitializationStrategy",
+  const strategies = evidenceArtifacts.filter((artifact) =>
+    artifact.contractName === "ConfidentialLaunchInitializationStrategy"
   );
-  const factory = artifactByContractName(evidenceArtifacts, "ConfidentialCPMMFactory");
-  if (!strategy.creationTransactionHash) {
-    throw new Error("funded launch strategy lacks direct constructor provenance");
+  if (migrators.length !== strategies.length) {
+    throw new Error("funded evidence strategy and migrator counts differ");
   }
-  const creation = transactions.filter((transaction) =>
-    transaction.hash === strategy.creationTransactionHash && transaction.status === 1
-  );
-  if (creation.length !== 1) throw new Error("funded launch strategy creation is unavailable");
+  const factory = artifactByContractName(evidenceArtifacts, "ConfidentialCPMMFactory");
   const strategyArtifact = await artifacts.readArtifact(
     "ConfidentialLaunchInitializationStrategy",
   );
   const strategyInterface = new Interface(strategyArtifact.abi);
-  const configured = creation[0].logs.flatMap((log) => {
-    if (getAddress(log.address) !== getAddress(strategy.address)) return [];
-    try {
-      const parsed = strategyInterface.parseLog({ topics: [...log.topics], data: log.data });
-      return parsed?.name === "MigratorConfigured" ? [parsed] : [];
-    } catch {
-      return [];
+  const matchedMigrators = new Set<string>();
+  for (const strategy of strategies) {
+    if (!strategy.creationTransactionHash) {
+      throw new Error("funded launch strategy lacks direct constructor provenance");
     }
-  }).filter((event) =>
-    getAddress(String(event.args.migrator)) === getAddress(migrator.address) &&
-    String(event.args.runtimeCodehash).toLowerCase() === migrator.runtimeCodehash.toLowerCase()
+    const creation = transactions.filter((transaction) =>
+      transaction.hash === strategy.creationTransactionHash && transaction.status === 1
+    );
+    if (creation.length !== 1) throw new Error("funded launch strategy creation is unavailable");
+    const strategyMigrator = getAddress(String(await readArtifactState(
+      provider,
+      strategy.contractName,
+      strategy.address,
+      "migrator",
+    )));
+    const candidates = migrators.filter((migrator) =>
+      getAddress(migrator.address) === strategyMigrator
+    );
+    if (candidates.length !== 1 || matchedMigrators.has(strategyMigrator)) {
+      throw new Error("funded launch strategy has a missing or reused migrator child");
+    }
+    const migrator = candidates[0];
+    matchedMigrators.add(strategyMigrator);
+    const configured = creation[0].logs.flatMap((log) => {
+      if (getAddress(log.address) !== getAddress(strategy.address)) return [];
+      try {
+        const parsed = strategyInterface.parseLog({ topics: [...log.topics], data: log.data });
+        return parsed?.name === "MigratorConfigured" ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    }).filter((event) =>
+      getAddress(String(event.args.migrator)) === strategyMigrator &&
+      String(event.args.runtimeCodehash).toLowerCase() === migrator.runtimeCodehash.toLowerCase()
+    );
+    const [strategyFactory, migratorFactory, migratorStrategy] = await Promise.all([
+      readArtifactState(provider, strategy.contractName, strategy.address, "factory"),
+      readArtifactState(provider, migrator.contractName, migrator.address, "factory"),
+      readArtifactState(provider, migrator.contractName, migrator.address, "initializationStrategy"),
+    ]);
+    if (
+      configured.length !== 1 ||
+      getAddress(String(strategyFactory)) !== getAddress(factory.address) ||
+      getAddress(String(migratorFactory)) !== getAddress(factory.address) ||
+      getAddress(String(migratorStrategy)) !== getAddress(strategy.address)
+    ) throw new Error("funded launchpad migrator lacks constructor-child provenance");
+  }
+  if (matchedMigrators.size !== migrators.length) {
+    throw new Error("funded evidence contains an unbound launchpad migrator");
+  }
+}
+
+async function requirePublicLiquidityPeripheryBindings(
+  provider: FundedEvidenceProvider,
+  evidenceArtifacts: readonly EvidenceArtifact[],
+  transactions: readonly ActualSemanticTransaction[],
+): Promise<void> {
+  const feeVault = artifactAddress(evidenceArtifacts, "disposable fee vault");
+  const factory = artifactAddress(evidenceArtifacts, "disposable public factory");
+  const router = artifactAddress(evidenceArtifacts, "disposable public liquidity router");
+  const tokenA = artifactAddress(evidenceArtifacts, "disposable public token A");
+  const tokenB = artifactAddress(evidenceArtifacts, "disposable public token B");
+  const rollback = requireUniqueTransaction(transactions, "public atomic create rollback", 0);
+  const create = requireUniqueTransaction(transactions, "public atomic create and seed", 1);
+  const add = requireUniqueTransaction(transactions, "public proportional add and refund", 1);
+  for (const transaction of [rollback, create, add]) {
+    if (
+      transaction.to === null ||
+      getAddress(transaction.to) !== router ||
+      transaction.data.slice(0, 10).toLowerCase() !== SELECTOR.publicCreateOrAdd
+    ) throw new Error("funded public liquidity transaction targets the wrong periphery");
+  }
+  if (!isStrictlyAfter(create, rollback) || !isStrictlyAfter(add, create)) {
+    throw new Error("funded public liquidity transactions are not strictly ordered");
+  }
+  const rollbackCall = PUBLIC_LIQUIDITY_INTERFACE.decodeFunctionData(
+    "createOrAddLiquidity",
+    rollback.data,
   );
-  const [strategyMigrator, strategyFactory, migratorFactory, migratorStrategy] = await Promise.all([
-    readArtifactState(provider, strategy.contractName, strategy.address, "migrator"),
-    readArtifactState(provider, strategy.contractName, strategy.address, "factory"),
-    readArtifactState(provider, migrator.contractName, migrator.address, "factory"),
-    readArtifactState(provider, migrator.contractName, migrator.address, "initializationStrategy"),
-  ]);
+  const createCall = PUBLIC_LIQUIDITY_INTERFACE.decodeFunctionData(
+    "createOrAddLiquidity",
+    create.data,
+  );
+  const addCall = PUBLIC_LIQUIDITY_INTERFACE.decodeFunctionData(
+    "createOrAddLiquidity",
+    add.data,
+  );
+  const expectedTokens = new Set([tokenA, tokenB]);
+  for (const call of [rollbackCall, createCall, addCall]) {
+    const callTokens = new Set([getAddress(String(call[0])), getAddress(String(call[1]))]);
+    if (
+      callTokens.size !== 2 ||
+      [...callTokens].some((token) => !expectedTokens.has(token)) ||
+      Number(call[2]) !== 18 ||
+      Number(call[3]) !== 18 ||
+      Number(call[4]) !== 30 ||
+      BigInt(call[5]) <= 0n ||
+      BigInt(call[6]) <= 0n
+    ) throw new Error("funded public liquidity calldata is not bound to its disposable pair");
+  }
   if (
-    configured.length !== 1 ||
-    getAddress(String(strategyMigrator)) !== getAddress(migrator.address) ||
-    getAddress(String(strategyFactory)) !== getAddress(factory.address) ||
-    getAddress(String(migratorFactory)) !== getAddress(factory.address) ||
-    getAddress(String(migratorStrategy)) !== getAddress(strategy.address)
-  ) throw new Error("funded launchpad migrator lacks constructor-child provenance");
+    BigInt(rollbackCall[7]) !== (1n << 256n) - 1n ||
+    BigInt(createCall[7]) <= 0n ||
+    BigInt(addCall[7]) <= 0n
+  ) throw new Error("funded public rollback and successful controls are not distinct");
+
+  const routedEvent = (transaction: ActualSemanticTransaction, poolCreated: boolean) => {
+    const matches = transaction.logs.flatMap((log) => {
+      if (getAddress(log.address) !== router) return [];
+      try {
+        const parsed = PUBLIC_LIQUIDITY_INTERFACE.parseLog({
+          topics: [...log.topics],
+          data: log.data,
+        });
+        return parsed?.name === "PublicLiquidityRouted" ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    }).filter((event) =>
+      getAddress(String(event.args.provider)) === getAddress(transaction.from) &&
+      Boolean(event.args.poolCreated) === poolCreated
+    );
+    if (matches.length !== 1) {
+      throw new Error("funded public liquidity route event is missing or ambiguous");
+    }
+    return matches[0];
+  };
+  const created = routedEvent(create, true);
+  const added = routedEvent(add, false);
+  const pool = getAddress(String(created.args.pool));
+  const aIsToken0 = BigInt(String(addCall[0])) < BigInt(String(addCall[1]));
+  const amountAUsed = BigInt(aIsToken0 ? added.args.amount0 : added.args.amount1);
+  const amountBUsed = BigInt(aIsToken0 ? added.args.amount1 : added.args.amount0);
+  if (
+    getAddress(String(added.args.pool)) !== pool ||
+    amountAUsed > BigInt(addCall[5]) ||
+    amountBUsed > BigInt(addCall[6]) ||
+    (
+      amountAUsed === BigInt(addCall[5]) &&
+      amountBUsed === BigInt(addCall[6])
+    )
+  ) throw new Error("funded public proportional add did not prove a refund");
+  const cleanup = requireUniqueTransaction(transactions, "public full liquidity cleanup", 1);
+  if (
+    cleanup.to === null ||
+    getAddress(cleanup.to) !== pool ||
+    cleanup.data.slice(0, 10).toLowerCase() !== SELECTOR.publicRemoveLiquidity ||
+    !isStrictlyAfter(cleanup, add)
+  ) throw new Error("funded public liquidity cleanup is not bound to the created pool");
+
+  const key = await readArtifactState(
+    provider,
+    "PublicCPMMFactory",
+    factory,
+    "poolKey",
+    [createCall[0], createCall[1], createCall[2], createCall[3], createCall[4]],
+  );
+  const [canonicalPool, isPool, poolCount, initialized, totalShares, poolBalanceA,
+    poolBalanceB, routerBalanceA, routerBalanceB, routerAllowanceA, routerAllowanceB,
+    ownerAllowanceA, ownerAllowanceB, configuredPublicFactory, configuredRouterFactory] =
+    await Promise.all([
+      readArtifactState(provider, "PublicCPMMFactory", factory, "getPool", [key]),
+      readArtifactState(provider, "PublicCPMMFactory", factory, "isPool", [pool]),
+      readArtifactState(provider, "PublicCPMMFactory", factory, "allPoolsLength"),
+      readArtifactState(provider, "PublicCPMM", pool, "initialized"),
+      readArtifactState(provider, "PublicCPMM", pool, "totalShares"),
+      readArtifactState(provider, "MockERC20", tokenA, "balanceOf", [pool]),
+      readArtifactState(provider, "MockERC20", tokenB, "balanceOf", [pool]),
+      readArtifactState(provider, "MockERC20", tokenA, "balanceOf", [router]),
+      readArtifactState(provider, "MockERC20", tokenB, "balanceOf", [router]),
+      readArtifactState(provider, "MockERC20", tokenA, "allowance", [router, pool]),
+      readArtifactState(provider, "MockERC20", tokenB, "allowance", [router, pool]),
+      readArtifactState(provider, "MockERC20", tokenA, "allowance", [create.from, router]),
+      readArtifactState(provider, "MockERC20", tokenB, "allowance", [create.from, router]),
+      readArtifactState(provider, "CipherDEXFeeVault", feeVault, "publicFactory"),
+      readArtifactState(provider, "PublicCPMMLiquidityRouter", router, "factory"),
+    ]);
+  if (
+    getAddress(String(canonicalPool)) !== pool ||
+    isPool !== true ||
+    BigInt(poolCount as bigint) !== 1n ||
+    initialized !== false ||
+    BigInt(totalShares as bigint) !== 0n ||
+    [poolBalanceA, poolBalanceB, routerBalanceA, routerBalanceB, routerAllowanceA,
+      routerAllowanceB, ownerAllowanceA, ownerAllowanceB]
+      .some((value) => BigInt(value as bigint) !== 0n) ||
+    getAddress(String(configuredPublicFactory)) !== factory ||
+    getAddress(String(configuredRouterFactory)) !== factory
+  ) throw new Error("funded public liquidity terminal state contains residue or lost binding");
 }
 
 async function requireBestExecutionFeasibilityBindings(
@@ -1333,6 +1507,13 @@ async function requireArtifactCreationBindings(
   await requireDirectCreationBindings(evidenceArtifacts, transactions);
   await requireFactoryChildBindings(provider, evidenceArtifacts, transactions);
   await requireMigratorConstructorChildBinding(provider, evidenceArtifacts, transactions);
+  if (runner === "best-execution") {
+    await requirePublicLiquidityPeripheryBindings(
+      provider,
+      evidenceArtifacts,
+      transactions,
+    );
+  }
   if (runner === "best-execution-feasibility") {
     await requireBestExecutionFeasibilityBindings(
       provider,
@@ -1386,7 +1567,7 @@ function launchpadPublicEnvelope(call: LaunchpadCall): string {
     call.selector,
     call.transaction.from.toLowerCase(),
     call.transaction.to?.toLowerCase(),
-    ...[0, 1, 2, 3, 4, 5, 6, 12].map((index) => String(request[index]).toLowerCase()),
+    ...[0, 1, 2, 3, 4, 5, 11].map((index) => String(request[index]).toLowerCase()),
     call.withDisposition,
     call.disposition,
     call.unlockTime.toString(),
@@ -1397,48 +1578,49 @@ function requireLaunchpadAuthorization(
   call: LaunchpadCall,
   chainId: number,
   initializationStrategy: string,
-): void {
+): Readonly<{ authorizationHash: string; creator: string; launchId: string }> {
   if (call.transaction.to === null) throw new Error("funded launchpad target is missing");
   const request = call.request;
-  const recovered = verifyTypedData(
-    {
-      ...LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
-      chainId,
-      verifyingContract: call.transaction.to,
-    },
-    { Migration: [...LAUNCHPAD_MIGRATION_EIP712_TYPES] },
-    {
-      launchId: request[0],
-      launchCommitmentHash: request[1],
-      initializationStrategy,
-      creator: call.transaction.from,
-      tokenA: request[2],
-      tokenB: request[3],
-      decimalsA: request[4],
-      decimalsB: request[5],
-      feeBps: request[6],
-      encryptedInputsHash: keccak256(AbiCoder.defaultAbiCoder().encode(
-        ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32"],
-        [7, 8, 9, 10, 11].map((index) => encryptedInputCommitment(request[index])),
-      )),
-      deadline: request[12],
-      withDisposition: call.withDisposition,
-      disposition: call.disposition,
-      unlockTime: call.unlockTime,
-    },
-    String(request[13]),
-  );
+  const domain = {
+    ...LAUNCHPAD_MIGRATOR_EIP712_DOMAIN,
+    chainId,
+    verifyingContract: call.transaction.to,
+  } as const;
+  const types = { Migration: [...LAUNCHPAD_MIGRATION_EIP712_TYPES] };
+  const values = {
+    launchId: request[0],
+    initializationStrategy,
+    creator: call.transaction.from,
+    tokenA: request[1],
+    tokenB: request[2],
+    decimalsA: request[3],
+    decimalsB: request[4],
+    feeBps: request[5],
+    encryptedInputsHash: keccak256(AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32"],
+      [6, 7, 8, 9, 10].map((index) => encryptedInputCommitment(request[index])),
+    )),
+    deadline: request[11],
+    withDisposition: call.withDisposition,
+    disposition: call.disposition,
+    unlockTime: call.unlockTime,
+  } as const;
+  const recovered = verifyTypedData(domain, types, values, String(request[12]));
   if (getAddress(recovered) !== getAddress(call.transaction.from)) {
     throw new Error("funded launchpad authorization is not bound to its caller");
   }
+  return Object.freeze({
+    authorizationHash: TypedDataEncoder.hash(domain, types, values).toLowerCase(),
+    creator: getAddress(call.transaction.from),
+    launchId: String(request[0]).toLowerCase(),
+  });
 }
 
 type ParsedSemanticEvent = NonNullable<ReturnType<Interface["parseLog"]>>;
 
 function requireBestExecutionResultEvent(
   call: BestExecutionCall,
-  poolsByFee: ReadonlyMap<number, string>,
-  launchStrategy: string,
+  poolsByCandidate: ReadonlyMap<string, string>,
 ): ParsedSemanticEvent {
   const { transaction, selector, candidateBitmap, requestId } = call;
   const eventName = selector === SELECTOR.bestQuote
@@ -1461,10 +1643,11 @@ function requireBestExecutionResultEvent(
     getAddress(String(event.args.caller)) === getAddress(transaction.from) &&
     String(event.args.requestId).toLowerCase() === requestId &&
     Number(event.args.candidateBitmap) === candidateBitmap &&
-    poolsByFee.get(Number(event.args.selectedFeeBps)) ===
-      getAddress(String(event.args.selectedPool)) &&
-    getAddress(String(event.args.selectedInitializationStrategy)) ===
-      (Number(event.args.selectedFeeBps) === 30 ? launchStrategy : ZeroAddress) &&
+    poolsByCandidate.get(
+      `${Number(event.args.selectedFeeBps)}:${getAddress(
+        String(event.args.selectedInitializationStrategy),
+      ).toLowerCase()}`,
+    ) === getAddress(String(event.args.selectedPool)) &&
     Boolean(event.args.zeroForOne) === (BigInt(call.tokenIn) < BigInt(call.tokenOut))
   );
   if (matches.length !== 1) {
@@ -1473,18 +1656,16 @@ function requireBestExecutionResultEvent(
   return matches[0];
 }
 
-type LaunchCommitmentBinding = Readonly<{
+type LaunchpadMigrationBinding = Readonly<{
   transaction: ActualSemanticTransaction;
   launchId: string;
-  commitmentHash: string;
+  authorizationHash: string;
   creator: string;
-  launchAuthority: string;
   pool: string;
 }>;
 
 export function requireProtectedPoolLifecycleOrder(input: Readonly<{
   poolAddress: string;
-  commitment: ActualSemanticTransaction;
   rejectedProbe: ActualSemanticTransaction;
   migration: ActualSemanticTransaction;
   replay: ActualSemanticTransaction;
@@ -1497,7 +1678,6 @@ export function requireProtectedPoolLifecycleOrder(input: Readonly<{
     input.firstExit.to !== poolAddress ||
     input.reseed.to !== poolAddress ||
     input.finalExit.to !== poolAddress ||
-    !isStrictlyAfter(input.rejectedProbe, input.commitment) ||
     !isStrictlyAfter(input.migration, input.rejectedProbe) ||
     !isStrictlyAfter(input.replay, input.migration) ||
     !isStrictlyAfter(input.firstExit, input.replay) ||
@@ -1505,23 +1685,22 @@ export function requireProtectedPoolLifecycleOrder(input: Readonly<{
     !isStrictlyAfter(input.finalExit, input.reseed)
   ) {
     throw new Error(
-      "funded protected-pool lifecycle is not strictly commit/reject/migrate/replay/exit/reseed/exit ordered",
+      "funded protected-pool lifecycle is not strictly reject/migrate/replay/exit/reseed/exit ordered",
     );
   }
 }
 
-function requireLaunchCommitmentBinding(input: Readonly<{
+function requireLaunchpadMigrationBinding(input: Readonly<{
   transactionLabel: string;
   expectedFeeBps: number;
   expectedStrategyArtifactLabel: string;
-  expectedFactoryArtifactLabel: string;
   expectedMigratorArtifactLabel: string;
   expectedPoolArtifactLabel: string;
   configuration: PublicConfiguration;
   transactions: readonly ActualSemanticTransaction[];
   artifacts: readonly Readonly<{ label: string; address: string }>[];
   participants: readonly string[];
-}>): LaunchCommitmentBinding {
+}>): LaunchpadMigrationBinding {
   const transaction = requireUniqueTransaction(
     input.transactions,
     input.transactionLabel,
@@ -1531,122 +1710,71 @@ function requireLaunchCommitmentBinding(input: Readonly<{
     input.artifacts,
     input.expectedStrategyArtifactLabel,
   );
-  if (
-    transaction.to !== strategy ||
-    transaction.data.slice(0, 10).toLowerCase() !== SELECTOR.commitLaunch
-  ) throw new Error("funded launch commitment does not target the reviewed strategy");
-
-  const decoded = INITIALIZATION_STRATEGY_INTERFACE.decodeFunctionData(
-    "commitLaunch",
-    transaction.data,
+  const migrator = artifactAddress(
+    input.artifacts,
+    input.expectedMigratorArtifactLabel,
   );
-  const commitment = decoded[0] as readonly unknown[];
-  const creatorAuthorization = String(decoded[1]);
-  const authorityAuthorization = String(decoded[2]);
-  const typedCommitment = {
-    launchId: String(commitment[0]),
-    creator: getAddress(String(commitment[1])),
-    token0: getAddress(String(commitment[2])),
-    token1: getAddress(String(commitment[3])),
-    decimals0: Number(commitment[4]),
-    decimals1: Number(commitment[5]),
-    feeBps: BigInt(commitment[6] as bigint),
-    privacyMode: Number(commitment[7]),
-    poolVersion: BigInt(commitment[8] as bigint),
-    factory: getAddress(String(commitment[9])),
-    migrator: getAddress(String(commitment[10])),
-    initializationStrategy: getAddress(String(commitment[11])),
-    launchAuthority: getAddress(String(commitment[12])),
-    chainId: BigInt(commitment[13] as bigint),
-    authorizationDeadline: BigInt(commitment[14] as bigint),
-    migrationDeadline: BigInt(commitment[15] as bigint),
-  } as const;
+  if (transaction.to === null || getAddress(transaction.to) !== migrator) {
+    throw new Error("funded launchpad migration does not target the reviewed migrator");
+  }
+  const call = decodeLaunchpadCall(transaction);
+  if (!call) throw new Error("funded launchpad migration calldata is invalid");
+  const request = call.request;
   const expectedTokens = new Set([
-    getAddress(String(input.configuration.tokenA)),
-    getAddress(String(input.configuration.tokenB)),
+    getAddress(String(input.configuration.tokenA)).toLowerCase(),
+    getAddress(String(input.configuration.tokenB)).toLowerCase(),
   ]);
-  const expectedFactory = artifactAddress(input.artifacts, input.expectedFactoryArtifactLabel);
-  const expectedMigrator = artifactAddress(input.artifacts, input.expectedMigratorArtifactLabel);
   const expectedPool = artifactAddress(input.artifacts, input.expectedPoolArtifactLabel);
   const reviewedParticipants = new Set(
     input.participants.map((participant) => getAddress(participant)),
   );
+  const requestTokens = new Set([
+    getAddress(String(request[1])).toLowerCase(),
+    getAddress(String(request[2])).toLowerCase(),
+  ]);
   if (
-    typedCommitment.launchId.toLowerCase() === `0x${"00".repeat(32)}` ||
-    typedCommitment.token0.toLowerCase() >= typedCommitment.token1.toLowerCase() ||
-    !expectedTokens.has(typedCommitment.token0) ||
-    !expectedTokens.has(typedCommitment.token1) ||
-    typedCommitment.decimals0 < 0 ||
-    typedCommitment.decimals0 > 18 ||
-    typedCommitment.decimals1 < 0 ||
-    typedCommitment.decimals1 > 18 ||
-    typedCommitment.feeBps !== BigInt(input.expectedFeeBps) ||
-    typedCommitment.privacyMode !== Number(input.configuration.privacyMode) ||
-    typedCommitment.poolVersion !== BigInt(Number(input.configuration.confidentialPoolVersion)) ||
-    typedCommitment.factory !== expectedFactory ||
-    typedCommitment.migrator !== expectedMigrator ||
-    typedCommitment.initializationStrategy !== strategy ||
-    typedCommitment.chainId !== BigInt(Number(input.configuration.chainId)) ||
-    typedCommitment.authorizationDeadline < BigInt(transaction.blockTimestamp) ||
-    typedCommitment.migrationDeadline < typedCommitment.authorizationDeadline ||
-    typedCommitment.creator === typedCommitment.launchAuthority ||
-    transaction.from !== typedCommitment.creator ||
-    !reviewedParticipants.has(typedCommitment.creator) ||
-    !reviewedParticipants.has(typedCommitment.launchAuthority)
-  ) throw new Error("funded launch commitment tuple is not bound to reviewed configuration");
+    String(request[0]).toLowerCase() === `0x${"00".repeat(32)}` ||
+    requestTokens.size !== 2 ||
+    [...requestTokens].some((token) => !expectedTokens.has(token)) ||
+    Number(request[3]) < 0 || Number(request[3]) > 18 ||
+    Number(request[4]) < 0 || Number(request[4]) > 18 ||
+    Number(request[5]) !== input.expectedFeeBps ||
+    BigInt(request[11]) < BigInt(transaction.blockTimestamp) ||
+    !reviewedParticipants.has(getAddress(transaction.from))
+  ) throw new Error("funded launchpad migration is not bound to reviewed configuration");
 
-  const domain = {
-    ...LAUNCH_INITIALIZATION_EIP712_DOMAIN,
-    chainId: typedCommitment.chainId,
-    verifyingContract: strategy,
-  } as const;
-  const types = { LaunchCommitment: [...LAUNCH_COMMITMENT_EIP712_TYPES] };
-  const commitmentHash = TypedDataEncoder.hash(domain, types, typedCommitment);
-  const recoveredCreator = verifyTypedData(
-    domain,
-    types,
-    typedCommitment,
-    creatorAuthorization,
+  const authorization = requireLaunchpadAuthorization(
+    call,
+    Number(input.configuration.chainId),
+    strategy,
   );
-  const recoveredAuthority = verifyTypedData(
-    domain,
-    types,
-    typedCommitment,
-    authorityAuthorization,
-  );
-  if (
-    getAddress(recoveredCreator) !== typedCommitment.creator ||
-    getAddress(recoveredAuthority) !== typedCommitment.launchAuthority
-  ) throw new Error("funded launch commitment lacks independent creator and authority signatures");
 
   const events = transaction.logs.flatMap((log) => {
-    if (getAddress(log.address) !== strategy) return [];
+    if (getAddress(log.address) !== migrator) return [];
     try {
-      const parsed = INITIALIZATION_STRATEGY_INTERFACE.parseLog({
+      const parsed = LAUNCHPAD_INTERFACE.parseLog({
         topics: [...log.topics],
         data: log.data,
       });
-      return parsed?.name === "LaunchCommitted" ? [parsed] : [];
+      return parsed?.name === "LaunchpadMigration" ? [parsed] : [];
     } catch {
       return [];
     }
   }).filter((event) =>
-    String(event.args.launchId).toLowerCase() === typedCommitment.launchId.toLowerCase() &&
-    String(event.args.poolKey).toLowerCase() !== `0x${"00".repeat(32)}` &&
+    String(event.args.launchId).toLowerCase() === authorization.launchId &&
     getAddress(String(event.args.pool)) === expectedPool &&
-    getAddress(String(event.args.creator)) === typedCommitment.creator &&
-    BigInt(event.args.migrationDeadline) === typedCommitment.migrationDeadline &&
-    String(event.args.commitmentHash).toLowerCase() === commitmentHash.toLowerCase()
+    getAddress(String(event.args.creator)) === authorization.creator &&
+    getAddress(String(event.args.initializationStrategy)) === strategy &&
+    String(event.args.authorizationHash).toLowerCase() === authorization.authorizationHash
   );
   if (events.length !== 1) {
-    throw new Error("funded launch commitment event is missing or not signature-bound");
+    throw new Error("funded launchpad migration event is missing or not authorization-bound");
   }
   return Object.freeze({
     transaction,
-    launchId: typedCommitment.launchId.toLowerCase(),
-    commitmentHash: commitmentHash.toLowerCase(),
-    creator: typedCommitment.creator,
-    launchAuthority: typedCommitment.launchAuthority,
+    launchId: authorization.launchId,
+    authorizationHash: authorization.authorizationHash,
+    creator: authorization.creator,
     pool: expectedPool,
   });
 }
@@ -1660,7 +1788,17 @@ export function requireOnchainSemanticBindings(
 ): void {
   if (runner === "best-execution") {
     const expectedBitmap = Number(configuration.candidateBitmap);
-    const allowedBitmaps = new Set([expectedBitmap, expectedBitmap & ~1]);
+    const mixedTwoBitmap = 0b001_010_000;
+    const mixedThreeBitmap = 0b001_010_001;
+    const fourCandidateBitmap = 0b001_001_011;
+    const sixCandidateBitmap = 0b011_011_011;
+    const allowedBitmaps = new Set([
+      mixedTwoBitmap,
+      mixedThreeBitmap,
+      fourCandidateBitmap,
+      sixCandidateBitmap,
+      expectedBitmap,
+    ]);
     const expectedTokens = new Set([
       getAddress(String(configuration.tokenA)).toLowerCase(),
       getAddress(String(configuration.tokenB)).toLowerCase(),
@@ -1669,15 +1807,44 @@ export function requireOnchainSemanticBindings(
       const call = decodeBestExecutionCall(transaction);
       return call === null ? [] : [call];
     });
-    const poolsByFee = new Map([
-      [5, artifactAddress(artifacts, "5 bps standard canonical pool")],
-      [30, artifactAddress(artifacts, "30 bps launch-protected canonical pool")],
-      [100, artifactAddress(artifacts, "100 bps standard canonical pool")],
-    ]);
-    const launchStrategy = artifactAddress(
+    const launchStrategyA = artifactAddress(
       artifacts,
       "disposable launch initialization strategy",
     );
+    const poolsByCandidate = new Map<string, string>();
+    if (configuration.confidentialPoolVersion === undefined) {
+      poolsByCandidate.set(
+        `5:${ZeroAddress.toLowerCase()}`,
+        artifactAddress(artifacts, "5 bps standard canonical pool"),
+      );
+      poolsByCandidate.set(
+        `30:${launchStrategyA.toLowerCase()}`,
+        artifactAddress(artifacts, "30 bps launch-protected canonical pool"),
+      );
+      poolsByCandidate.set(
+        `100:${ZeroAddress.toLowerCase()}`,
+        artifactAddress(artifacts, "100 bps standard canonical pool"),
+      );
+    } else {
+      const launchStrategyB = artifactAddress(
+        artifacts,
+        "disposable second launch initialization strategy",
+      );
+      for (const feeBps of [5, 30, 100]) {
+        poolsByCandidate.set(
+          `${feeBps}:${ZeroAddress.toLowerCase()}`,
+          artifactAddress(artifacts, `${feeBps} bps standard canonical pool`),
+        );
+        poolsByCandidate.set(
+          `${feeBps}:${launchStrategyA.toLowerCase()}`,
+          artifactAddress(artifacts, `${feeBps} bps launch-protected a canonical pool`),
+        );
+        poolsByCandidate.set(
+          `${feeBps}:${launchStrategyB.toLowerCase()}`,
+          artifactAddress(artifacts, `${feeBps} bps launch-protected b canonical pool`),
+        );
+      }
+    }
     for (const call of calls) {
       const { transaction, selector, tokenIn, tokenOut, candidateBitmap, requestId, deadline } = call;
       if (
@@ -1691,14 +1858,13 @@ export function requireOnchainSemanticBindings(
       ) throw new Error("funded best-execution calldata does not match reviewed semantics");
 
       if (transaction.status === 1) {
-        requireBestExecutionResultEvent(call, poolsByFee, launchStrategy);
+        requireBestExecutionResultEvent(call, poolsByCandidate);
       }
     }
 
     if (configuration.confidentialPoolVersion !== undefined) {
       const tokenA = getAddress(String(configuration.tokenA)).toLowerCase();
       const tokenB = getAddress(String(configuration.tokenB)).toLowerCase();
-      const mixedTwoBitmap = expectedBitmap & ~1;
     const requireSelection = (
       label: string,
       selector: string,
@@ -1715,20 +1881,19 @@ export function requireOnchainSemanticBindings(
         call.tokenIn !== tokenIn ||
         call.tokenOut !== tokenOut
       ) throw new Error(`funded best-execution path is not exact: ${label}`);
-      const event = requireBestExecutionResultEvent(call, poolsByFee, launchStrategy);
+      const event = requireBestExecutionResultEvent(call, poolsByCandidate);
       if (
         expectedFeeBps !== undefined &&
         Number(event.args.selectedFeeBps) !== expectedFeeBps
       ) throw new Error(`funded best-execution selected the wrong tier: ${label}`);
       return Object.freeze({ call, event });
     };
-    requireLaunchCommitmentBinding({
-      transactionLabel: "commit protected 30 bps launch",
+    requireLaunchpadMigrationBinding({
+      transactionLabel: "initialize protected 30 bps pool",
       expectedFeeBps: 30,
       expectedStrategyArtifactLabel: "disposable launch initialization strategy",
-      expectedFactoryArtifactLabel: "disposable confidential factory",
       expectedMigratorArtifactLabel: "disposable launchpad migrator",
-      expectedPoolArtifactLabel: "30 bps launch-protected canonical pool",
+      expectedPoolArtifactLabel: "30 bps launch-protected a canonical pool",
       configuration,
       transactions,
       artifacts,
@@ -1746,7 +1911,7 @@ export function requireOnchainSemanticBindings(
       "two-candidate quote with uninitialized tier",
       SELECTOR.bestQuote,
       100,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenB,
       tokenA,
     );
@@ -1754,7 +1919,7 @@ export function requireOnchainSemanticBindings(
       "two-candidate quote-plus-swap",
       SELECTOR.bestSwap,
       100,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenB,
       tokenA,
     );
@@ -1762,7 +1927,7 @@ export function requireOnchainSemanticBindings(
       "three-candidate quote",
       SELECTOR.bestQuote,
       5,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenB,
       tokenA,
     );
@@ -1770,7 +1935,7 @@ export function requireOnchainSemanticBindings(
       "three-candidate quote-plus-swap",
       SELECTOR.bestSwap,
       5,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenB,
       tokenA,
     );
@@ -1778,7 +1943,7 @@ export function requireOnchainSemanticBindings(
       "post-tie 30 bps selection quote",
       SELECTOR.bestQuote,
       30,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenB,
       tokenA,
     );
@@ -1786,7 +1951,7 @@ export function requireOnchainSemanticBindings(
       "post-tie 30 bps quote-plus-swap",
       SELECTOR.bestSwap,
       30,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenB,
       tokenA,
     );
@@ -1794,7 +1959,7 @@ export function requireOnchainSemanticBindings(
       "encrypted-invalid candidate isolation quote",
       SELECTOR.bestQuote,
       100,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenB,
       tokenA,
     );
@@ -1802,7 +1967,7 @@ export function requireOnchainSemanticBindings(
       "reverse three-candidate quote",
       SELECTOR.bestQuote,
       undefined,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenA,
       tokenB,
     );
@@ -1810,9 +1975,33 @@ export function requireOnchainSemanticBindings(
       "reverse three-candidate quote-plus-swap",
       SELECTOR.bestSwap,
       undefined,
-      expectedBitmap,
+      mixedThreeBitmap,
       tokenA,
       tokenB,
+    );
+    requireSelection(
+      "four-candidate populated quote",
+      SELECTOR.bestQuote,
+      undefined,
+      fourCandidateBitmap,
+      tokenB,
+      tokenA,
+    );
+    requireSelection(
+      "six-candidate populated quote",
+      SELECTOR.bestQuote,
+      undefined,
+      sixCandidateBitmap,
+      tokenB,
+      tokenA,
+    );
+    requireSelection(
+      "nine-candidate populated quote",
+      SELECTOR.bestQuote,
+      undefined,
+      expectedBitmap,
+      tokenB,
+      tokenA,
     );
       for (const [quote, swap, label] of [
         [twoCandidateQuote, twoCandidateSwap, "100 bps"],
@@ -1829,6 +2018,60 @@ export function requireOnchainSemanticBindings(
           !isStrictlyAfter(swap.call.transaction, quote.call.transaction)
         ) throw new Error(`funded ${label} quote and settlement are not correlated`);
       }
+
+      const previewPool = artifactAddress(
+        artifacts,
+        "30 bps launch-protected b canonical pool",
+      );
+      const poolInterface = new Interface(CONFIDENTIAL_CPMM_ABI);
+      const previewTransactions = ([
+        ["confidential token0 proportional-liquidity preview", true],
+        ["confidential token1 proportional-liquidity preview", false],
+      ] as const).map(([label, expectedToken0Specified]) => {
+        const transaction = requireUniqueTransaction(transactions, label, 1);
+        if (transaction.to === null || getAddress(transaction.to) !== previewPool) {
+          throw new Error("funded liquidity preview targets the wrong pool");
+        }
+        const decoded = poolInterface.decodeFunctionData(
+          "requestAddLiquidityQuote",
+          transaction.data,
+        );
+        const requestId = String(decoded[2]).toLowerCase();
+        const previewDeadline = BigInt(decoded[3]);
+        if (
+          Boolean(decoded[1]) !== expectedToken0Specified ||
+          requestId === `0x${"00".repeat(32)}` ||
+          previewDeadline < BigInt(transaction.blockTimestamp)
+        ) throw new Error("funded liquidity preview calldata is not review-bound");
+        const resultEvents = transaction.logs.flatMap((log) => {
+          if (getAddress(log.address) !== previewPool) return [];
+          try {
+            const parsed = poolInterface.parseLog({ topics: [...log.topics], data: log.data });
+            return parsed?.name === "ConfidentialLiquidityQuoteResult" ? [parsed] : [];
+          } catch {
+            return [];
+          }
+        }).filter((event) =>
+          getAddress(String(event.args.caller)) === getAddress(transaction.from) &&
+          String(event.args.requestId).toLowerCase() === requestId &&
+          Boolean(event.args.token0Specified) === expectedToken0Specified
+        );
+        if (resultEvents.length !== 1) {
+          throw new Error("funded liquidity preview result is missing or ambiguous");
+        }
+        return transaction;
+      });
+      const previewedAdd = requireUniqueTransaction(
+        transactions,
+        "preview-bound proportional-liquidity add",
+        1,
+      );
+      if (
+        previewedAdd.to === null ||
+        getAddress(previewedAdd.to) !== previewPool ||
+        previewedAdd.data.slice(0, 10).toLowerCase() !== SELECTOR.addLiquidity ||
+        previewTransactions.some((preview) => !isStrictlyAfter(previewedAdd, preview))
+      ) throw new Error("funded proportional add is not ordered after its previews");
     }
 
     const reference = decodeBestExecutionCall(requireUniqueTransaction(
@@ -1916,9 +2159,6 @@ export function requireOnchainSemanticBindings(
     const strategyArtifactLabel = configuredLaunchpad
       ? "configured launch initialization strategy"
       : "disposable launch initialization strategy";
-    const factoryArtifactLabel = configuredLaunchpad
-      ? "configured launchpad confidential factory"
-      : "disposable launchpad confidential factory";
     const migratorArtifactLabel = configuredLaunchpad
       ? "configured launchpad migrator"
       : "disposable launchpad migrator";
@@ -1937,29 +2177,17 @@ export function requireOnchainSemanticBindings(
       artifacts,
       strategyArtifactLabel,
     );
-    const commitment = requireLaunchCommitmentBinding({
-      transactionLabel: "launch commitment",
-      expectedFeeBps: Number(configuration.feeBps),
-      expectedStrategyArtifactLabel: strategyArtifactLabel,
-      expectedFactoryArtifactLabel: factoryArtifactLabel,
-      expectedMigratorArtifactLabel: migratorArtifactLabel,
-      expectedPoolArtifactLabel: poolArtifactLabel,
-      configuration,
-      transactions,
-      artifacts,
-      participants,
-    });
     for (const call of calls) {
       const { transaction, request } = call;
       const requestTokens = new Set([
+        getAddress(String(request[1])).toLowerCase(),
         getAddress(String(request[2])).toLowerCase(),
-        getAddress(String(request[3])).toLowerCase(),
       ]);
       if (
         requestTokens.size !== 2 ||
         [...requestTokens].some((token) => !expectedTokens.has(token)) ||
-        Number(request[6]) !== Number(configuration.feeBps) ||
-        BigInt(request[12]) <= 0n ||
+        Number(request[5]) !== Number(configuration.feeBps) ||
+        BigInt(request[11]) <= 0n ||
         String(request[0]).toLowerCase() === `0x${"00".repeat(32)}`
       ) throw new Error("funded launchpad calldata does not match reviewed semantics");
       requireLaunchpadAuthorization(call, Number(configuration.chainId), initializationStrategy);
@@ -1975,6 +2203,37 @@ export function requireOnchainSemanticBindings(
       "atomic launchpad migration",
       1,
     ))!;
+    const migrationBinding = requireLaunchpadMigrationBinding({
+      transactionLabel: "atomic launchpad migration",
+      expectedFeeBps: Number(configuration.feeBps),
+      expectedStrategyArtifactLabel: strategyArtifactLabel,
+      expectedMigratorArtifactLabel: migratorArtifactLabel,
+      expectedPoolArtifactLabel: poolArtifactLabel,
+      configuration,
+      transactions,
+      artifacts,
+      participants,
+    });
+    for (const [transactionLabel, expectedFeeBps, expectedStrategyArtifactLabel,
+      expectedMigratorArtifactLabel, expectedPoolArtifactLabel] of [
+      ["initialize protected a 5 bps pool", 5, "disposable launch initialization strategy", "disposable launchpad migrator", "5 bps launch-protected a canonical pool"],
+      ["initialize protected a 100 bps pool", 100, "disposable launch initialization strategy", "disposable launchpad migrator", "100 bps launch-protected a canonical pool"],
+      ["initialize protected b 5 bps pool", 5, "disposable second launch initialization strategy", "disposable second launchpad migrator", "5 bps launch-protected b canonical pool"],
+      ["initialize protected b 30 bps pool", 30, "disposable second launch initialization strategy", "disposable second launchpad migrator", "30 bps launch-protected b canonical pool"],
+      ["initialize protected b 100 bps pool", 100, "disposable second launch initialization strategy", "disposable second launchpad migrator", "100 bps launch-protected b canonical pool"],
+    ] as const) {
+      requireLaunchpadMigrationBinding({
+        transactionLabel,
+        expectedFeeBps,
+        expectedStrategyArtifactLabel,
+        expectedMigratorArtifactLabel,
+        expectedPoolArtifactLabel,
+        configuration,
+        transactions,
+        artifacts,
+        participants,
+      });
+    }
     const replay = decodeLaunchpadCall(requireUniqueTransaction(
       transactions,
       "launchpad replay probe",
@@ -1983,8 +2242,8 @@ export function requireOnchainSemanticBindings(
     if (
       launchpadPublicEnvelope(rejected) !== launchpadPublicEnvelope(migrated) ||
       rejected.transaction.data === migrated.transaction.data ||
-      BigInt(rejected.request[12]) < BigInt(rejected.transaction.blockTimestamp) ||
-      BigInt(migrated.request[12]) < BigInt(migrated.transaction.blockTimestamp)
+      BigInt(rejected.request[11]) < BigInt(rejected.transaction.blockTimestamp) ||
+      BigInt(migrated.request[11]) < BigInt(migrated.transaction.blockTimestamp)
     ) throw new Error("funded alternate-bound launch rejection is not correlated to migration");
     if (
       replay.transaction.data !== migrated.transaction.data ||
@@ -2028,10 +2287,9 @@ export function requireOnchainSemanticBindings(
     );
     const poolAddress = artifactAddress(artifacts, poolArtifactLabel);
     if (
-      commitment.launchId !== String(migrated.request[0]).toLowerCase() ||
-      commitment.commitmentHash !== String(migrated.request[1]).toLowerCase() ||
-      commitment.creator !== migrated.transaction.from ||
-      commitment.pool !== poolAddress ||
+      migrationBinding.launchId !== String(migrated.request[0]).toLowerCase() ||
+      migrationBinding.creator !== migrated.transaction.from ||
+      migrationBinding.pool !== poolAddress ||
       directQuote.to !== poolAddress ||
       directSwap.to !== poolAddress ||
       partialExit.to !== poolAddress ||
@@ -2042,10 +2300,9 @@ export function requireOnchainSemanticBindings(
       !isStrictlyAfter(directSwap, directQuote) ||
       !isStrictlyAfter(partialExit, directSwap) ||
       !isStrictlyAfter(firstExit, partialExit)
-    ) throw new Error("funded protected-pool lifecycle is not bound to the committed pool");
+    ) throw new Error("funded protected-pool lifecycle is not bound to the atomic migration pool");
     requireProtectedPoolLifecycleOrder({
       poolAddress,
-      commitment: commitment.transaction,
       rejectedProbe: rejected.transaction,
       migration: migrated.transaction,
       replay: replay.transaction,
@@ -2054,24 +2311,6 @@ export function requireOnchainSemanticBindings(
       finalExit,
     });
 
-    const events = migrated.transaction.logs.flatMap((log) => {
-      if (migrated.transaction.to === null || getAddress(log.address) !== getAddress(migrated.transaction.to)) {
-        return [];
-      }
-      try {
-        const parsed = LAUNCHPAD_INTERFACE.parseLog({ topics: [...log.topics], data: log.data });
-        return parsed?.name === "LaunchpadMigration" ? [parsed] : [];
-      } catch {
-        return [];
-      }
-    }).filter((event) =>
-      String(event.args.launchId).toLowerCase() === String(migrated.request[0]).toLowerCase() &&
-      getAddress(String(event.args.creator)) === getAddress(migrated.transaction.from) &&
-      getAddress(String(event.args.pool)) === poolAddress &&
-      getAddress(String(event.args.initializationStrategy)) === initializationStrategy &&
-      String(event.args.launchCommitmentHash).toLowerCase() === String(migrated.request[1]).toLowerCase()
-    );
-    if (events.length !== 1) throw new Error("funded launchpad migration event is missing or ambiguous");
   }
 }
 

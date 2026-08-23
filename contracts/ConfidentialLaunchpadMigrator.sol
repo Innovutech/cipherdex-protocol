@@ -31,7 +31,7 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
     bytes32 private constant EIP712_NAME_HASH = keccak256("CipherDEX Launchpad Migrator");
     bytes32 private constant EIP712_VERSION_HASH = keccak256("1");
     bytes32 public constant MIGRATION_TYPEHASH = keccak256(
-        "Migration(bytes32 launchId,bytes32 launchCommitmentHash,address initializationStrategy,address creator,address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,bytes32 encryptedInputsHash,uint64 deadline,bool withDisposition,uint8 disposition,uint64 unlockTime)"
+        "Migration(bytes32 launchId,address initializationStrategy,address creator,address tokenA,address tokenB,uint8 decimalsA,uint8 decimalsB,uint256 feeBps,bytes32 encryptedInputsHash,uint64 deadline,bool withDisposition,uint8 disposition,uint64 unlockTime)"
     );
 
     address public immutable factory;
@@ -48,7 +48,7 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
     error InputAlreadyConsumed();
     error Reentrancy();
     error InvalidAuthorization();
-    error InvalidLaunchCommitment();
+    error InvalidMigrationRequest();
     error PrivateTransferAmountMismatch();
 
     modifier nonReentrant() {
@@ -116,23 +116,36 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
         uint64 unlockTime
     ) internal returns (address pool, ctUint256 memory mintedShares, bytes32 lockId) {
         if (request.deadline < block.timestamp) revert DeadlineExpired();
-        if (
-            request.launchId == bytes32(0) ||
-            request.launchCommitmentHash == bytes32(0)
-        ) revert InvalidLaunchCommitment();
+        if (request.launchId == bytes32(0)) revert InvalidMigrationRequest();
         if (request.tokenA == address(0) || request.tokenB == address(0) || request.tokenA == request.tokenB) {
             revert InvalidTokenPair();
         }
 
-        if (
-            !_isMigrationAuthorizationValid(
+        bytes32 authorizationHash = _migrationAuthorizationDigest(
+            msg.sender,
+            request,
+            withDisposition,
+            disposition,
+            unlockTime
+        );
+        if (!SignatureValidation.isValidSignatureNow(
+            msg.sender,
+            authorizationHash,
+            request.authorization
+        )) revert InvalidAuthorization();
+
+        (pool, ) = IConfidentialInitializationStrategy(initializationStrategy)
+            .prepareLaunch(
+                request.launchId,
                 msg.sender,
-                request,
-                withDisposition,
-                disposition,
-                unlockTime
-            )
-        ) revert InvalidAuthorization();
+                request.tokenA,
+                request.tokenB,
+                request.decimalsA,
+                request.decimalsB,
+                request.feeBps,
+                request.deadline,
+                authorizationHash
+            );
 
         (address token0, address token1, uint8 decimals0, uint8 decimals1) = request.tokenA < request.tokenB
             ? (request.tokenA, request.tokenB, request.decimalsA, request.decimalsB)
@@ -146,9 +159,12 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             request.feeBps,
             initializationStrategy
         );
-        pool = factoryContract.getPool(key);
-        if (pool == address(0) || !factoryContract.isPool(pool)) {
-            revert InvalidLaunchCommitment();
+        if (
+            pool == address(0) ||
+            factoryContract.getPool(key) != pool ||
+            !factoryContract.isPool(pool)
+        ) {
+            revert InvalidMigrationRequest();
         }
         IConfidentialCPMM canonicalPool = IConfidentialCPMM(pool);
         if (
@@ -162,7 +178,7 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             canonicalPool.feeBps() != request.feeBps ||
             canonicalPool.initializationStrategy() != initializationStrategy ||
             canonicalPool.initialized()
-        ) revert InvalidLaunchCommitment();
+        ) revert InvalidMigrationRequest();
 
         gtUint256 gtAmount0 = _validateAndConsume(request.amount0, 0);
         gtUint256 gtAmount1 = _validateAndConsume(request.amount1, 1);
@@ -191,7 +207,7 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             (mintedShares, lockId) = factoryContract.bootstrapPoolWithDisposition(
                 initializationStrategy,
                 request.launchId,
-                request.launchCommitmentHash,
+                authorizationHash,
                 pool,
                 msg.sender,
                 gtUint256.unwrap(gtAmount0),
@@ -206,7 +222,7 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             mintedShares = factoryContract.bootstrapPool(
                 initializationStrategy,
                 request.launchId,
-                request.launchCommitmentHash,
+                authorizationHash,
                 pool,
                 msg.sender,
                 gtUint256.unwrap(gtAmount0),
@@ -223,32 +239,11 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
             msg.sender,
             pool,
             initializationStrategy,
-            request.launchCommitmentHash
+            authorizationHash
         );
         if (withDisposition) {
             emit LaunchpadLockDisposition(msg.sender, pool, disposition, lockId, unlockTime);
         }
-    }
-
-    function _isMigrationAuthorizationValid(
-        address creator,
-        MigrationRequest calldata request,
-        bool withDisposition,
-        uint8 disposition,
-        uint64 unlockTime
-    ) internal view returns (bool) {
-        bytes32 digest = _migrationAuthorizationDigest(
-            creator,
-            request,
-            withDisposition,
-            disposition,
-            unlockTime
-        );
-        return SignatureValidation.isValidSignatureNow(
-            creator,
-            digest,
-            request.authorization
-        );
     }
 
     function _pullPrivateExact(
@@ -289,7 +284,6 @@ contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
                 abi.encode(
                     MIGRATION_TYPEHASH,
                     request.launchId,
-                    request.launchCommitmentHash,
                     initializationStrategy,
                     creator,
                     request.tokenA,

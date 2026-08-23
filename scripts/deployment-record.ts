@@ -51,6 +51,7 @@ export function resolveNewDeploymentRecordPath(
   outputPath: string,
   sourceCommit: string,
   cwd = process.cwd(),
+  networkSlug = "coti-testnet",
 ): Readonly<{ deploymentRoot: string; resolvedOutput: string }> {
   if (!SOURCE_COMMIT_PATTERN.test(sourceCommit)) {
     throw new Error("deployment record source commit must be a full Git commit");
@@ -63,13 +64,16 @@ export function resolveNewDeploymentRecordPath(
   const deploymentRoot = resolve(cwd, "deployments");
   const resolvedOutput = resolve(cwd, outputPath);
   const relativeOutput = relative(deploymentRoot, resolvedOutput).replaceAll("\\", "/");
+  if (!/^[a-z0-9-]+$/u.test(networkSlug)) {
+    throw new Error("deployment record network slug is invalid");
+  }
   if (
     relativeOutput.includes("/") ||
-    basename(relativeOutput).toLowerCase() !== `coti-testnet-${sourceCommit.toLowerCase()}.json` ||
+    basename(relativeOutput).toLowerCase() !== `${networkSlug}-${sourceCommit.toLowerCase()}.json` ||
     dirname(resolvedOutput) !== deploymentRoot
   ) {
     throw new Error(
-      "COTI_DEPLOYMENT_RECORD must be a unique deployments/coti-testnet-<commit>.json file",
+      `COTI_DEPLOYMENT_RECORD must be a unique deployments/${networkSlug}-<commit>.json file`,
     );
   }
   return Object.freeze({ deploymentRoot, resolvedOutput });
@@ -90,8 +94,14 @@ export class DeploymentRecordWriter {
     sourceCommit: string,
     reservation: Record<string, unknown>,
     cwd = process.cwd(),
+    networkSlug = "coti-testnet",
   ): Promise<DeploymentRecordWriter> {
-    const resolved = resolveNewDeploymentRecordPath(outputPath, sourceCommit, cwd);
+    const resolved = resolveNewDeploymentRecordPath(
+      outputPath,
+      sourceCommit,
+      cwd,
+      networkSlug,
+    );
     await mkdir(resolved.deploymentRoot, { recursive: true });
     const rootStat = await lstat(resolved.deploymentRoot);
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {

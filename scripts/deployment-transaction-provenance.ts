@@ -106,6 +106,7 @@ export const CANONICAL_TESTNET_DEPLOYMENTS: readonly CanonicalTestnetDeployment[
   Object.freeze({ key: "publicFactory", contractName: "PublicCPMMFactory", label: "PublicCPMMFactory deployment" }),
   Object.freeze({ key: "publicQuoter", contractName: "PublicCPMMQuoter", label: "PublicCPMMQuoter deployment" }),
   Object.freeze({ key: "publicRouter", contractName: "PublicCPMMRouter", label: "PublicCPMMRouter deployment" }),
+  Object.freeze({ key: "publicLiquidityRouter", contractName: "PublicCPMMLiquidityRouter", label: "PublicCPMMLiquidityRouter deployment" }),
 ]);
 
 const BINDINGS = Object.freeze([
@@ -197,6 +198,7 @@ function expectedConstructorArgs(contracts: JsonRecord): Readonly<Record<string,
   const publicFactory = asRecord(contracts.publicFactory, "contracts.publicFactory");
   const publicQuoter = asRecord(contracts.publicQuoter, "contracts.publicQuoter");
   const publicRouter = asRecord(contracts.publicRouter, "contracts.publicRouter");
+  asRecord(contracts.publicLiquidityRouter, "contracts.publicLiquidityRouter");
 
   const feeVaultAddress = requireAddress(feeVault, "address", "contracts.feeVault");
   const confidentialFactoryAddress = requireAddress(
@@ -265,17 +267,13 @@ function expectedConstructorArgs(contracts: JsonRecord): Readonly<Record<string,
     confidentialLaunchInitializationStrategy: [
       confidentialFactoryAddress,
       strategyRegistryAddress,
-      requireAddress(
-        launchStrategy,
-        "launchAuthority",
-        "contracts.confidentialLaunchInitializationStrategy",
-      ),
     ],
     confidentialBestExecutionRouter: [confidentialFactoryAddress],
     launchpadMigrator: [confidentialFactoryAddress, launchStrategyAddress],
     publicFactory: [feeVaultAddress],
     publicQuoter: [publicFactoryAddress],
     publicRouter: [publicFactoryAddress],
+    publicLiquidityRouter: [publicFactoryAddress],
   });
 }
 
@@ -583,6 +581,12 @@ export async function verifyDeploymentTransactionEvidence(
   await assertAddressState("PublicCPMMFactory", "publicFactory", "feeVault", feeVaultAddress);
   await assertAddressState("PublicCPMMQuoter", "publicQuoter", "factory", publicFactoryAddress);
   await assertAddressState("PublicCPMMRouter", "publicRouter", "factory", publicFactoryAddress);
+  await assertAddressState(
+    "PublicCPMMLiquidityRouter",
+    "publicLiquidityRouter",
+    "factory",
+    publicFactoryAddress,
+  );
 
   const routerVersion = await readState(
     provider,

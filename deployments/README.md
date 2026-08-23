@@ -3,9 +3,9 @@
 This directory is reserved for public, reviewed deployment records.
 
 Do not commit private keys, AES keys, encrypted inputs, signatures, local
-environment files, or unverified addresses here. Testnet deployment scripts
-live under `scripts/` and print public addresses, transaction hashes, gas and
-latency only. A release record should include:
+environment files, or unverified addresses here. Testnet and optional Ledger or
+private-key mainnet deployment scripts live under `scripts/` and print public addresses,
+transaction hashes, gas and latency only. A release record should include:
 
 - network and chain ID;
 - compiler version, EVM target and optimizer settings;
@@ -34,7 +34,8 @@ mutable generated file. After review:
 1. update `docs/VERIFICATION_REPORT.md` with the public deployment evidence;
 2. stage only that report and the completed record with
    `git add docs/VERIFICATION_REPORT.md` and
-   `git add -f deployments/coti-testnet-<commit>.json`;
+   `git add -f deployments/coti-testnet-<commit>.json` for testnet or
+   `git add -f deployments/coti-mainnet-<commit>.json` for mainnet;
 3. create a separate evidence commit after the source commit used for
    deployment; and
 4. run funded verification only from a clean checkout of that evidence commit.

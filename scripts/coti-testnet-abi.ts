@@ -41,6 +41,8 @@ export const CONFIDENTIAL_BEST_EXECUTION_ROUTER_TESTNET_ABI = [
   "error ResidualAllowance()",
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function factory() view returns (address)",
+  "function MAX_CANDIDATES() view returns (uint8)",
+  "function MAX_QUOTE_CANDIDATES() view returns (uint8)",
   "function usedRequestIds(address caller,bytes4 selector,bytes32 requestId) view returns (bool)",
   `function requestBestQuoteExactInput(address tokenIn,address tokenOut,${IT_UINT256} amountIn,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} result)`,
   `function requestBestQuoteExactInputWithCandidates(address tokenIn,address tokenOut,${IT_UINT256} amountIn,uint16 candidateBitmap,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} result)`,
@@ -89,6 +91,7 @@ export const CONFIDENTIAL_POOL_TESTNET_ABI = [
   `function myShares() returns (${CT_UINT256} shares)`,
   `function quoteExactInput(${IT_UINT256} amountIn,bool zeroForOne) returns (${CT_UINT256} amountOut)`,
   `function requestQuoteExactInput(${IT_UINT256} amountIn,bool zeroForOne,bytes32 requestId) returns (${CT_UINT256} result)`,
+  `function requestAddLiquidityQuote(${IT_UINT256} specifiedAmount,bool token0Specified,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} acceptedCiphertext,${CT_UINT256} counterpartCiphertext,${CT_UINT256} lpCiphertext)`,
   `function swapExactInput(${IT_UINT256} amountIn,${IT_UINT256} minAmountOut,bool zeroForOne,uint64 deadline) returns (${CT_UINT256} amountOut)`,
   `function addLiquidity(${IT_UINT256} amount0Desired,${IT_UINT256} amount1Desired,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,bool expectedInitialized,uint64 deadline) returns (${CT_UINT256} mintedShares)`,
   `function removeLiquidity(${IT_UINT256} shares,${IT_UINT256} minAmount0,${IT_UINT256} minAmount1,uint64 deadline) returns (${CT_UINT256} amount0,${CT_UINT256} amount1)`,
@@ -98,5 +101,6 @@ export const CONFIDENTIAL_POOL_TESTNET_ABI = [
   "function lockInfo(bytes32 lockId) view returns (address owner,uint64 unlockTime,bool permanent,bool released)",
   "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent)",
   `event ConfidentialQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed zeroForOne,${CT_UINT256} result)`,
+  `event ConfidentialLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed token0Specified,${CT_UINT256} acceptedCiphertext,${CT_UINT256} counterpartCiphertext,${CT_UINT256} lpCiphertext)`,
   "event ConfidentialProtocolFeesCollected(address indexed token,address indexed feeVault,uint32 aggregatedSwapCount)",
 ] as const;

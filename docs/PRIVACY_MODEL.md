@@ -30,11 +30,14 @@ discoverable by design.
 - participant addresses in the underlying standard PrivateERC20 `Transfer` event.
 - confidential protocol-fee collection token, destination, aggregate swap count,
   and collection-window timing (but not the accumulated amount).
-- launch ID, creator, launch authority, protected pool, commitment hash,
-  deadlines, cancellation/expiry/completion status and public LP disposition;
+- launch ID, creator, protected pool, creator authorization hash, migration
+  deadline, completion status and public LP disposition;
 - best-quote/best-swap caller, request ID, selected canonical pool, fee tier and
   initialization strategy, direction, transaction timing, gas and
   success/failure.
+- liquidity-preview caller, request ID, selected side, pool, transaction timing,
+  gas and success/failure. The accepted amount, counterpart and expected shares
+  remain caller-encrypted.
 
 The core confidential pool exposes no public reserve-derived market data. Pool
 identity, token metadata, fee tier, protocol version and privacy mode are public;
@@ -56,6 +59,13 @@ information-theoretic curve-hiding mechanism. The best-quote router improves
 cross-tier privacy by offboarding only the winner, but the caller learns that
 winner and its exact output and can probe repeatedly. A dedicated quote service
 must not persist or publish those outputs as protocol market data.
+
+The paid proportional-liquidity preview has the same active-caller boundary. A
+caller that decrypts accepted-side, counterpart and share outputs can infer the
+current ratio and estimate depth through repeated chosen inputs. It still keeps
+the LP's proposed amount and result out of public plaintext logs and prevents a
+passive observer from learning the ratio directly. Charging gas raises probing
+cost; it does not create an information-theoretic reserve-secrecy guarantee.
 
 Confidential protocol-fee collection has a related but narrower inference
 boundary. Pool-side count/time batching, canonical encrypted vault deposits,

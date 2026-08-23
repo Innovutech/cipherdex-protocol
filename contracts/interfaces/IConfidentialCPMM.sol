@@ -11,6 +11,15 @@ interface IConfidentialCPMM {
         ctUint256 result
     );
 
+    event ConfidentialLiquidityQuoteResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        bool indexed token0Specified,
+        ctUint256 acceptedCiphertext,
+        ctUint256 counterpartCiphertext,
+        ctUint256 lpCiphertext
+    );
+
     function PROTOCOL_VERSION() external view returns (uint256);
     function PRIVACY_MODE() external view returns (uint8);
     function token0() external view returns (address);
@@ -45,6 +54,17 @@ interface IConfidentialCPMM {
         bool zeroForOne,
         bytes32 requestId
     ) external returns (ctUint256 memory result);
+
+    function requestAddLiquidityQuote(
+        itUint256 calldata specifiedAmount,
+        bool token0Specified,
+        bytes32 requestId,
+        uint64 deadline
+    ) external returns (
+        ctUint256 memory acceptedCiphertext,
+        ctUint256 memory counterpartCiphertext,
+        ctUint256 memory lpCiphertext
+    );
 
     function swapExactInput(
         itUint256 calldata amountIn,

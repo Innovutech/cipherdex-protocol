@@ -119,6 +119,7 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
     error ResidualAllowance();
     error CanonicalLPTokenRequired();
     error ProtectedInitializationRequired();
+    error InvalidRequestId();
 
     event SwapExecuted(address indexed trader, bool indexed zeroForOne);
     event LiquidityAdded(address indexed provider);
@@ -136,6 +137,14 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         bytes32 indexed requestId,
         bool indexed zeroForOne,
         ctUint256 result
+    );
+    event ConfidentialLiquidityQuoteResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        bool indexed token0Specified,
+        ctUint256 acceptedCiphertext,
+        ctUint256 counterpartCiphertext,
+        ctUint256 lpCiphertext
     );
     event ConfidentialProtocolFeesCollected(
         address indexed token,
@@ -259,6 +268,67 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
     ) external returns (ctUint256 memory result) {
         result = _quoteExactInput(amountIn, zeroForOne, msg.sender);
         emit ConfidentialQuoteResult(msg.sender, requestId, zeroForOne, result);
+    }
+
+    /**
+     * @notice Computes the proportional deposit for an existing confidential pool.
+     * @dev The caller supplies one encrypted maximum amount. The accepted amount,
+     *      required counterpart and expected shares are returned only as caller-
+     *      encrypted ciphertexts. No reserve, price or plaintext amount is emitted.
+     *      The later addLiquidity call remains authoritative and must use reviewed
+     *      share and price bounds because pool state may move after this preview.
+     */
+    function requestAddLiquidityQuote(
+        itUint256 calldata specifiedAmount,
+        bool token0Specified,
+        bytes32 requestId,
+        uint64 deadline
+    ) external nonReentrant returns (
+        ctUint256 memory acceptedCiphertext,
+        ctUint256 memory counterpartCiphertext,
+        ctUint256 memory lpCiphertext
+    ) {
+        _requireBeforeDeadline(deadline);
+        if (requestId == bytes32(0)) revert InvalidRequestId();
+        _requireCanonicalLPToken();
+        if (!initialized) revert PoolNotInitialized();
+
+        gtUint256 maximumSpecified = _validateAndConsume(specifiedAmount);
+        _requirePositive(maximumSpecified);
+        gtUint256 reserve0 = _reserve0();
+        gtUint256 reserve1 = _reserve1();
+        gtUint256 currentTotal = _readPrivate(totalShares);
+        _requirePositive(reserve0);
+        _requirePositive(reserve1);
+        _requirePositive(currentTotal);
+
+        gtUint256 specifiedReserve = token0Specified ? reserve0 : reserve1;
+        gtUint256 counterpartReserve = token0Specified ? reserve1 : reserve0;
+        gtUint256 shares = MpcCore.div(
+            _mulChecked(maximumSpecified, currentTotal),
+            specifiedReserve
+        );
+        _requirePositive(shares);
+        gtUint256 accepted = _ceilDiv(
+            _mulChecked(shares, specifiedReserve),
+            currentTotal
+        );
+        gtUint256 counterpart = _ceilDiv(
+            _mulChecked(shares, counterpartReserve),
+            currentTotal
+        );
+
+        acceptedCiphertext = MpcCore.offBoardToUser(accepted, msg.sender);
+        counterpartCiphertext = MpcCore.offBoardToUser(counterpart, msg.sender);
+        lpCiphertext = MpcCore.offBoardToUser(shares, msg.sender);
+        emit ConfidentialLiquidityQuoteResult(
+            msg.sender,
+            requestId,
+            token0Specified,
+            acceptedCiphertext,
+            counterpartCiphertext,
+            lpCiphertext
+        );
     }
 
     function _quoteExactInput(

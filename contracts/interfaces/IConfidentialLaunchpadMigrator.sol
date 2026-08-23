@@ -6,7 +6,6 @@ import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
 interface IConfidentialLaunchpadMigrator {
     struct MigrationRequest {
         bytes32 launchId;
-        bytes32 launchCommitmentHash;
         address tokenA;
         address tokenB;
         uint8 decimalsA;
@@ -26,7 +25,7 @@ interface IConfidentialLaunchpadMigrator {
         address indexed creator,
         address indexed pool,
         address initializationStrategy,
-        bytes32 launchCommitmentHash
+        bytes32 authorizationHash
     );
     event LaunchpadLockDisposition(
         address indexed creator,
