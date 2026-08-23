@@ -1,6 +1,6 @@
 # Verification Report
 
-Date: 2026-08-21
+Date: 2026-08-23
 
 ## Status
 
@@ -12,12 +12,14 @@ completed with zero findings. The runner-only fee-recovery change, the testnet
 factory-ABI fix, the launchpad deadline/revert-evidence hardening and the
 deployment-evidence provenance handoff passed the complete local suite and
 focused Codex Security diff reviews with zero findings.
-Each executable change was
-correctly rejected by the preceding deployment's source-provenance gate, so the
-final reviewed commit was deployed through a new commit-bound public manifest.
-Superseded deployments remain diagnostic evidence only. The latest deployment
-has passed funded feasibility, best execution, fee collection, launchpad
-migration, quote-call capability probing and independent suite verification.
+Each executable change was correctly rejected by the preceding deployment's
+source-provenance gate. Commit
+`900c4449cc6cb880faf08b6576fc3306fc0d6d22` has therefore been deployed through
+a new commit-bound public manifest. Its deployment provenance and immutable
+bindings are verified, while its funded feasibility, expanded best execution,
+fee collection, launchpad migration and independent suite evidence remain
+pending at this checkpoint. The preceding supported deployment retains its
+completed funded evidence until this new suite is sealed.
 
 The current source additionally removes the confidential factory's external-token
 runtime-codehash admission list. Standard and launch-protected pool creation now
@@ -54,15 +56,15 @@ No dependency was added for this refactor.
 
 - production dependency audit: passed with zero advisories at every severity
 - production dependency graph: passed with no missing required dependency
-- clean privacy-boundary build: passed, 31 Solidity compilation units and 44
+- clean privacy-boundary build: passed, 32 Solidity compilation units and 46
   compiler-AST privacy checks
-- normal Solidity compile and TypeChain generation: passed, 31 Solidity
+- normal Solidity compile and TypeChain generation: passed, 32 Solidity
   compilation units
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 214 passing, 1 intentionally gated funded-network
-  integration placeholder; the Hardhat aggregate reported 215 Mocha cases
+- full local suite: 252 passing, 1 intentionally gated funded-network
+  integration placeholder; the Hardhat aggregate reported 253 Mocha cases
 - focused admission-policy suite: 59 passing
 - diff whitespace validation: passed
 
@@ -159,16 +161,17 @@ the request/result from passive observers, but a caller can query and decrypt
 its own deterministic outputs. The protocol therefore does not claim
 information-theoretic reserve secrecy from an active funded quote operator.
 
-The current undeployed source extends paid quote-only selection from three to
+The current deployed source extends paid quote-only selection from three to
 the complete nine-slot canonical v1 namespace while retaining the three-candidate
 atomic execution cap. Unit and invariant tests prove bitmap bounds, canonical
 candidate derivation, deterministic grouping and quote/swap cap separation.
-This is not yet funded evidence that a nine-candidate request fits the live COTI
-block limit. Production enablement must measure the exact deployed artifact; the
+This checkpoint is not yet funded evidence that a nine-candidate request fits
+the live COTI block limit. The funded gate must measure the exact deployed
+artifact; the
 SDK provides deterministic multi-request grouping with fresh ciphertext when a
 larger set cannot fit.
 
-The current undeployed source also adds an atomic public create-or-add liquidity
+The current deployed source also adds an atomic public create-or-add liquidity
 router and a paid confidential proportional-liquidity preview. Local tests cover
 atomic rollback, proportional refunds, zero router residue/allowance, both
 private preview directions, rounding and tiny-input rejection. No document in
@@ -401,9 +404,43 @@ values must not be printed or stored. The evidence record's EIP-191 attestation
 signature is public integrity metadata over the sanitized record, not a private
 operation signature or secret.
 
-The current fresh funded scenario suite passed and is recorded below. Historical
+The most recently completed funded scenario suite is recorded below. Historical
 deployment narratives are retained only to explain superseded testnet artifacts;
 they are not the supported integration surface.
+
+### Current source-bound deployment pending funded scenario seal
+
+Source commit `900c4449cc6cb880faf08b6576fc3306fc0d6d22` was deployed to COTI
+testnet chain `7082400` through the authenticated exact-commit launcher. The
+complete 18-transaction deployment and binding record is
+`deployments/coti-testnet-900c4449cc6cb880faf08b6576fc3306fc0d6d22.json`.
+All transactions succeeded, consumed `24726981` gas in total, and the deployment
+runner independently verified creation bytecode, constructor inputs, runtime
+codehashes and every immutable post-deployment relationship. Deployment created
+no pools and moved no private token.
+
+- Fee vault: `0x2daDb58b61f852E4e7cea65Cb723E6E6F252633e`.
+- Private LP-token factory: `0xE993ea49763791D05982301C599463c0b969E918`.
+- Initialization-strategy registry:
+  `0xA5601352Fb881eD85A95Acf16cf66869C75fB37A`.
+- Confidential pool deployer:
+  `0xf09D0E114D1Fd51dB4931b70E189de9BFC4683df`.
+- Confidential factory: `0x8B739C73bBaDa7b524b8C9A26D5c08b1FF9d3931`.
+- Launch initialization strategy:
+  `0xc8A8C78705A60ee1FBCd960F98EA5b65BF44111a`.
+- Launchpad migrator: `0x569fC6aFf505FDE23190c0773123dCE7aFECeE05`.
+- Confidential best-execution router:
+  `0x2462ea6116B59386dC6a64ACFcBEFE846fb9D128`.
+- Public factory: `0x6C1689d90E1A4B15914849c8e0c4FecaC5E1f7c9`.
+- Public quoter: `0x49F00241036F77ec1D3fac4f6C7F1D44C3299D47`.
+- Public swap router: `0x6e9e958108D84343E8d74923ADf2CadAcac7FCA6`.
+- Public liquidity router: `0xafa67648dF56A7B87493cDA6De58D018f226CBBE`.
+
+The funded suite must still prove the expanded four-, six- and nine-candidate
+quote paths, both proportional-liquidity preview directions, preview-bound
+settlement, public atomic rollback/refund/full-exit behavior, and the existing
+feasibility, fee-collection and launchpad lifecycle before this deployment
+replaces the preceding supported integration surface.
 
 ### Fresh COTI testnet deployment
 
