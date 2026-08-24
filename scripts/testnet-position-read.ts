@@ -42,7 +42,7 @@ const CREATE_POOL_GAS_LIMIT = 8_500_000n;
 const CALL_GAS_LIMIT = 30_000_000n;
 const UINT64_MAX = (1n << 64n) - 1n;
 const PRICE_SCALE = 10n ** 18n;
-const LOCK_SECONDS = 15;
+const LOCK_SECONDS = 120;
 let stage = "configuration";
 let requestNonce = 0;
 let recoveryJournal: FundedRecoveryJournal | undefined;
