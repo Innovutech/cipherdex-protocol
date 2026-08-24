@@ -202,6 +202,25 @@ const ALLOWED_TARGETS = new Map([
       "COTI_DEPLOYMENT_RECORD",
     ],
   }],
+  ["scripts/testnet-position-read.ts", {
+    arguments: ["--network", "cotiTestnet"],
+    funded: true,
+    environment: [
+      "COTI_AES_KEY",
+      "COTI_SECOND_LP_PRIVATE_KEY",
+      "COTI_SECOND_LP_AES_KEY",
+      "COTI_TOKEN0",
+      "COTI_TOKEN1",
+      "COTI_TOKEN0_DECIMALS",
+      "COTI_TOKEN1_DECIMALS",
+      "COTI_FEE_BPS",
+      "COTI_LIQUIDITY_AMOUNT0",
+      "COTI_LIQUIDITY_AMOUNT1",
+      "COTI_FACTORY",
+      "COTI_FEE_VAULT",
+      "COTI_DEPLOYMENT_RECORD",
+    ],
+  }],
 ]);
 
 const NETWORK_ENVIRONMENT = Object.freeze([

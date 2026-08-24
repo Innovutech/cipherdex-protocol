@@ -2531,7 +2531,7 @@ async function main(): Promise<void> {
     ethersLibrary.getAddress(String(configuredBeneficiary)) !== feeBeneficiary ||
     ethersLibrary.getAddress(String(configuredVaultFactory)) !== factoryDeployment.address ||
     ethersLibrary.getAddress(String(configuredRouterFactory)) !== factoryDeployment.address ||
-    BigInt(configuredRouterVersion) !== 2n ||
+    BigInt(configuredRouterVersion) !== 1n ||
     ethersLibrary.getAddress(String(configuredPoolDeployer)) !==
       poolDeployerDeployment.address ||
     ethersLibrary.getAddress(String(configuredStrategyRegistry)) !==

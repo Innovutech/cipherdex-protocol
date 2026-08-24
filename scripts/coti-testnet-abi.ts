@@ -92,6 +92,9 @@ export const CONFIDENTIAL_POOL_TESTNET_ABI = [
   `function quoteExactInput(${IT_UINT256} amountIn,bool zeroForOne) returns (${CT_UINT256} amountOut)`,
   `function requestQuoteExactInput(${IT_UINT256} amountIn,bool zeroForOne,bytes32 requestId) returns (${CT_UINT256} result)`,
   `function requestAddLiquidityQuote(${IT_UINT256} specifiedAmount,bool token0Specified,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} acceptedCiphertext,${CT_UINT256} counterpartCiphertext,${CT_UINT256} lpCiphertext)`,
+  `function requestMyPosition(bytes32 requestId,uint64 deadline) returns (${CT_UINT256} sharesCiphertext,${CT_UINT256} amount0Ciphertext,${CT_UINT256} amount1Ciphertext,${CT_UINT256} priceX18Ciphertext)`,
+  `function requestRemoveLiquidityQuote(${IT_UINT256} shares,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} sharesCiphertext,${CT_UINT256} amount0Ciphertext,${CT_UINT256} amount1Ciphertext,${CT_UINT256} priceX18Ciphertext)`,
+  `function requestLockedPosition(bytes32 lockId,bytes32 requestId,uint64 deadline) returns (${CT_UINT256} sharesCiphertext,${CT_UINT256} amount0Ciphertext,${CT_UINT256} amount1Ciphertext,${CT_UINT256} priceX18Ciphertext)`,
   `function swapExactInput(${IT_UINT256} amountIn,${IT_UINT256} minAmountOut,bool zeroForOne,uint64 deadline) returns (${CT_UINT256} amountOut)`,
   `function addLiquidity(${IT_UINT256} amount0Desired,${IT_UINT256} amount1Desired,${IT_UINT256} minShares,${IT_UINT256} minPriceX18,${IT_UINT256} maxPriceX18,bool expectedInitialized,uint64 deadline) returns (${CT_UINT256} mintedShares)`,
   `function removeLiquidity(${IT_UINT256} shares,${IT_UINT256} minAmount0,${IT_UINT256} minAmount1,uint64 deadline) returns (${CT_UINT256} amount0,${CT_UINT256} amount1)`,
@@ -102,5 +105,8 @@ export const CONFIDENTIAL_POOL_TESTNET_ABI = [
   "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent)",
   `event ConfidentialQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed zeroForOne,${CT_UINT256} result)`,
   `event ConfidentialLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed token0Specified,${CT_UINT256} acceptedCiphertext,${CT_UINT256} counterpartCiphertext,${CT_UINT256} lpCiphertext)`,
+  `event ConfidentialPositionResult(address indexed caller,bytes32 indexed requestId,${CT_UINT256} sharesCiphertext,${CT_UINT256} amount0Ciphertext,${CT_UINT256} amount1Ciphertext,${CT_UINT256} priceX18Ciphertext)`,
+  `event ConfidentialRemoveLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,${CT_UINT256} sharesCiphertext,${CT_UINT256} amount0Ciphertext,${CT_UINT256} amount1Ciphertext,${CT_UINT256} priceX18Ciphertext)`,
+  `event ConfidentialLockedPositionResult(address indexed caller,bytes32 indexed requestId,bytes32 indexed lockId,${CT_UINT256} sharesCiphertext,${CT_UINT256} amount0Ciphertext,${CT_UINT256} amount1Ciphertext,${CT_UINT256} priceX18Ciphertext)`,
   "event ConfidentialProtocolFeesCollected(address indexed token,address indexed feeVault,uint32 aggregatedSwapCount)",
 ] as const;

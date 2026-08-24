@@ -1148,8 +1148,8 @@ for (const fragment of [
   "journal().recordTransaction(",
   "UnresolvedDirectAllowanceError",
   "!(error instanceof UnknownBroadcastOutcomeError)",
-  "BigInt(factoryVersion) !== 3n",
-  "BigInt(poolVersion) !== 3n",
+  "BigInt(factoryVersion) !== 1n",
+  "BigInt(poolVersion) !== 1n",
 ]) {
   if (!harnessSource.includes(fragment)) {
     throw new Error(`Basic funded harness omits recovery/version control: ${fragment}`);
@@ -1493,6 +1493,7 @@ for (const file of [
   "scripts/testnet-best-execution.ts",
   "scripts/testnet-fee-collection.ts",
   "scripts/testnet-harness.ts",
+  "scripts/testnet-position-read.ts",
   "scripts/testnet-launchpad.ts",
 ]) {
   const source = await readFile(file, "utf8");
@@ -1507,6 +1508,7 @@ for (const file of [
   "scripts/testnet-best-execution.ts",
   "scripts/testnet-fee-collection.ts",
   "scripts/testnet-harness.ts",
+  "scripts/testnet-position-read.ts",
   "scripts/testnet-launchpad.ts",
 ]) {
   const source = await readFile(file, "utf8");
@@ -1863,6 +1865,7 @@ for (const signature of ["burn(uint256)", "burn(itUint256 calldata)", "burnGt(gt
 
 for (const file of [
   "scripts/testnet-harness.ts",
+  "scripts/testnet-position-read.ts",
   "scripts/testnet-preflight.ts",
   "scripts/testnet-quote-call-probe.ts",
   "scripts/testnet-launchpad.ts",
@@ -1918,7 +1921,7 @@ for (const fragment of [
   "await verifyDeployedRuntimeArtifact(",
   "strategyRegistryDeployment.contract.registerInitializationStrategy(",
   "strategyRegistryDeployment.contract.finalize(",
-  "BigInt(configuredRouterVersion) !== 2n",
+  "BigInt(configuredRouterVersion) !== 1n",
   "!Boolean(registryFinalized)",
 ]) {
   if (!bestExecutionProductionSource.includes(fragment)) {
@@ -2114,6 +2117,7 @@ for (const required of [
 for (const file of [
   "scripts/deploy-protocol.ts",
   "scripts/testnet-harness.ts",
+  "scripts/testnet-position-read.ts",
   "scripts/testnet-quote-call-probe.ts",
   "scripts/testnet-launchpad.ts",
   "scripts/testnet-fee-collection.ts",

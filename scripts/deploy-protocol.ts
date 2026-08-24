@@ -936,7 +936,7 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
     !sameAddress(String(deployedStrategyRegistry), strategyRegistryDeployment.address) ||
     !sameAddress(String(deployedBestExecutionRouter), confidentialRouterDeployment.address) ||
     !sameAddress(String(confidentialRouterFactory), factoryDeployment.address) ||
-    confidentialRouterVersion !== 2n ||
+    confidentialRouterVersion !== 1n ||
     !sameAddress(String(migratorFactory), factoryDeployment.address) ||
     !sameAddress(String(migratorStrategy), launchStrategyDeployment.address) ||
     !sameAddress(String(poolDeployerFactory), factoryDeployment.address) ||

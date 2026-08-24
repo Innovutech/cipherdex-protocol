@@ -594,8 +594,8 @@ export async function verifyDeploymentTransactionEvidence(
     confidentialRouterAddress,
     "PROTOCOL_VERSION",
   );
-  if (BigInt(String(routerVersion)) !== 2n) {
-    throw new Error("confidential best-execution router protocol version is not v2");
+  if (BigInt(String(routerVersion)) !== 1n) {
+    throw new Error("confidential best-execution router protocol version is not v1");
   }
   const [registryFinalized, strategyRegistered, strategyClass] = await Promise.all([
     readState(

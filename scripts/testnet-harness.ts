@@ -261,9 +261,9 @@ async function main(): Promise<void> {
   const normalizedFeeBps = Number(feeBps);
   if (
     [factoryCode, poolCode, token0Code, token1Code, vaultCode].some((code) => code === "0x") ||
-    BigInt(factoryVersion) !== 3n ||
+    BigInt(factoryVersion) !== 1n ||
     Number(factoryPrivacyMode) !== 1 ||
-    BigInt(poolVersion) !== 3n ||
+    BigInt(poolVersion) !== 1n ||
     Number(poolPrivacyMode) !== 1 ||
     !poolInitialized ||
     !isPool ||
