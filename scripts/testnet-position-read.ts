@@ -38,7 +38,7 @@ import {
 } from "./testnet-transaction-evidence";
 
 const EXPECTED_CHAIN_ID = 7_082_400n;
-const CREATE_POOL_GAS_LIMIT = 6_500_000n;
+const CREATE_POOL_GAS_LIMIT = 8_500_000n;
 const CALL_GAS_LIMIT = 30_000_000n;
 const UINT64_MAX = (1n << 64n) - 1n;
 const PRICE_SCALE = 10n ** 18n;
