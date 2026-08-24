@@ -26,9 +26,10 @@ through a new commit-bound public manifest. Its deployment provenance and
 immutable bindings are verified. Its funded feasibility, expanded best execution,
 mature fee collection and launchpad migration all passed, and their sanitized
 source-bound records were assembled into one passing suite record. Every
-disposable private and public resource was recovered with zero residue. Final
-promotion remains pending only until that committed aggregate record passes the
-independent evidence verifier from its exact evidence commit.
+disposable private and public resource was recovered with zero residue. The
+independent evidence verifier then passed from exact evidence commit
+`3f89343976cd609b6f86eaa2952a0bf9f268376c`, sealing this deployment as the
+current supported testnet integration surface.
 
 The current source additionally removes the confidential factory's external-token
 runtime-codehash admission list. Standard and launch-protected pool creation now
@@ -80,7 +81,7 @@ No dependency was added for this refactor.
 Fresh deployment gas was measured against the source-commit-bound testnet
 manifest recorded below. Feasibility, best-execution, fee-collection and
 launchpad evidence for that deployment passed and was aggregated into the public
-suite record described below; final independent verification remains pending.
+suite record described below. Independent exact-commit verification also passed.
 
 ## Complete pool identity
 
@@ -417,7 +418,7 @@ The most recently completed funded scenario suite is recorded below. Historical
 deployment narratives are retained only to explain superseded testnet artifacts;
 they are not the supported integration surface.
 
-### Current exact-source deployment with completed funded scenarios
+### Current supported exact-source deployment with verified funded suite
 
 Source commit `1a50f192c467dbb36a1dacbe18661b94fea2a5d5` was deployed to
 COTI testnet chain `7082400` through the authenticated exact-commit launcher.
@@ -474,8 +475,10 @@ to LPs or stranded. The launchpad runner proved failed price bounds roll back,
 creator-authorized migration initializes atomically, replay is rejected, direct
 private quote/swap and partial/full exits work, and a fully exited protected pool
 can be permissionlessly re-seeded. Both runners finished with zero pool residue
-and cleared owner allowances. Final promotion requires only the independent
-verification of this committed aggregate evidence record.
+and cleared owner allowances. The independent verifier ran from commit
+`3f89343976cd609b6f86eaa2952a0bf9f268376c`, recompiled the exact 32-unit
+Solidity source, revalidated the live deployment relationship and accepted the
+complete aggregate evidence record with exit code zero.
 
 ### Previous exact-source deployment with complete execution but failed evidence
 
