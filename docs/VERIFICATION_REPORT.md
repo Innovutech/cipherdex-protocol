@@ -14,12 +14,15 @@ deployment-evidence provenance handoff passed the complete local suite and
 focused Codex Security diff reviews with zero findings.
 Each executable change was correctly rejected by the preceding deployment's
 source-provenance gate. Corrected source commit
-`cac3da94bfa4a2bcfd7b0c8548f4f8768bdde635` has now been deployed through a
-new commit-bound public manifest. Its deployment provenance and immutable
-bindings are verified. Its funded feasibility, expanded best execution, fee
-collection, launchpad migration and independent suite evidence remain pending
-at this checkpoint. The preceding supported deployment retains its completed
-funded evidence until this new suite is sealed.
+`cac3da94bfa4a2bcfd7b0c8548f4f8768bdde635` was deployed and exposed two
+additional durable operation-identity collisions during the expanded funded
+run. All disposable resources from that run are now recovered. Source commit
+`019769db8b994d84971769435d1d4a35158b3621` fixes those runner-only identities
+and has been deployed through a new commit-bound public manifest. Its deployment
+provenance and immutable bindings are verified. Its funded feasibility,
+expanded best execution, fee collection, launchpad migration and independent
+suite evidence remain pending at this checkpoint. The preceding supported
+deployment retains its completed funded evidence until this new suite is sealed.
 
 The current source additionally removes the confidential factory's external-token
 runtime-codehash admission list. Standard and launch-protected pool creation now
@@ -70,8 +73,8 @@ No dependency was added for this refactor.
 
 Fresh deployment gas was measured against the source-commit-bound testnet
 manifest recorded below. Feasibility, best-execution, fee-collection and
-launchpad evidence passed the separately authenticated funded suite; the
-quote-call probe separately established the current runtime capability boundary.
+launchpad evidence for that deployment remain pending; the earlier quote-call
+probe separately established the current runtime capability boundary.
 
 ## Complete pool identity
 
@@ -408,7 +411,38 @@ The most recently completed funded scenario suite is recorded below. Historical
 deployment narratives are retained only to explain superseded testnet artifacts;
 they are not the supported integration surface.
 
-### Current source-bound deployment pending funded promotion
+### Current exact-source deployment pending funded promotion
+
+Source commit `019769db8b994d84971769435d1d4a35158b3621` was deployed to
+COTI testnet chain `7082400` through the authenticated exact-commit launcher.
+The complete 18-transaction deployment and binding record is
+`deployments/coti-testnet-019769db8b994d84971769435d1d4a35158b3621.json`.
+All transactions succeeded, consumed `24726981` gas in total, and the deployment
+runner independently verified creation bytecode, constructor inputs, runtime
+codehashes and every immutable post-deployment relationship. Deployment created
+no pools and moved no private token.
+
+- Fee vault: `0x807020279AEd4341fFEDf19cE3Bcc1309c85d1A9`.
+- Private LP-token factory: `0xb0Af1314bbb9da6B7AAb3Fc2F5C2a3070bd2BE76`.
+- Initialization-strategy registry:
+  `0xFcF41423F9730604c571c8A4A4E98A2D79863017`.
+- Confidential pool deployer:
+  `0x6a05E4113E141757533E38547166e6bfc8E49609`.
+- Confidential factory: `0x5Ed6BEE456Ea0E57CBC3577ae6eaAEf78C91b6f1`.
+- Launch initialization strategy:
+  `0xCFaefBA480391B8f1326eceA5031e710520c4Ba3`.
+- Launchpad migrator: `0x0Bfd5b61CBc7c2D031bEb2b08EDe9Efca432B966`.
+- Confidential best-execution router:
+  `0x500EE697Cb4b12723D4A67c0373Bb0b9224E14aa`.
+- Public factory: `0xA7176ffef4fE29f7DB32A5A6727C66DFb7d7bBD7`.
+- Public quoter: `0x662c96Ecb88C963AEBba07DA94B9C3Af991Bae8d`.
+- Public swap router: `0xBd3d92DCb954bcc379C453AE92a435DD8E6221cd`.
+- Public liquidity router: `0x00a96F796E665f88D14Bb81216b7dF979801FD59`.
+
+Promotion requires the complete source-bound funded suite and final independent
+evidence verification described above.
+
+### Recovered source-bound deployment with failed funded gate
 
 Corrected source commit `cac3da94bfa4a2bcfd7b0c8548f4f8768bdde635`
 was deployed to COTI testnet chain `7082400` through the authenticated
