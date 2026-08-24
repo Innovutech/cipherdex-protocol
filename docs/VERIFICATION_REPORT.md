@@ -20,13 +20,13 @@ expanded best-execution scenarios, including the reviewed nine-candidate quote,
 and fully recovered every private and public test pool. Its final evidence step
 failed closed because the factory-created disposable public pool had not been
 represented as a reviewed nested artifact. No paid execution was repeated.
-Source commit `2f95de47324dab936a8bafbd6e5419b24c6571c6` fixes only that evidence binding
-and has now been deployed through a new commit-bound public manifest. Its
-deployment provenance and immutable bindings are verified. Its funded
-feasibility, expanded best execution, fee collection, launchpad migration and
-independent suite evidence remain pending at this checkpoint. The preceding
-supported deployment retains its completed funded evidence until this new suite
-is sealed.
+Source commit `1a50f192c467dbb36a1dacbe18661b94fea2a5d5` contains the final
+evidence-classification and aggregate-publication fixes and has now been deployed
+through a new commit-bound public manifest. Its deployment provenance and
+immutable bindings are verified. Its funded feasibility, expanded best execution,
+fee collection, launchpad migration and independent suite evidence remain pending
+at this checkpoint. The preceding supported deployment retains its completed
+funded evidence until this new suite is sealed.
 
 The current source additionally removes the confidential factory's external-token
 runtime-codehash admission list. Standard and launch-protected pool creation now
@@ -70,8 +70,8 @@ No dependency was added for this refactor.
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 254 passing, 1 intentionally gated funded-network
-  integration placeholder; the Hardhat aggregate reported 255 Mocha cases
+- full local suite: 257 passing, 1 intentionally gated funded-network
+  integration placeholder; the Hardhat aggregate reported 258 Mocha cases
 - focused admission-policy suite: 59 passing
 - diff whitespace validation: passed
 
@@ -417,36 +417,58 @@ they are not the supported integration surface.
 
 ### Current exact-source deployment pending funded promotion
 
-Source commit `2f95de47324dab936a8bafbd6e5419b24c6571c6` was deployed to
+Source commit `1a50f192c467dbb36a1dacbe18661b94fea2a5d5` was deployed to
 COTI testnet chain `7082400` through the authenticated exact-commit launcher.
 The complete 18-transaction deployment and binding record is
-`deployments/coti-testnet-2f95de47324dab936a8bafbd6e5419b24c6571c6.json`.
-All transactions succeeded, consumed `24726933` gas in total, and the deployment
+`deployments/coti-testnet-1a50f192c467dbb36a1dacbe18661b94fea2a5d5.json`.
+All transactions succeeded, consumed `24726981` gas in total, and the deployment
 runner independently verified creation bytecode, constructor inputs, runtime
 codehashes and every immutable post-deployment relationship. Deployment created
 no pools and moved no private token.
 
-- Fee vault: `0x1c14Bf5Da6fd01DDC0F3Cbf664Cdf147D64FFdd8`.
-- Private LP-token factory: `0x76e8780bD496369979a298bd6C52F9c2664bf17E`.
+- Fee vault: `0xD1A9Bc0FC7f0a9c71b59E03B7Ed3a65efe2D1286`.
+- Private LP-token factory: `0x63433743022cceAa08D9B3DbC231360838691E78`.
 - Initialization-strategy registry:
-  `0x79DD1617EA73522818001321d7aA59a600Ac5472`.
+  `0x7E2108643DabC120Bd7e7DE9161e641253faf9c6`.
 - Confidential pool deployer:
-  `0xfF71b7e0578bE5D86b15f9fE7CD8bBAB53418659`.
-- Confidential factory: `0xeEE0519cD04f55a06750047d3673c2c574EAcabC`.
+  `0x8E3241d8468172d8f56BC25E6c979B58E2D76c64`.
+- Confidential factory: `0x55453D844E7f74D1D48AD554D366B82c92bb3aD6`.
 - Launch initialization strategy:
-  `0x4834FF29681173f79474578581130f165182228A`.
-- Launchpad migrator: `0x63f24c38A9A9bafA95c2e389B13342d645Ab2407`.
+  `0xD84E92629aC30c5D4938c5202439F2c6a54A4a5a`.
+- Launchpad migrator: `0xeCa8F62C316f2f5755d326b70f3AF22EbFfd43A4`.
 - Confidential best-execution router:
-  `0x884ae061fFAEa4859E7a6259A2221B06bd390585`.
-- Public factory: `0x813E73588ed579B6Ae924378508079fCA2a36C48`.
-- Public quoter: `0x9D288B58aCC42C9803BB822af1de7B5113693909`.
-- Public swap router: `0x0822B0d720Db56C75B22895E9cc99F4D2F561772`.
-- Public liquidity router: `0x708fE3d45aa8FFf613272137DCBC888634528841`.
+  `0x142633bE930d7c720e221BF5bf26F328896ECCf8`.
+- Public factory: `0x2f01e4f6ee208DcAc8e05f3919Cb0963e63A6B2b`.
+- Public quoter: `0x7C99086504890A532Cd4Fbb449D17c6FeE19CcE5`.
+- Public swap router: `0xFE9D53204E9a584E8c7A2A7127996d3a31FaC55a`.
+- Public liquidity router: `0x1e264A771bfb0A5bF46FBE69A922586031A85B3D`.
 
 This deployment contains the reviewed `90000000` funded quote envelope while
 retaining the protocol and SDK limits of nine quote-only candidates and three
 atomic candidates. Promotion requires the complete source-bound funded suite
 and final independent evidence verification described above.
+
+### Previous exact-source deployment with complete execution but failed evidence
+
+Source commit `2f95de47324dab936a8bafbd6e5419b24c6571c6` was deployed through
+the authenticated launcher and recorded at
+`deployments/coti-testnet-2f95de47324dab936a8bafbd6e5419b24c6571c6.json`.
+Its feasibility, expanded best-execution, mature fee-collection and launchpad
+scenarios all completed on-chain. The nine-candidate private quote used
+`75450799` gas under the reviewed `90000000` envelope. Both confidential fee
+batches matured and were collected, the terminal sub-threshold fee was deposited
+on full exit, and every disposable private and public pool was fully recovered.
+
+Final evidence failed closed because five protected-pool migration bindings were
+classified under the launchpad runner instead of best execution. Transaction-free
+rematerialization then proved the paid journals were complete, but aggregate
+publication exposed a separate disposable-runtime output-boundary defect. Commits
+`4348267a7bd86ddab66070747cedb472127594af` and
+`1a50f192c467dbb36a1dacbe18661b94fea2a5d5` correct those evidence-only
+boundaries and add regression coverage. The source-provenance gate correctly
+rejected using modified executable evidence code with the old deployment, so the
+paid operations were not presented as final evidence and the current fresh
+exact-source deployment was required.
 
 ### Previous exact-source deployment with completed paid scenarios
 
