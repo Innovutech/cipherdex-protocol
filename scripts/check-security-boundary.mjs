@@ -1981,6 +1981,9 @@ for (const required of [
 
 const bestExecutionRunnerRaw = await readFile("scripts/testnet-best-execution.ts", "utf8");
 const bestExecutionRunner = maskSourceCommentsAndLiterals(bestExecutionRunnerRaw);
+if (!bestExecutionRunnerRaw.includes('COTI_BEST_EXECUTION_GAS_LIMIT?.trim() ?? "90000000"')) {
+  throw new Error("Best-execution funded runner omits the live-proven quote gas envelope");
+}
 for (const required of [
   "fundedScenarioCap(balanceA)",
   "fundedScenarioCap(balanceB)",

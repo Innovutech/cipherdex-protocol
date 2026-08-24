@@ -57,7 +57,7 @@ import {
 
 const EXPECTED_CHAIN_ID = 7_082_400n;
 const CALL_GAS_LIMIT = (() => {
-  const raw = process.env.COTI_BEST_EXECUTION_GAS_LIMIT?.trim() ?? "60000000";
+  const raw = process.env.COTI_BEST_EXECUTION_GAS_LIMIT?.trim() ?? "90000000";
   if (!/^\d+$/.test(raw)) {
     throw new Error("COTI_BEST_EXECUTION_GAS_LIMIT must be a positive integer");
   }

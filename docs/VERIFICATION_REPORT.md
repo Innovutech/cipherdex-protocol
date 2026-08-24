@@ -442,6 +442,34 @@ no pools and moved no private token.
 Promotion requires the complete source-bound funded suite and final independent
 evidence verification described above.
 
+The source-bound feasibility gate passed against this deployment. Quote-only
+transaction
+`0x7464711b58616868c1bdeb105f4afae04d72c812aaeaceb22cf65e66447fea3d`
+used `1728873` gas and quote-plus-swap transaction
+`0x81adfc655b76272bd33731fe4d81b77731c3681d06b2383db376290c66de8cf2`
+used `5774409` gas; all three disposable probe contracts were permanently closed
+and every private asset was recovered.
+
+The expanded funded runner then passed the standard and launch-protected 5, 30
+and 100 bps lifecycle, absent/uninitialized/invalid candidate isolation,
+request/deadline/caller binding, both swap directions, deterministic selection,
+three-candidate settlement, and populated four- and six-candidate quote-only
+calls. Four candidates used `33696881` gas and six used `50439672` gas. The
+nine-candidate quote transaction
+`0x4248a80978bae233168e0a1a7ad7af63c07b67c6462b685b2f5e8786d3a73657`
+mined with failure after consuming `59976156` gas, proving exhaustion of the
+runner's former `60000000` envelope. Its containing block exposed a
+`120000000` gas limit. All nine disposable pools were subsequently closed with
+address-scoped cleanup identities; the journal reached zero active resources
+and zero active allowance obligations without an unknown transaction outcome.
+
+The next source raises only the funded runner's reviewed envelope to
+`90000000`, retaining 30M block headroom. Contract and SDK limits remain nine
+quote-only candidates and three atomic candidates. Because the runner is an
+executable provenance path and this run is terminal, a fresh exact-source
+deployment and complete funded suite are required rather than replaying the
+failed operation.
+
 ### Recovered source-bound deployment with failed funded gate
 
 Corrected source commit `cac3da94bfa4a2bcfd7b0c8548f4f8768bdde635`

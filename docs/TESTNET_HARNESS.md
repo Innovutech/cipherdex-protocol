@@ -24,19 +24,20 @@ Preflight submits no transaction.
 The Hardhat network uses `COTI_TESTNET_GAS_LIMIT` (default `30000000`) as an
 explicit transaction cap. Receipts charge only actual gas used.
 
-The three-candidate confidential router runner uses
-`COTI_BEST_EXECUTION_GAS_LIMIT` (default `60000000`). Its additional encrypted
-candidate validation and selected-pool settlement exceed the general 30M test
-cap, while remaining below the currently verified COTI testnet block limit.
-Always use receipt `gasUsed`, not this safety cap, for benchmarks.
+The confidential router runner uses `COTI_BEST_EXECUTION_GAS_LIMIT` (default
+`90000000`). Live COTI testnet evidence established a `120000000` block gas
+limit and showed that a nine-candidate quote exhausted the previous `60000000`
+transaction envelope at `59976156` gas. The 90M envelope preserves 30M of block
+headroom while allowing the complete quote-only namespace to execute. Atomic
+three-candidate settlement remains materially below that ceiling. Always use
+receipt `gasUsed`, not this safety cap, for benchmarks.
 
-The current source permits up to nine candidates for paid quote-only selection,
-but the funded runner and recorded gas evidence cover at most three. Before a
-production release enables a larger bitmap, extend the source-bound runner to
-measure the exact deployed router at every intended candidate count and retain
-block-limit headroom. Atomic best execution remains capped at three candidates.
-If a larger quote does not fit, integrations must use deterministic quote groups
-with a fresh encrypted input and request ID for each group.
+The current source permits up to nine candidates for paid quote-only selection
+and the funded runner measures populated four-, six- and nine-candidate calls.
+Atomic best execution remains capped at three candidates. If a target network's
+verified block limit cannot retain safe headroom for a requested quote bitmap,
+integrations must use deterministic quote groups with a fresh encrypted input
+and request ID for each group.
 
 The atomic public create-or-add liquidity router and confidential paid liquidity
 preview also require fresh source-bound funded COTI scenarios before their first
