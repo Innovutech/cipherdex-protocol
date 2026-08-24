@@ -10,6 +10,7 @@ import type { RuntimeArtifactProvenance } from "../../scripts/runtime-artifact";
 import {
   listTouchedPathsAcrossCommitRange,
   verifyConfiguredTestnetDeployment,
+  verifyConfiguredTestnetDeploymentForRecovery,
 } from "../../scripts/testnet-deployment-provenance";
 import { createFundedDeploymentBinding } from "../../scripts/funded-deployment-binding";
 
@@ -340,6 +341,61 @@ describe("configured testnet deployment provenance", function () {
         message = error instanceof Error ? error.message : String(error);
       }
       expect(message).to.include("post-source executable or unauthorized change");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("permits authenticated ancestor-source cleanup without weakening normal execution", async function () {
+    const { cwd, relativePath } = await fixture();
+    const dependencies = {
+      readSourceState: async (_cwd: string, recordPath: string) => ({
+        headCommit: evidenceCommit,
+        recordCommit: evidenceCommit,
+        dirty: false,
+        recordTracked: true,
+        recordMatchesHead: true,
+        sourceCommitIsAncestor: true,
+        changedPathsSinceSource: [recordPath, "scripts/testnet-best-execution.ts"],
+      }),
+      readImmutableRecord: async () => readFile(join(cwd, relativePath), "utf8"),
+      verifyRuntime: async () => artifact,
+      verifyTransactions: async () => undefined,
+      canonicalDeployments,
+    };
+    try {
+      const recovered = await verifyConfiguredTestnetDeploymentForRecovery(
+        relativePath,
+        sourceCommit,
+        { getCode: async () => "0x00" },
+        [{
+          recordKey: "confidentialFactory",
+          contractName: "ConfidentialCPMMFactory",
+          address,
+        }],
+        cwd,
+        dependencies,
+      );
+      expect(recovered.sourceCommit).to.equal(sourceCommit);
+
+      let mismatch = "";
+      try {
+        await verifyConfiguredTestnetDeploymentForRecovery(
+          relativePath,
+          "ef".repeat(20),
+          { getCode: async () => "0x00" },
+          [{
+            recordKey: "confidentialFactory",
+            contractName: "ConfidentialCPMMFactory",
+            address,
+          }],
+          cwd,
+          dependencies,
+        );
+      } catch (error) {
+        mismatch = error instanceof Error ? error.message : String(error);
+      }
+      expect(mismatch).to.include("does not match the deployment record");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

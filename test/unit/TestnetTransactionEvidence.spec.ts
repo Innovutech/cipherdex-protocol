@@ -16,12 +16,29 @@ import {
   validateFundedTransactionFeePolicy,
   type FundedFeePolicy,
 } from "../../scripts/funded-transaction-wallet";
+import { FundedOperationIdentityError } from "../../scripts/funded-recovery-journal";
 
 describe("funded testnet transaction evidence", function () {
   const hash = `0x${"12".repeat(32)}`;
   const otherHash = `0x${"34".repeat(32)}`;
   const failedReceipt = { hash, status: 0 as number | null };
   const successfulReceipt = { hash, status: 1 as number | null };
+
+  it("preserves deterministic pre-broadcast operation-identity failures", async function () {
+    const refusal = new FundedOperationIdentityError("duplicate funded operation");
+    let captured: unknown;
+    try {
+      await requireMinedSuccess(
+        "funded action",
+        async () => { throw refusal; },
+        async () => null,
+      );
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).to.equal(refusal);
+    expect(captured).not.to.be.instanceOf(UnknownBroadcastOutcomeError);
+  });
 
   it("derives bounded deadlines from chain time", function () {
     expect(futureChainDeadline(1_000, 3_600)).to.equal(4_600n);

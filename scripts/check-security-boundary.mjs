@@ -1456,6 +1456,7 @@ for (const required of [
   "recovery: true",
   "assertSoleRecoverableSignerTransaction(signerLeases, expectedHash)",
   "CIPHERDEX_RECOVERY_TRANSACTION_HASH",
+  "CIPHERDEX_BEST_EXECUTION_RECOVERY_SOURCE_COMMIT",
 ]) {
   if (!freshRunnerSource.includes(required)) {
     throw new Error(`Funded runner omits required recovery control: ${required}`);
@@ -1605,6 +1606,11 @@ for (const required of [
     throw new Error(`Funded evidence omits required literal control: ${required}`);
   }
 }
+if (!transactionEvidenceSource.includes("error instanceof FundedOperationIdentityError")) {
+  throw new Error(
+    "Deterministic funded operation-identity refusal is misclassified as broadcast uncertainty",
+  );
+}
 for (const required of [
   "createCipheriv(\"aes-256-gcm\"",
   "createDecipheriv(\"aes-256-gcm\"",
@@ -1613,6 +1619,7 @@ for (const required of [
   "persistedEnvelope",
   "allowanceObligations",
   "funded operation label is already journaled and cannot be re-signed",
+  "class FundedOperationIdentityError extends Error",
   "signedTransaction: undefined",
 ]) {
   if (!fundedRecoveryRawSource.includes(required)) {
@@ -1653,6 +1660,8 @@ for (const required of [
   '"log"',
   '"--format=%H"',
   "manifestCommit: sourceState.recordCommit.toLowerCase()",
+  "verifyConfiguredTestnetDeploymentForRecovery",
+  "funded resource recovery source does not match the deployment record",
 ]) {
   if (!deploymentProvenanceRawSource.includes(required)) {
     throw new Error(`Funded deployment provenance omits immutable Git binding: ${required}`);
@@ -1990,9 +1999,25 @@ for (const required of [
   '"second disposable launch strategy deployment"',
   '"funded public token A deployment"',
   '"funded public token B deployment"',
+  "`${resourceId} protected token0 approval`",
+  "`${resourceId} protected token1 approval`",
+  "`full cleanup exit for pool ${context.address.toLowerCase()}`",
+  "`${resource.id} protected recovery token0 approval`",
+  "`${resource.id} protected recovery token1 approval`",
 ]) {
   if (!bestExecutionRunnerRaw.includes(required)) {
     throw new Error(`Best-execution funded deployment labels are not unique: ${required}`);
+  }
+}
+for (const required of [
+  "verifyConfiguredTestnetDeploymentForRecovery(",
+  "authenticatedCommit !== deploymentRecord.evidenceCommit",
+  "recoveryJournal.activeResources.length !== 0",
+  "recoveryJournal.activeAllowanceObligations.length !== 0",
+  'recoveryJournal.markRun("failed")',
+]) {
+  if (!bestExecutionRunnerRaw.includes(required)) {
+    throw new Error(`Best-execution ancestor-source recovery omits required control: ${required}`);
   }
 }
 if (bestExecutionRunnerRaw.includes("CIPHERDEX_FEE_BENEFICIARY")) {

@@ -44,6 +44,7 @@ import { confidentialLiquidityBounds, minimumWithSlippage } from "./testnet-slip
 import {
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
+  verifyConfiguredTestnetDeploymentForRecovery,
 } from "./testnet-deployment-provenance";
 import {
   MinedTransactionStatusError,
@@ -750,7 +751,7 @@ async function initializeProtectedPool(
     canonicalToken0,
     migratorAddress,
     amount0,
-    `${feeBps} bps protected token0 approval`,
+    `${resourceId} protected token0 approval`,
   );
   await setExactAllowance(
     token1,
@@ -758,7 +759,7 @@ async function initializeProtectedPool(
     canonicalToken1,
     migratorAddress,
     amount1,
-    `${feeBps} bps protected token1 approval`,
+    `${resourceId} protected token1 approval`,
   );
   const selector = migrator.interface.getFunction("migrate")?.selector;
   if (!selector) throw new Error("protected migration selector unavailable");
@@ -868,11 +869,11 @@ async function initializeProtectedPool(
   }
   await setExactAllowance(
     token0, creator, canonicalToken0, migratorAddress, 0n,
-    `${feeBps} bps protected token0 post-migration cleanup`,
+    `${resourceId} protected token0 post-migration cleanup`,
   );
   await setExactAllowance(
     token1, creator, canonicalToken1, migratorAddress, 0n,
-    `${feeBps} bps protected token1 post-migration cleanup`,
+    `${resourceId} protected token1 post-migration cleanup`,
   );
   context.model.reserve0 = amount0;
   context.model.reserve1 = amount1;
@@ -903,7 +904,7 @@ async function removeAllLiquidity(
     wallet.encryptValue256(minimum1, context.address, selector),
   ]);
   const cleanup = await submit(
-    `full cleanup exit for ${context.feeBps} bps pool`,
+    `full cleanup exit for pool ${context.address.toLowerCase()}`,
     () => context.pool.removeLiquidity(
       encryptedShares,
       encryptedMinimum0,
@@ -1001,7 +1002,7 @@ async function recoverJournalPools(): Promise<void> {
         context.token0Address,
         migratorAddress,
         0n,
-        `${feeBps} bps protected recovery token0 approval`,
+        `${resource.id} protected recovery token0 approval`,
       );
       await setExactAllowance(
         context.token1,
@@ -1009,7 +1010,7 @@ async function recoverJournalPools(): Promise<void> {
         context.token1Address,
         migratorAddress,
         0n,
-        `${feeBps} bps protected recovery token1 approval`,
+        `${resource.id} protected recovery token1 approval`,
       );
     }
     const shares = await privateShares(context, recoveryWallet);
@@ -1808,6 +1809,12 @@ async function main(): Promise<void> {
   const factoryAddress = requiredAddress("COTI_FACTORY");
   const feeVaultAddress = requiredAddress("COTI_FEE_VAULT");
   const routerAddress = requiredAddress("COTI_BEST_EXECUTION_ROUTER");
+  const recoverySourceValue =
+    process.env.CIPHERDEX_BEST_EXECUTION_RECOVERY_SOURCE_COMMIT?.trim();
+  if (recoverySourceValue && !/^[0-9a-f]{40}$/iu.test(recoverySourceValue)) {
+    throw new Error("CIPHERDEX_BEST_EXECUTION_RECOVERY_SOURCE_COMMIT must be a full commit");
+  }
+  const recoverySourceCommit = recoverySourceValue?.toLowerCase();
   const configuredProofValue = process.env.CIPHERDEX_CONFIGURED_COMPATIBILITY_PROOF?.trim();
   if (configuredProofValue && configuredProofValue !== "1") {
     throw new Error("CIPHERDEX_CONFIGURED_COMPATIBILITY_PROOF must be 1 when set");
@@ -1831,27 +1838,78 @@ async function main(): Promise<void> {
   if (primaryAddress === quoteAddress) throw new Error("quote identity must be distinct");
 
   stage = "canonical deployment provenance";
-  const deploymentRecord = await verifyConfiguredTestnetDeployment(
-    requiredTestnetDeploymentRecordPath(),
-    ethers.provider,
-    [
-      {
-        recordKey: "feeVault",
-        contractName: "CipherDEXFeeVault",
-        address: feeVaultAddress,
-      },
-      {
-        recordKey: "confidentialFactory",
-        contractName: "ConfidentialCPMMFactory",
-        address: factoryAddress,
-      },
-      {
-        recordKey: "confidentialBestExecutionRouter",
-        contractName: "ConfidentialBestExecutionRouter",
-        address: routerAddress,
-      },
-    ],
-  );
+  const deploymentRequirements = [
+    {
+      recordKey: "feeVault",
+      contractName: "CipherDEXFeeVault",
+      address: feeVaultAddress,
+    },
+    {
+      recordKey: "confidentialFactory",
+      contractName: "ConfidentialCPMMFactory",
+      address: factoryAddress,
+    },
+    {
+      recordKey: "confidentialBestExecutionRouter",
+      contractName: "ConfidentialBestExecutionRouter",
+      address: routerAddress,
+    },
+  ] as const;
+  const deploymentPath = requiredTestnetDeploymentRecordPath();
+  const deploymentRecord = recoverySourceCommit
+    ? await verifyConfiguredTestnetDeploymentForRecovery(
+      deploymentPath,
+      recoverySourceCommit,
+      ethers.provider,
+      deploymentRequirements,
+    )
+    : await verifyConfiguredTestnetDeployment(
+      deploymentPath,
+      ethers.provider,
+      deploymentRequirements,
+    );
+  if (recoverySourceCommit) {
+    const authenticatedCommit = process.env.CIPHERDEX_AUTHENTICATED_SOURCE_COMMIT?.trim()
+      .toLowerCase();
+    if (
+      !authenticatedCommit ||
+      !/^[0-9a-f]{40}$/u.test(authenticatedCommit) ||
+      authenticatedCommit !== deploymentRecord.evidenceCommit
+    ) {
+      throw new Error("funded resource recovery is not bound to the authenticated runtime");
+    }
+    recoveryJournal = openFundedRecoveryJournal(primaryKey, {
+      runner: "best-execution",
+      sourceCommit: recoverySourceCommit,
+      chainId: Number(network.chainId),
+      owner: primaryAddress,
+      directory: requiredFundedRecoveryDirectory(),
+      deployment: await createFundedDeploymentBinding(deploymentRecord),
+    });
+    recoveryWallet = primary;
+    const unresolved = await recoveryJournal.reconcileTransactions(ethers.provider);
+    if (unresolved.length > 0) {
+      throw new Error(
+        `funded recovery has ${unresolved.length} transaction(s) with unknown outcome; do not retry`,
+      );
+    }
+    await recoverPrivateAllowanceObligations({
+      journal: recoveryJournal,
+      wallets: [primary, second, quoteWallet],
+      overrides: { gasLimit: CALL_GAS_LIMIT },
+      submit,
+    });
+    await recoverJournalPools();
+    if (
+      recoveryJournal.activeResources.length !== 0 ||
+      recoveryJournal.activeAllowanceObligations.length !== 0
+    ) {
+      throw new Error("funded resource recovery did not reach terminal state");
+    }
+    recoveryJournal.markRun("failed");
+    console.log(`Recovered all best-execution resources for source ${recoverySourceCommit}.`);
+    return;
+  }
   const configuredFactory = await ethers.getContractAt(
     "ConfidentialCPMMFactory",
     factoryAddress,

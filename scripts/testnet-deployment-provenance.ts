@@ -377,12 +377,13 @@ export function requiredTestnetDeploymentRecordPath(): string {
   return value;
 }
 
-export async function verifyConfiguredTestnetDeployment(
+async function verifyConfiguredTestnetDeploymentInternal(
   configuredPath: string,
   provider: RuntimeCodeProvider,
   requirements: readonly TestnetDeploymentContractRequirement[],
   cwd = process.cwd(),
   dependencies: ProvenanceDependencies = {},
+  recoverySourceCommit?: string,
 ): Promise<VerifiedTestnetDeploymentRecord> {
   if (requirements.length === 0) {
     throw new Error("deployment provenance verification requires at least one contract");
@@ -443,10 +444,17 @@ export async function verifyConfiguredTestnetDeployment(
   const unexpectedPath = changedPaths.find((path) =>
     !permittedEvidencePaths.has(path) && path !== expectedFundedEvidencePath
   );
-  if (unexpectedPath) {
+  if (unexpectedPath && recoverySourceCommit === undefined) {
     throw new Error(
       `deployment evidence contains a post-source executable or unauthorized change: ${unexpectedPath}`,
     );
+  }
+  if (
+    recoverySourceCommit !== undefined &&
+    (!SOURCE_COMMIT_PATTERN.test(recoverySourceCommit) ||
+      recoverySourceCommit.toLowerCase() !== sourceCommit)
+  ) {
+    throw new Error("funded resource recovery source does not match the deployment record");
   }
 
   const contracts = asRecord(record.contracts, "deployment record contracts");
@@ -527,4 +535,38 @@ export async function verifyConfiguredTestnetDeployment(
     contracts: contracts as Record<string, JsonRecord>,
     compiler: compiler as Record<string, JsonRecord>,
   });
+}
+
+export async function verifyConfiguredTestnetDeployment(
+  configuredPath: string,
+  provider: RuntimeCodeProvider,
+  requirements: readonly TestnetDeploymentContractRequirement[],
+  cwd = process.cwd(),
+  dependencies: ProvenanceDependencies = {},
+): Promise<VerifiedTestnetDeploymentRecord> {
+  return verifyConfiguredTestnetDeploymentInternal(
+    configuredPath,
+    provider,
+    requirements,
+    cwd,
+    dependencies,
+  );
+}
+
+export async function verifyConfiguredTestnetDeploymentForRecovery(
+  configuredPath: string,
+  recoverySourceCommit: string,
+  provider: RuntimeCodeProvider,
+  requirements: readonly TestnetDeploymentContractRequirement[],
+  cwd = process.cwd(),
+  dependencies: ProvenanceDependencies = {},
+): Promise<VerifiedTestnetDeploymentRecord> {
+  return verifyConfiguredTestnetDeploymentInternal(
+    configuredPath,
+    provider,
+    requirements,
+    cwd,
+    dependencies,
+    recoverySourceCommit,
+  );
 }

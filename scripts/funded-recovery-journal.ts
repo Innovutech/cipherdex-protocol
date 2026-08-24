@@ -47,6 +47,13 @@ export type RecoveryTransactionStatus =
   | "mined-failure"
   | "outcome-unknown";
 
+export class FundedOperationIdentityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FundedOperationIdentityError";
+  }
+}
+
 export type RecoveryTransaction = Readonly<{
   label: string;
   hash: string;
@@ -920,7 +927,9 @@ export class FundedRecoveryJournal {
       return;
     }
     if (this.state.transactions.some((transaction) => transaction.label === label)) {
-      throw new Error("funded operation label is already journaled and cannot be re-signed");
+      throw new FundedOperationIdentityError(
+        "funded operation label is already journaled and cannot be re-signed",
+      );
     }
     this.state.transactions.push({
       label,
@@ -967,7 +976,9 @@ export class FundedRecoveryJournal {
       return;
     }
     if (this.state.transactions.some((transaction) => transaction.label === label)) {
-      throw new Error("funded operation label is already journaled with another transaction");
+      throw new FundedOperationIdentityError(
+        "funded operation label is already journaled with another transaction",
+      );
     }
     this.state.transactions.push({ label, hash, status: "mined-success", blockNumber });
     this.persist();

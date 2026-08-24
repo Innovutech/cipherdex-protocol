@@ -1,3 +1,5 @@
+import { FundedOperationIdentityError } from "./funded-recovery-journal";
+
 const TRANSACTION_HASH = /^0x[0-9a-fA-F]{64}$/;
 const ERROR_SELECTOR = /^0x[0-9a-fA-F]{8}$/;
 const UINT64_MAX = (1n << 64n) - 1n;
@@ -327,6 +329,7 @@ async function requireMinedStatus<TReceipt extends ReceiptLike>(
   try {
     transaction = await operation();
   } catch (error) {
+    if (error instanceof FundedOperationIdentityError) throw error;
     const possibleHash = transactionHashFromError(error);
     if (possibleHash && onBroadcast) {
       try {

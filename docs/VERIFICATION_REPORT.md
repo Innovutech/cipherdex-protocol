@@ -63,8 +63,8 @@ No dependency was added for this refactor.
 - TypeScript: passed
 - source-boundary lexer tests: passed
 - supplemental security-boundary checks: passed
-- full local suite: 252 passing, 1 intentionally gated funded-network
-  integration placeholder; the Hardhat aggregate reported 253 Mocha cases
+- full local suite: 254 passing, 1 intentionally gated funded-network
+  integration placeholder; the Hardhat aggregate reported 255 Mocha cases
 - focused admission-policy suite: 59 passing
 - diff whitespace validation: passed
 
@@ -441,6 +441,29 @@ This deployment crossed the runner point that failed for the preceding source:
 the disposable strategy and public-token operations now use distinct durable
 identities. Promotion still requires the complete source-bound funded suite and
 final independent evidence verification described above.
+
+The expanded funded best-execution run then exercised the standard and
+launch-protected 5, 30 and 100 bps candidates, absent and uninitialized
+candidate skipping, request replay/deadline/caller isolation, two- and
+three-candidate quote-and-swap selection, deterministic tie-breaking, invalid
+encrypted-candidate isolation and reverse-direction routing. The measured
+three-candidate quote consumed `25291008` gas, while the corresponding
+quote-and-swap consumed `38282486` gas. The run stopped before broadcast when a
+second protected-pool token approval reused the first protected pool's durable
+logical-operation label. No unknown transaction hash was produced.
+
+An exact-source recovery rerun closed the first three active disposable pools
+through transactions
+`0xfbe217...`, `0x441810...` and `0xfe727c...`; the abbreviated hashes are
+diagnostic only until terminal evidence is published. Recovery then stopped
+before its next broadcast because the cleanup operation label had the same
+fee-tier-only identity defect. The current runner binds pool approvals and
+cleanup operations to the complete disposable-resource identity, classifies
+duplicate operation identities as definite pre-broadcast failures, and adds an
+authenticated cleanup-only path that may open the original journal only when
+its supplied recovery source commit exactly matches this deployment manifest.
+The remaining disposable state must be closed through that path before a fresh
+source-bound deployment and funded promotion proceed.
 
 ### Superseded source-bound deployment with failed funded gate
 
