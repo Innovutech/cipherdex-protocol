@@ -13,16 +13,20 @@ factory-ABI fix, the launchpad deadline/revert-evidence hardening and the
 deployment-evidence provenance handoff passed the complete local suite and
 focused Codex Security diff reviews with zero findings.
 Each executable change was correctly rejected by the preceding deployment's
-source-provenance gate. Corrected source commit
-`cac3da94bfa4a2bcfd7b0c8548f4f8768bdde635` was deployed and exposed two
-additional durable operation-identity collisions during the expanded funded
-run. All disposable resources from that run are now recovered. Source commit
-`019769db8b994d84971769435d1d4a35158b3621` fixes those runner-only identities
-and has been deployed through a new commit-bound public manifest. Its deployment
-provenance and immutable bindings are verified. Its funded feasibility,
-expanded best execution, fee collection, launchpad migration and independent
-suite evidence remain pending at this checkpoint. The preceding supported
-deployment retains its completed funded evidence until this new suite is sealed.
+source-provenance gate. All disposable resources from the intervening funded
+runs were recovered. Source commit
+`4f435f9cc96b41895604335d838287a60a25a3b3` then passed the feasibility and
+expanded best-execution scenarios, including the reviewed nine-candidate quote,
+and fully recovered every private and public test pool. Its final evidence step
+failed closed because the factory-created disposable public pool had not been
+represented as a reviewed nested artifact. No paid execution was repeated.
+Source commit `2f95de47324dab936a8bafbd6e5419b24c6571c6` fixes only that evidence binding
+and has now been deployed through a new commit-bound public manifest. Its
+deployment provenance and immutable bindings are verified. Its funded
+feasibility, expanded best execution, fee collection, launchpad migration and
+independent suite evidence remain pending at this checkpoint. The preceding
+supported deployment retains its completed funded evidence until this new suite
+is sealed.
 
 The current source additionally removes the confidential factory's external-token
 runtime-codehash admission list. Standard and launch-protected pool creation now
@@ -413,36 +417,58 @@ they are not the supported integration surface.
 
 ### Current exact-source deployment pending funded promotion
 
-Source commit `4f435f9cc96b41895604335d838287a60a25a3b3` was deployed to
+Source commit `2f95de47324dab936a8bafbd6e5419b24c6571c6` was deployed to
 COTI testnet chain `7082400` through the authenticated exact-commit launcher.
 The complete 18-transaction deployment and binding record is
-`deployments/coti-testnet-4f435f9cc96b41895604335d838287a60a25a3b3.json`.
+`deployments/coti-testnet-2f95de47324dab936a8bafbd6e5419b24c6571c6.json`.
 All transactions succeeded, consumed `24726933` gas in total, and the deployment
 runner independently verified creation bytecode, constructor inputs, runtime
 codehashes and every immutable post-deployment relationship. Deployment created
 no pools and moved no private token.
 
-- Fee vault: `0x64776BE43B2e2Dc8cf1A2AC6765b94c4f72EA6fB`.
-- Private LP-token factory: `0x7f50a41D4E400574aA1cA842D99A88448A0905FA`.
+- Fee vault: `0x1c14Bf5Da6fd01DDC0F3Cbf664Cdf147D64FFdd8`.
+- Private LP-token factory: `0x76e8780bD496369979a298bd6C52F9c2664bf17E`.
 - Initialization-strategy registry:
-  `0xDF9293C58381ec0491a49a6a6c751351A2DfA9df`.
+  `0x79DD1617EA73522818001321d7aA59a600Ac5472`.
 - Confidential pool deployer:
-  `0x81C06Ffba141247c996FcD347608a7A60b34e8E5`.
-- Confidential factory: `0xC77D905539D94928615881c34B0717A6919B429a`.
+  `0xfF71b7e0578bE5D86b15f9fE7CD8bBAB53418659`.
+- Confidential factory: `0xeEE0519cD04f55a06750047d3673c2c574EAcabC`.
 - Launch initialization strategy:
-  `0xBceD7D60dC34E8fF858589153a7b71F8457C213c`.
-- Launchpad migrator: `0x4184fC2a00689B05F017DA0DAFc12620bE97989a`.
+  `0x4834FF29681173f79474578581130f165182228A`.
+- Launchpad migrator: `0x63f24c38A9A9bafA95c2e389B13342d645Ab2407`.
 - Confidential best-execution router:
-  `0xE971e45D07E4155bE9cba5d3D29BBcD995c3B7d8`.
-- Public factory: `0x47340036f8B2099890CE5F6AA7015b7444E9Df86`.
-- Public quoter: `0x65be03EB099d035461498B5596ffD256bC62AeD0`.
-- Public swap router: `0xae478Cc2e878808025181E29fFf7D924896BfAA0`.
-- Public liquidity router: `0x1Fe51caA21c344974eedB3FC645536682b745E64`.
+  `0x884ae061fFAEa4859E7a6259A2221B06bd390585`.
+- Public factory: `0x813E73588ed579B6Ae924378508079fCA2a36C48`.
+- Public quoter: `0x9D288B58aCC42C9803BB822af1de7B5113693909`.
+- Public swap router: `0x0822B0d720Db56C75B22895E9cc99F4D2F561772`.
+- Public liquidity router: `0x708fE3d45aa8FFf613272137DCBC888634528841`.
 
 This deployment contains the reviewed `90000000` funded quote envelope while
 retaining the protocol and SDK limits of nine quote-only candidates and three
 atomic candidates. Promotion requires the complete source-bound funded suite
 and final independent evidence verification described above.
+
+### Previous exact-source deployment with completed paid scenarios
+
+Source commit `4f435f9cc96b41895604335d838287a60a25a3b3` was deployed through
+the exact-commit launcher and recorded at
+`deployments/coti-testnet-4f435f9cc96b41895604335d838287a60a25a3b3.json`.
+Its deployment used `24726933` gas and passed immutable-binding verification.
+The source-bound feasibility run passed. The expanded best-execution run then
+passed two- and three-candidate quote and settlement, four-, six- and
+nine-candidate quote selection, confidential proportional-liquidity preview and
+settlement, and public atomic creation plus proportional liquidity. The
+nine-candidate quote used `75450799` gas under the reviewed `90000000` envelope
+and the COTI testnet block limit. Every confidential test pool was fully exited,
+and the disposable public pool was fully cleaned.
+
+The final public-evidence generator subsequently rejected the public cleanup
+transaction because that factory-created pool was not included in its reviewed
+nested-artifact set. This was an evidence-model defect, not a failed on-chain
+cleanup. The runner correctly refused to repeat paid execution. Commit
+`2f95de47324dab936a8bafbd6e5419b24c6571c6` adds the event-bound disposable
+public pool artifact and exact cleanup selector/target checks; a fresh
+exact-source deployment and full suite are required for promotion.
 
 ### Previous exact-source deployment with exhausted runner envelope
 
