@@ -41,7 +41,7 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
     constructor(address factory_) {
         if (factory_.code.length == 0) revert InvalidFactory();
         IPublicCPMMFactory candidate = IPublicCPMMFactory(factory_);
-        if (candidate.PROTOCOL_VERSION() != 2 || candidate.feeVault().code.length == 0) {
+        if (candidate.PROTOCOL_VERSION() != 1 || candidate.feeVault().code.length == 0) {
             revert InvalidFactory();
         }
         factory = factory_;

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 contract MockBestExecutionRouterFacade {
-    uint256 public constant PROTOCOL_VERSION = 2;
+    uint256 public constant PROTOCOL_VERSION = 1;
     address public factory;
 
     constructor(address factory_) {

@@ -97,7 +97,7 @@ private-token approvals, and migration submission without changing protocol
 semantics. Exact and unlimited approval policy remains an explicit frontend
 choice; exact is the default.
 
-Discovery schema version 7 exposes only public identity/configuration and the
+Discovery schema version 1 exposes only public identity/configuration and the
 creator authorization hash: strategy class, initialized state, fee tier,
 protocol/privacy versions, launch ID, creator, pool, and LP disposition. It does
 not expose seed amounts, reserves, LP supply, price bounds, or accrued fees.

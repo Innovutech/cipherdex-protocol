@@ -20,6 +20,34 @@ interface IConfidentialCPMM {
         ctUint256 lpCiphertext
     );
 
+    event ConfidentialPositionResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        ctUint256 sharesCiphertext,
+        ctUint256 amount0Ciphertext,
+        ctUint256 amount1Ciphertext,
+        ctUint256 priceX18Ciphertext
+    );
+
+    event ConfidentialRemoveLiquidityQuoteResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        ctUint256 sharesCiphertext,
+        ctUint256 amount0Ciphertext,
+        ctUint256 amount1Ciphertext,
+        ctUint256 priceX18Ciphertext
+    );
+
+    event ConfidentialLockedPositionResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        bytes32 indexed lockId,
+        ctUint256 sharesCiphertext,
+        ctUint256 amount0Ciphertext,
+        ctUint256 amount1Ciphertext,
+        ctUint256 priceX18Ciphertext
+    );
+
     function PROTOCOL_VERSION() external view returns (uint256);
     function PRIVACY_MODE() external view returns (uint8);
     function token0() external view returns (address);
@@ -64,6 +92,38 @@ interface IConfidentialCPMM {
         ctUint256 memory acceptedCiphertext,
         ctUint256 memory counterpartCiphertext,
         ctUint256 memory lpCiphertext
+    );
+
+    function requestMyPosition(
+        bytes32 requestId,
+        uint64 deadline
+    ) external returns (
+        ctUint256 memory sharesCiphertext,
+        ctUint256 memory amount0Ciphertext,
+        ctUint256 memory amount1Ciphertext,
+        ctUint256 memory priceX18Ciphertext
+    );
+
+    function requestRemoveLiquidityQuote(
+        itUint256 calldata shares,
+        bytes32 requestId,
+        uint64 deadline
+    ) external returns (
+        ctUint256 memory sharesCiphertext,
+        ctUint256 memory amount0Ciphertext,
+        ctUint256 memory amount1Ciphertext,
+        ctUint256 memory priceX18Ciphertext
+    );
+
+    function requestLockedPosition(
+        bytes32 lockId,
+        bytes32 requestId,
+        uint64 deadline
+    ) external returns (
+        ctUint256 memory sharesCiphertext,
+        ctUint256 memory amount0Ciphertext,
+        ctUint256 memory amount1Ciphertext,
+        ctUint256 memory priceX18Ciphertext
     );
 
     function swapExactInput(

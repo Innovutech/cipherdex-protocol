@@ -77,8 +77,8 @@ describe("PublicCPMM periphery", function () {
     expect(await token1.balanceOf(trader.address)).to.equal(outputBefore + quoted);
     expect(await token0.balanceOf(routerAddress)).to.equal(0n);
     expect(await token1.balanceOf(routerAddress)).to.equal(0n);
-    expect(await quoter.PROTOCOL_VERSION()).to.equal(2n);
-    expect(await router.PROTOCOL_VERSION()).to.equal(2n);
+    expect(await quoter.PROTOCOL_VERSION()).to.equal(1n);
+    expect(await router.PROTOCOL_VERSION()).to.equal(1n);
   });
 
   it("rejects pools outside its immutable factory", async function () {

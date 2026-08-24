@@ -38,6 +38,9 @@ discoverable by design.
 - liquidity-preview caller, request ID, selected side, pool, transaction timing,
   gas and success/failure. The accepted amount, counterpart and expected shares
   remain caller-encrypted.
+- position-read caller, request ID, pool, transaction timing and success/failure;
+  locked-position reads additionally reveal the already-public lock ID. Shares,
+  current claims and normalized price remain caller-encrypted.
 
 The core confidential pool exposes no public reserve-derived market data. Pool
 identity, token metadata, fee tier, protocol version and privacy mode are public;
@@ -66,6 +69,14 @@ current ratio and estimate depth through repeated chosen inputs. It still keeps
 the LP's proposed amount and result out of public plaintext logs and prevents a
 passive observer from learning the ratio directly. Charging gas raises probing
 cost; it does not create an information-theoretic reserve-secrecy guarantee.
+
+The position and removal-preview paths intentionally disclose a provider's
+own current claim to that provider. The locked-position path requires the public
+lock owner to be the caller and rejects released locks. An LP can infer current
+pool ratio from its own claim, so this does not promise aggregate curve secrecy
+against active liquidity providers. It does preserve amount confidentiality from
+passive observers and unrelated wallets. Protocol-fee accumulators remain
+excluded from LP claims and have no owner-read endpoint.
 
 Confidential protocol-fee collection has a related but narrower inference
 boundary. Pool-side count/time batching, canonical encrypted vault deposits,

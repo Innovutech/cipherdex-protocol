@@ -119,13 +119,13 @@ describe("ConfidentialLaunchpadMigrator", function () {
     };
   }
 
-  it("binds immutably to the v3 factory and reviewed strategy", async function () {
+  it("binds immutably to the v1 factory and reviewed strategy", async function () {
     const { deployment, launch, other } = await fixture();
     const migratorFactory = await ethers.getContractFactory(
       "ConfidentialLaunchpadMigrator",
     );
 
-    expect(await launch.migrator.PROTOCOL_VERSION()).to.equal(4n);
+    expect(await launch.migrator.PROTOCOL_VERSION()).to.equal(1n);
     expect(await launch.migrator.factory()).to.equal(
       await deployment.factory.getAddress(),
     );

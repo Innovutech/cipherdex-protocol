@@ -25,7 +25,7 @@ import "./CipherDEXFeePolicy.sol";
  * deployment and has not received an external audit.
  */
 contract ConfidentialCPMM is CipherDEXFeePolicy {
-    uint256 public constant PROTOCOL_VERSION = 3;
+    uint256 public constant PROTOCOL_VERSION = 1;
     uint8 public constant PRIVACY_MODE = 1;
     uint256 public constant PRICE_SCALE = 1e18;
     uint32 public constant MIN_CONFIDENTIAL_COLLECTION_SWAPS = 8;
@@ -145,6 +145,31 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         ctUint256 acceptedCiphertext,
         ctUint256 counterpartCiphertext,
         ctUint256 lpCiphertext
+    );
+    event ConfidentialPositionResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        ctUint256 sharesCiphertext,
+        ctUint256 amount0Ciphertext,
+        ctUint256 amount1Ciphertext,
+        ctUint256 priceX18Ciphertext
+    );
+    event ConfidentialRemoveLiquidityQuoteResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        ctUint256 sharesCiphertext,
+        ctUint256 amount0Ciphertext,
+        ctUint256 amount1Ciphertext,
+        ctUint256 priceX18Ciphertext
+    );
+    event ConfidentialLockedPositionResult(
+        address indexed caller,
+        bytes32 indexed requestId,
+        bytes32 indexed lockId,
+        ctUint256 sharesCiphertext,
+        ctUint256 amount0Ciphertext,
+        ctUint256 amount1Ciphertext,
+        ctUint256 priceX18Ciphertext
     );
     event ConfidentialProtocolFeesCollected(
         address indexed token,
@@ -328,6 +353,116 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
             acceptedCiphertext,
             counterpartCiphertext,
             lpCiphertext
+        );
+    }
+
+    /**
+     * @notice Returns the caller's active LP position encrypted only for the caller.
+     * @dev This paid MPC read intentionally requires a positive active balance. It
+     *      therefore cannot be used as an unrestricted no-input reserve oracle.
+     */
+    function requestMyPosition(
+        bytes32 requestId,
+        uint64 deadline
+    ) external nonReentrant returns (
+        ctUint256 memory sharesCiphertext,
+        ctUint256 memory amount0Ciphertext,
+        ctUint256 memory amount1Ciphertext,
+        ctUint256 memory priceX18Ciphertext
+    ) {
+        _requirePositionRequest(requestId, deadline);
+        gtUint256 shares = _shareBalance(msg.sender);
+        _requirePositive(shares);
+        (
+            sharesCiphertext,
+            amount0Ciphertext,
+            amount1Ciphertext,
+            priceX18Ciphertext
+        ) = _offBoardPosition(shares, msg.sender);
+        emit ConfidentialPositionResult(
+            msg.sender,
+            requestId,
+            sharesCiphertext,
+            amount0Ciphertext,
+            amount1Ciphertext,
+            priceX18Ciphertext
+        );
+    }
+
+    /**
+     * @notice Previews a partial or full active-position withdrawal for the caller.
+     * @dev The encrypted share input is fresh, function-bound and single-use. The
+     *      later removal remains authoritative because pool state may change.
+     */
+    function requestRemoveLiquidityQuote(
+        itUint256 calldata shareInput,
+        bytes32 requestId,
+        uint64 deadline
+    ) external nonReentrant returns (
+        ctUint256 memory sharesCiphertext,
+        ctUint256 memory amount0Ciphertext,
+        ctUint256 memory amount1Ciphertext,
+        ctUint256 memory priceX18Ciphertext
+    ) {
+        _requirePositionRequest(requestId, deadline);
+        gtUint256 requestedShares = _validateAndConsume(shareInput);
+        gtUint256 userShares = _shareBalance(msg.sender);
+        _requirePositive(requestedShares);
+        if (!MpcCore.decrypt(MpcCore.le(requestedShares, userShares))) {
+            revert InsufficientPrivateShares();
+        }
+        (
+            sharesCiphertext,
+            amount0Ciphertext,
+            amount1Ciphertext,
+            priceX18Ciphertext
+        ) = _offBoardPosition(requestedShares, msg.sender);
+        emit ConfidentialRemoveLiquidityQuoteResult(
+            msg.sender,
+            requestId,
+            sharesCiphertext,
+            amount0Ciphertext,
+            amount1Ciphertext,
+            priceX18Ciphertext
+        );
+    }
+
+    /**
+     * @notice Returns an unreleased lock's current claim encrypted for its owner.
+     * @dev Both timed and permanent locks are inspectable. Only the existing
+     *      public lock metadata and event identity remain publicly observable.
+     */
+    function requestLockedPosition(
+        bytes32 lockId,
+        bytes32 requestId,
+        uint64 deadline
+    ) external nonReentrant returns (
+        ctUint256 memory sharesCiphertext,
+        ctUint256 memory amount0Ciphertext,
+        ctUint256 memory amount1Ciphertext,
+        ctUint256 memory priceX18Ciphertext
+    ) {
+        _requirePositionRequest(requestId, deadline);
+        LockRecord storage record = locks[lockId];
+        if (record.owner != msg.sender || record.released) {
+            revert InsufficientPrivateShares();
+        }
+        gtUint256 lockedShares = _readPrivate(record.amount);
+        _requirePositive(lockedShares);
+        (
+            sharesCiphertext,
+            amount0Ciphertext,
+            amount1Ciphertext,
+            priceX18Ciphertext
+        ) = _offBoardPosition(lockedShares, msg.sender);
+        emit ConfidentialLockedPositionResult(
+            msg.sender,
+            requestId,
+            lockId,
+            sharesCiphertext,
+            amount0Ciphertext,
+            amount1Ciphertext,
+            priceX18Ciphertext
         );
     }
 
@@ -1286,6 +1421,43 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
         }
     }
 
+    function _offBoardPosition(
+        gtUint256 shares,
+        address recipient
+    ) internal returns (
+        ctUint256 memory sharesCiphertext,
+        ctUint256 memory amount0Ciphertext,
+        ctUint256 memory amount1Ciphertext,
+        ctUint256 memory priceX18Ciphertext
+    ) {
+        gtUint256 currentTotal = _readPrivate(totalShares);
+        gtUint256 reserve0 = _reserve0();
+        gtUint256 reserve1 = _reserve1();
+        _requirePositive(currentTotal);
+        _requirePositive(reserve0);
+        _requirePositive(reserve1);
+
+        gtUint256 amount0 = MpcCore.div(
+            _mulChecked(shares, reserve0),
+            currentTotal
+        );
+        gtUint256 amount1 = MpcCore.div(
+            _mulChecked(shares, reserve1),
+            currentTotal
+        );
+        gtUint256 normalized0 = _scale(reserve0, scale0);
+        gtUint256 normalized1 = _scale(reserve1, scale1);
+        gtUint256 priceX18 = MpcCore.div(
+            _mulChecked(normalized1, MpcCore.setPublic256(PRICE_SCALE)),
+            normalized0
+        );
+
+        sharesCiphertext = MpcCore.offBoardToUser(shares, recipient);
+        amount0Ciphertext = MpcCore.offBoardToUser(amount0, recipient);
+        amount1Ciphertext = MpcCore.offBoardToUser(amount1, recipient);
+        priceX18Ciphertext = MpcCore.offBoardToUser(priceX18, recipient);
+    }
+
     function _assertOperationalBounds(
         gtUint256 reserve0,
         gtUint256 reserve1,
@@ -1406,6 +1578,13 @@ contract ConfidentialCPMM is CipherDEXFeePolicy {
 
     function _requireBeforeDeadline(uint64 deadline) internal view {
         if (deadline < block.timestamp) revert DeadlineExpired();
+    }
+
+    function _requirePositionRequest(bytes32 requestId, uint64 deadline) internal view {
+        _requireBeforeDeadline(deadline);
+        if (requestId == bytes32(0)) revert InvalidRequestId();
+        _requireCanonicalLPToken();
+        if (!initialized) revert PoolNotInitialized();
     }
 
     function _requireCanonicalLPToken() internal view {

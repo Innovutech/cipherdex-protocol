@@ -91,7 +91,13 @@ describe("ConfidentialCPMMFactory", function () {
     const pool = created?.args.pool as string;
     const poolContract = await ethers.getContractAt("ConfidentialCPMM", pool);
 
-    expect(await factory.PROTOCOL_VERSION()).to.equal(3n);
+    expect(await factory.PROTOCOL_VERSION()).to.equal(1n);
+    expect(await poolContract.PROTOCOL_VERSION()).to.equal(1n);
+    expect(await deployment.poolDeployer.DEPLOYER_VERSION()).to.equal(1n);
+    expect(await deployment.strategyRegistry.REGISTRY_VERSION()).to.equal(1n);
+    expect(await launch.strategy.PROTOCOL_VERSION()).to.equal(1n);
+    expect(await launch.strategy.STRATEGY_VERSION()).to.equal(1n);
+    expect(await launch.migrator.PROTOCOL_VERSION()).to.equal(1n);
     expect(await factory.PRIVACY_MODE()).to.equal(1n);
     expect(await factory.isPool(pool)).to.equal(true);
     expect(await factory.allPoolsLength()).to.equal(1n);
@@ -263,7 +269,7 @@ describe("ConfidentialCPMMFactory", function () {
     const expected = ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(
         ["address", "address", "uint256", "uint8", "uint256", "address"],
-        [token0, token1, 30, 1, 3, ethers.ZeroAddress],
+        [token0, token1, 30, 1, 1, ethers.ZeroAddress],
       ),
     );
 

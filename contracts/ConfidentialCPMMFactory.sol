@@ -17,12 +17,12 @@ import "./libraries/PrivateTokenCompatibility.sol";
  * @notice Deterministic factory whose canonical key includes initialization policy.
  */
 contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy {
-    uint256 public constant PROTOCOL_VERSION = 3;
+    uint256 public constant PROTOCOL_VERSION = 1;
     uint8 public constant PRIVACY_MODE = 1;
     bytes32 public constant PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH =
         hex"9c796ceca64fdb8f1b780ed50588dfce7d75b5674ef5faa06bc1d5d4f063a0de";
     bytes32 public constant BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH =
-        hex"680b74fefaee9c2673ac78962712502d552f947e9d770ce3b3f869379c838b08";
+        hex"06ded920630517238919212c6ee61253ea9af908e097efe3d58c7a11aa3d5c2b";
 
     mapping(bytes32 => address) public getPool;
     mapping(address => bool) public isPool;
@@ -105,7 +105,7 @@ contract ConfidentialCPMMFactory is IConfidentialCPMMFactory, CipherDEXFeePolicy
         if (
             router.codehash != BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH ||
             IConfidentialBestExecutionRouter(router).factory() != address(this) ||
-            IConfidentialBestExecutionRouter(router).PROTOCOL_VERSION() != 2
+            IConfidentialBestExecutionRouter(router).PROTOCOL_VERSION() != 1
         ) revert InvalidBestExecutionRouter();
         bestExecutionRouter = router;
         emit BestExecutionRouterConfigured(router);

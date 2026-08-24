@@ -55,6 +55,9 @@
 - quote-only requests moving funds or mutating pool accounting;
 - liquidity-preview requests moving funds, mutating reserve/share accounting or
   publishing the accepted amounts and expected shares in plaintext;
+- position or removal-preview results being decrypted from a spoofed pool,
+  caller, request, calldata, failed receipt or duplicate event;
+- a non-owner reading active or locked private LP claims;
 - successful atomic routing leaving input escrow or candidate allowance residue;
 - selected settlement bypassing pool-owned fee, slippage, invariant, reserve,
   protocol-fee or exact-delta enforcement;
@@ -95,6 +98,9 @@
 - pool-state movement between a confidential liquidity preview and settlement.
   The preview reserves nothing; the later add must use fresh authenticated
   inputs, nonzero minimum shares, normalized price bounds and a deadline;
+- pool-state movement between a position/removal preview and settlement. Position
+  results are informational; removal must recompute current values and enforce
+  fresh encrypted minima and a deadline;
 - active differencing of low-volume confidential fee batches by a beneficiary or
   adversary that already knows most constituent trades; pool count/time batching,
   fixed daily cross-pool epochs, terminal deposits and the vault sweep threshold
@@ -135,10 +141,9 @@ all token callbacks, gas griefing, pool initialization, LP rounding, event
 linkability, precompile behavior under `eth_call`, and testnet-to-mainnet
 compiler/deployment differences. No external audit is claimed.
 
-Public pool/factory contracts report version 2; confidential pool/factory
-contracts report version 3; the best-execution router reports version 2; the
-launchpad migrator reports version 4; and the strategy, registry and pool
-deployer report version 1. Integrations must bind execution to the configured
+All unreleased protocol components and the discovery schema report version 1.
+Development changes do not create compatibility generations. Integrations must
+bind execution to the configured
 factory, exact runtime codehashes, finalized strategy registry, one-time router
 binding and each strategy's one-time migrator binding, fee vault, protocol
 versions and complete canonical pool mapping.

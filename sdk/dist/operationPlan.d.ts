@@ -1,6 +1,9 @@
 export declare const CONFIDENTIAL_OPERATION: Readonly<{
     readonly QUOTE: "quote";
+    readonly POSITION: "position";
     readonly ADD_LIQUIDITY_QUOTE: "add-liquidity-quote";
+    readonly REMOVE_LIQUIDITY_QUOTE: "remove-liquidity-quote";
+    readonly LOCKED_POSITION: "locked-position";
     readonly SWAP: "swap";
     readonly ADD_LIQUIDITY: "add-liquidity";
     readonly REMOVE_LIQUIDITY: "remove-liquidity";
@@ -34,7 +37,7 @@ export type ConfidentialSignatureStep = Readonly<{
     label: string;
     sensitive: true;
 }>;
-export type ConfidentialTransactionPurpose = "token-approval" | "quote" | "liquidity-quote" | "swap" | "add-liquidity" | "remove-liquidity" | "lock-liquidity";
+export type ConfidentialTransactionPurpose = "token-approval" | "quote" | "position" | "liquidity-quote" | "remove-liquidity-quote" | "locked-position" | "swap" | "add-liquidity" | "remove-liquidity" | "lock-liquidity";
 export type ConfidentialTransactionStep = Readonly<{
     id: string;
     position: number;
@@ -69,6 +72,9 @@ export declare function buildConfidentialQuoteOperationPlan(input?: Readonly<{
     candidateBatchCount?: number;
 }>): ConfidentialOperationPlan;
 export declare function buildConfidentialAddLiquidityQuoteOperationPlan(): ConfidentialOperationPlan;
+export declare function buildConfidentialPositionOperationPlan(): ConfidentialOperationPlan;
+export declare function buildConfidentialRemoveLiquidityQuoteOperationPlan(): ConfidentialOperationPlan;
+export declare function buildConfidentialLockedPositionOperationPlan(): ConfidentialOperationPlan;
 export declare function buildConfidentialSwapOperationPlan(input?: Readonly<{
     approvalRequired?: boolean;
     route?: "direct" | "best-execution";

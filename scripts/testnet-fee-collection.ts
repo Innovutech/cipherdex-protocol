@@ -518,7 +518,7 @@ async function validateStackResource(
     String(await pool.token0()).toLowerCase() !== token0Address.toLowerCase() ||
     String(await pool.token1()).toLowerCase() !== token1Address.toLowerCase() ||
     BigInt(await pool.feeBps()) !== FEE_BPS ||
-    BigInt(await pool.PROTOCOL_VERSION()) !== 3n ||
+    BigInt(await pool.PROTOCOL_VERSION()) !== 1n ||
     BigInt(await pool.PRIVACY_MODE()) !== 1n ||
     !token0Compatible ||
     !token1Compatible

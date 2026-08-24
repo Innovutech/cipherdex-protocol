@@ -20,6 +20,7 @@ const contractsDirectory = fileURLToPath(new URL("../contracts/", import.meta.ur
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const files = await solidityFiles(contractsDirectory);
 const productionSources = new Map();
+const PRIVATE_AMOUNT_PATTERN = /amount|reserve|share|value|input|output|price|tvl/i;
 for (const file of files) {
   const rawSource = await readFile(file, "utf8");
   if (!file.replaceAll("\\", "/").includes("/contracts/mocks/")) {
@@ -28,11 +29,39 @@ for (const file of files) {
   const source = maskSourceCommentsAndLiterals(rawSource);
   const confidentialSurface = /(?:Confidential|IConfidential)/i.test(file);
   const events = [...source.matchAll(/^\s*event\s+[^;]+;/gm)].map(([event]) => event);
-  if (confidentialSurface && events.some((event) => /amount|reserve|share|value|input|output/i.test(event))) {
+  const ciphertextEventNames = new Set();
+  for (const event of events) {
+    const eventName = event.match(/^\s*event\s+([A-Za-z_]\w*)/)?.[1];
+    const withoutCiphertextParameters = event.replace(
+      /\bctUint(?:8|16|32|64|128|256)\s+(?:indexed\s+)?[A-Za-z_]\w*/g,
+      "",
+    );
+    if (
+      eventName &&
+      withoutCiphertextParameters !== event &&
+      !PRIVATE_AMOUNT_PATTERN.test(withoutCiphertextParameters)
+    ) {
+      ciphertextEventNames.add(eventName);
+    }
+  }
+  if (
+    confidentialSurface &&
+    events.some((event) => {
+      const withoutCiphertextParameters = event.replace(
+        /\bctUint(?:8|16|32|64|128|256)\s+(?:indexed\s+)?[A-Za-z_]\w*/g,
+        "",
+      );
+      return PRIVATE_AMOUNT_PATTERN.test(withoutCiphertextParameters);
+    })
+  ) {
     throw new Error(`Private amount-like data was added to a public event declaration: ${file}`);
   }
 
-  if (confidentialSurface && /emit\s+[^;]*(amount|reserve|share|value|input|output)/i.test(source)) {
+  const unsafeEmit = [...source.matchAll(/\bemit\s+([A-Za-z_]\w*)\s*\([^;]*\);/gs)]
+    .some(([statement, eventName]) =>
+      PRIVATE_AMOUNT_PATTERN.test(statement) && !ciphertextEventNames.has(eventName)
+    );
+  if (confidentialSurface && unsafeEmit) {
     throw new Error(`Private amount-like data was added to an emitted event: ${file}`);
   }
 

@@ -13,7 +13,7 @@ pair, decimals and fee tier before routing.
 Use `PublicCPMMQuoter.quoteExactInput` for gasless exact-input quotes and
 `PublicCPMMRouter.swapExactInput` for execution. Both periphery contracts reject
 pools outside their immutable factory. Route responses must retain
-`privacyMode: 0` and `poolKind: "public-erc20-cpmm-v2"`.
+`privacyMode: 0` and `poolKind: "public-erc20-cpmm-v1"`.
 
 Use `PublicCPMMLiquidityRouter.createOrAddLiquidity` for one-transaction public
 pool creation/seeding or a proportional add to an existing canonical pool. The
@@ -50,7 +50,7 @@ const untrustedDiscovery = {
       ? "standard"
       : "launch-protected",
   initialized: await pool.initialized(),
-  poolKind: "private-erc20-cpmm-v3",
+  poolKind: "private-erc20-cpmm-v1",
   quoteTransport:
     CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
 };

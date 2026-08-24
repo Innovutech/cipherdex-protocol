@@ -4,6 +4,10 @@ Date: 2026-08-24
 
 ## Status
 
+This is retired historical evidence for disposable pre-v1 testnet iterations.
+It is not a release record or a supported deployment manifest. Current source
+uses one v1 protocol/schema identity without development compatibility layers.
+
 This report tracks the complete-key and launch-protected confidential-pool
 refactor. That preceding contract, SDK, runner and documentation source passed
 the complete local verification cycle after its security remediations. Its

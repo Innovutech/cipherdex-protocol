@@ -257,10 +257,8 @@ The deploy script prints only public contract configuration. It does not onboard
 accounts, handle AES keys, create a pool, or manufacture encrypted inputs. Use the
 official COTI SDK and the documented scenario/launchpad harness for those operations.
 
-Public pools/factory report protocol version 2; confidential pools/factory report
-version 3; the confidential best-execution router reports version 2; the
-launchpad migrator reports version 4; and the public liquidity router, pool
-deployer, strategy registry and launch strategy report version 1. Integration
+All unreleased protocol components and the discovery schema report version 1.
+Development changes do not create compatibility generations. Integration
 allowlists must pin the
 deployed factory, fee vault, pool deployer/codehash, finalized strategy registry,
 registered strategy/codehash, migrator, configured router, all versions and the

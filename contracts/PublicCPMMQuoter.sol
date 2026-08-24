@@ -13,7 +13,7 @@ import "./interfaces/IPublicCPMMFactory.sol";
  * caller and target contract.
  */
 contract PublicCPMMQuoter {
-    uint256 public constant PROTOCOL_VERSION = 2;
+    uint256 public constant PROTOCOL_VERSION = 1;
 
     address public immutable factory;
 

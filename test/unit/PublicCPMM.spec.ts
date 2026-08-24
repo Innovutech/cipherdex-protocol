@@ -72,8 +72,8 @@ describe("PublicCPMM", function () {
 
     expect(await pool.initialized()).to.equal(true);
     expect(await pool.PRIVACY_MODE()).to.equal(0n);
-    expect(await pool.PROTOCOL_VERSION()).to.equal(2n);
-    expect(await factory.PROTOCOL_VERSION()).to.equal(2n);
+    expect(await pool.PROTOCOL_VERSION()).to.equal(1n);
+    expect(await factory.PROTOCOL_VERSION()).to.equal(1n);
     expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("100"));
     expect(afterProduct).to.be.gte(beforeProduct);
   });

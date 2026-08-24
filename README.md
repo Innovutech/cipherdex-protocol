@@ -100,11 +100,19 @@ encrypted only for that caller. The later add remains authoritative and binds
 minimum shares, price bounds and deadline, so state movement cannot silently
 change the reviewed deposit.
 
-The current source defines public pools/factory version 2, confidential
-pools/factory version 3, best-execution router version 2, launchpad migrator
-version 4, and initialization strategy/registry/deployer version 1. Previous
-testnet artifacts are disposable and are not a supported discovery or
-liquidity-migration surface.
+The confidential pool also gives an LP an owner-only position lifecycle. A
+verified pool can return the caller's active shares, current token claims and
+normalized pool price as caller ciphertexts; preview a partial or full removal
+from a fresh encrypted share input; and disclose the same current claim for an
+unreleased timed or permanent lock only to that lock's owner. These are paid MPC
+reads because fresh MPC remains unreliable under `eth_call`. They do not publish
+reserves, TVL, protocol fees or plaintext position amounts, and settlement still
+recomputes all values against current state and reviewed minima.
+
+The unreleased current source uses protocol version 1 across every public and
+confidential component and discovery schema version 1. Development changes do
+not create compatibility generations. Previous testnet artifacts are disposable
+and are not a supported discovery or liquidity-migration surface.
 
 PoD assets are not accepted by this synchronous pool. PoD transfer and approval
 operations are asynchronous cross-chain callback workflows and require a separate

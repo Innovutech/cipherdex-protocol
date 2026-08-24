@@ -167,6 +167,16 @@ lock. Lock metadata is public, but the locked share amount remains ciphertext. A
 permanent lock is excluded from provider balances and cannot be released by an
 administrator or the original provider.
 
+The confidential pool includes an owner-encrypted position periphery.
+An active LP may request current shares, pro-rata effective reserves and the
+normalized token1/token0 price. A fresh function-bound encrypted share amount
+may be used to preview a partial or full withdrawal. The owner of an unreleased
+timed or permanent lock may request the equivalent locked claim. The pool emits
+only caller ciphertexts and public request/lock identity. All three paths are
+paid MPC transactions; they never mutate reserve/share accounting, and removal
+still recomputes current amounts and enforces encrypted minima at settlement.
+`myShares` remains the cheaper no-fresh-MPC active-share read.
+
 The LP token deliberately does not expose a public circulating supply: the base
 COTI `PrivateERC20` implementation returns zero for aggregate `totalSupply()`.
 Dashboards must not infer private TVL or aggregate LP supply from that method.

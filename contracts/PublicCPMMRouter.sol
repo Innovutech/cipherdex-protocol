@@ -18,7 +18,7 @@ import "./interfaces/IPublicCPMMFactory.sol";
 contract PublicCPMMRouter {
     using SafeERC20 for IERC20;
 
-    uint256 public constant PROTOCOL_VERSION = 2;
+    uint256 public constant PROTOCOL_VERSION = 1;
 
     address public immutable factory;
     uint256 private reentrancyState = 1;

@@ -24,7 +24,7 @@ import "./libraries/SignatureValidation.sol";
  * inside COTI MPC values.
  */
 contract ConfidentialLaunchpadMigrator is IConfidentialLaunchpadMigrator {
-    uint256 public constant PROTOCOL_VERSION = 4;
+    uint256 public constant PROTOCOL_VERSION = 1;
     bytes32 public constant EIP712_DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );

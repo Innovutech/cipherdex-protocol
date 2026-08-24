@@ -5,14 +5,14 @@ export * from "./walletCallBatch.js";
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
  *
- * These ABI fragments intentionally contain no balance, reserve, amount or LP
- * position read model. Clients must obtain private values through the official
- * COTI SDK and the caller's AES key.
+ * Private values are exposed only as caller ciphertexts. Clients must authenticate
+ * their provenance here, then decrypt them through the official COTI SDK with the
+ * caller's AES key. The SDK never accepts, stores or derives AES keys.
  */
 
-export const DISCLOSURE_SCHEMA_VERSION = 7 as const;
-export const CIPHERDEX_PUBLIC_PROTOCOL_VERSION = 2 as const;
-export const CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION = 3 as const;
+export const DISCLOSURE_SCHEMA_VERSION = 1 as const;
+export const CIPHERDEX_PUBLIC_PROTOCOL_VERSION = 1 as const;
+export const CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION = 1 as const;
 export const CIPHERDEX_PROTOCOL_VERSION =
   CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION;
 export const CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION = 2 as const;
@@ -84,6 +84,9 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))",
   "function requestQuoteExactInput(((uint256,uint256),bytes),bool,bytes32) returns ((uint256,uint256))",
   "function requestAddLiquidityQuote(((uint256,uint256),bytes),bool,bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256))",
+  "function requestMyPosition(bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256),(uint256,uint256))",
+  "function requestRemoveLiquidityQuote(((uint256,uint256),bytes),bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256),(uint256,uint256))",
+  "function requestLockedPosition(bytes32,bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256),(uint256,uint256))",
   "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
   "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))",
   "function bootstrapLiquidity(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))",
@@ -102,6 +105,9 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner)",
   "event ConfidentialQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed zeroForOne,(uint256,uint256) result)",
   "event ConfidentialLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed token0Specified,(uint256,uint256) acceptedCiphertext,(uint256,uint256) counterpartCiphertext,(uint256,uint256) lpCiphertext)",
+  "event ConfidentialPositionResult(address indexed caller,bytes32 indexed requestId,(uint256,uint256) sharesCiphertext,(uint256,uint256) amount0Ciphertext,(uint256,uint256) amount1Ciphertext,(uint256,uint256) priceX18Ciphertext)",
+  "event ConfidentialRemoveLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,(uint256,uint256) sharesCiphertext,(uint256,uint256) amount0Ciphertext,(uint256,uint256) amount1Ciphertext,(uint256,uint256) priceX18Ciphertext)",
+  "event ConfidentialLockedPositionResult(address indexed caller,bytes32 indexed requestId,bytes32 indexed lockId,(uint256,uint256) sharesCiphertext,(uint256,uint256) amount0Ciphertext,(uint256,uint256) amount1Ciphertext,(uint256,uint256) priceX18Ciphertext)",
   "event ConfidentialProtocolFeesCollected(address indexed token,address indexed feeVault,uint32 aggregatedSwapCount)",
 ] as const;
 
@@ -392,6 +398,14 @@ const CONFIDENTIAL_BEST_EXECUTION_RESULT_EXPECTATION_FIELDS = Object.freeze([
   "transactionHash",
   "transactionData",
 ]);
+const CONFIDENTIAL_POSITION_RESULT_EXPECTATION_FIELDS = Object.freeze([
+  "operation",
+  "caller",
+  "requestId",
+  "lockId",
+  "transactionHash",
+  "transactionData",
+]);
 const CONFIDENTIAL_POOL_POLICY_FIELDS = Object.freeze([
   "expectedChainId",
   "expectedFactory",
@@ -558,6 +572,19 @@ export const CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION =
 export const CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR = "0x6ad558a9" as const;
 export const CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC =
   "0x4069fd369ee96a414b638a1f85119a2360ab4a7e05df9b1816582b1baf87a147" as const;
+export const CONFIDENTIAL_POSITION_FUNCTION = "requestMyPosition" as const;
+export const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_FUNCTION =
+  "requestRemoveLiquidityQuote" as const;
+export const CONFIDENTIAL_LOCKED_POSITION_FUNCTION = "requestLockedPosition" as const;
+export const CONFIDENTIAL_POSITION_SELECTOR = "0x7bfbe73f" as const;
+export const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_SELECTOR = "0x2ec34126" as const;
+export const CONFIDENTIAL_LOCKED_POSITION_SELECTOR = "0xe6de11b2" as const;
+export const CONFIDENTIAL_POSITION_RESULT_TOPIC =
+  "0x41e5da4a9403b8e78894d18ca3bff0f8a0f5a8eae6e5636298446fe20471681e" as const;
+export const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_RESULT_TOPIC =
+  "0xf5618a97d75fcd6fe4fe31f19af15680ce40df584774f60e217af3bde0ad690d" as const;
+export const CONFIDENTIAL_LOCKED_POSITION_RESULT_TOPIC =
+  "0xe320f84a3eff475e8f2fcd51814b1d57a8e033b8ac63ec0e194f18b614125959" as const;
 export const CONFIDENTIAL_BEST_QUOTE_RESULT_TOPIC =
   "0x74d60457cef138a4b1c57bac9346b347c04566dfa22699c3a3eab54267d0fdb7" as const;
 export const CONFIDENTIAL_BEST_SWAP_RESULT_TOPIC =
@@ -602,6 +629,21 @@ export type ConfidentialBestSwapWithCandidatesCall = Readonly<{
 export type ConfidentialLiquidityQuoteCall = Readonly<{
   functionName: typeof CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION;
   args: readonly [InputText256, boolean, string, bigint];
+}>;
+
+export type ConfidentialPositionCall = Readonly<{
+  functionName: typeof CONFIDENTIAL_POSITION_FUNCTION;
+  args: readonly [string, bigint];
+}>;
+
+export type ConfidentialRemoveLiquidityQuoteCall = Readonly<{
+  functionName: typeof CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_FUNCTION;
+  args: readonly [InputText256, string, bigint];
+}>;
+
+export type ConfidentialLockedPositionCall = Readonly<{
+  functionName: typeof CONFIDENTIAL_LOCKED_POSITION_FUNCTION;
+  args: readonly [string, string, bigint];
 }>;
 
 export type PublicCreateOrAddLiquidityCall = Readonly<{
@@ -1009,6 +1051,57 @@ export function buildConfidentialLiquidityQuoteCall(
   });
 }
 
+function assertConfidentialPositionEnvelope(requestId: string, deadline: bigint): void {
+  if (!isBytes32(requestId) || /^0x0{64}$/i.test(requestId)) {
+    throw new TypeError("Invalid confidential position request ID");
+  }
+  if (typeof deadline !== "bigint" || deadline <= 0n || deadline > UINT64_MAX) {
+    throw new TypeError("Invalid confidential position deadline");
+  }
+}
+
+/** Builds the paid owner-only active-position disclosure call. */
+export function buildConfidentialPositionCall(
+  requestId: string,
+  deadline: bigint,
+): ConfidentialPositionCall {
+  assertConfidentialPositionEnvelope(requestId, deadline);
+  return Object.freeze({
+    functionName: CONFIDENTIAL_POSITION_FUNCTION,
+    args: Object.freeze([requestId, deadline] as const),
+  });
+}
+
+/** Builds a paid caller-encrypted partial/full removal preview. */
+export function buildConfidentialRemoveLiquidityQuoteCall(
+  shares: InputText256,
+  requestId: string,
+  deadline: bigint,
+): ConfidentialRemoveLiquidityQuoteCall {
+  assertInputText256(shares);
+  assertConfidentialPositionEnvelope(requestId, deadline);
+  return Object.freeze({
+    functionName: CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_FUNCTION,
+    args: Object.freeze([snapshotInputText256(shares), requestId, deadline] as const),
+  });
+}
+
+/** Builds the paid owner-only disclosure call for one unreleased LP lock. */
+export function buildConfidentialLockedPositionCall(
+  lockId: string,
+  requestId: string,
+  deadline: bigint,
+): ConfidentialLockedPositionCall {
+  if (!isBytes32(lockId) || /^0x0{64}$/i.test(lockId)) {
+    throw new TypeError("Invalid confidential position lock ID");
+  }
+  assertConfidentialPositionEnvelope(requestId, deadline);
+  return Object.freeze({
+    functionName: CONFIDENTIAL_LOCKED_POSITION_FUNCTION,
+    args: Object.freeze([lockId, requestId, deadline] as const),
+  });
+}
+
 /** Builds the public atomic create-or-add-liquidity periphery call. */
 export function buildPublicCreateOrAddLiquidityCall(input: Readonly<{
   tokenA: string;
@@ -1293,7 +1386,7 @@ export type ConfidentialPoolDiscovery = {
   strategyClass: number;
   poolClass: "standard" | "launch-protected";
   initialized: boolean;
-  poolKind: "private-erc20-cpmm-v3";
+  poolKind: "private-erc20-cpmm-v1";
   quoteTransport: typeof CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT;
 };
 
@@ -1309,6 +1402,68 @@ export type VerifiedConfidentialPoolDiscovery = Readonly<
     readonly [VERIFIED_CONFIDENTIAL_POOL_DISCOVERY]: true;
   }
 >;
+
+export type ConfidentialPositionOperation =
+  | "active-position"
+  | "remove-liquidity-quote"
+  | "locked-position";
+
+export type ConfidentialPositionResultExpectation = Readonly<{
+  operation: ConfidentialPositionOperation;
+  caller: string;
+  requestId: string;
+  /** Zero hash for active-position and remove-liquidity-quote. */
+  lockId: string;
+  transactionHash: string;
+  transactionData: string;
+}>;
+
+export type ConfidentialPosition = Readonly<{
+  chainId: number;
+  pool: string;
+  operation: ConfidentialPositionOperation;
+  caller: string;
+  requestId: string;
+  lockId?: string;
+  shares: bigint;
+  amount0: bigint;
+  amount1: bigint;
+  priceX18: bigint;
+  transactionHash: string;
+}>;
+
+export interface ConfidentialPositionDecryptionAdapter {
+  readChainId(): Promise<number | bigint>;
+  getTransaction(
+    transactionHash: string,
+  ): Promise<ConfidentialBestExecutionTransactionEvidence | null>;
+  getTransactionReceipt(
+    transactionHash: string,
+  ): Promise<ConfidentialBestExecutionReceiptEvidence | null>;
+  decryptValue256(value: Ciphertext256): Promise<bigint>;
+}
+
+export interface ConfidentialOwnerReadAdapter {
+  readChainId(): Promise<number | bigint>;
+  readMyShares(pool: string, owner: string): Promise<Ciphertext256>;
+  decryptValue256(value: Ciphertext256): Promise<bigint>;
+}
+
+export type ConfidentialAllowanceCiphertexts = Readonly<{
+  ciphertext: Ciphertext256;
+  ownerCiphertext: Ciphertext256;
+  spenderCiphertext: Ciphertext256;
+}>;
+
+export interface ConfidentialAllowanceReadAdapter {
+  readChainId(): Promise<number | bigint>;
+  readAllowance(
+    token: string,
+    owner: string,
+    spender: string,
+  ): Promise<ConfidentialAllowanceCiphertexts>;
+  decryptValue256(value: Ciphertext256): Promise<bigint>;
+}
 
 export type ConfidentialPoolOnchainState = {
   protocolVersion: number | bigint;
@@ -1380,7 +1535,7 @@ export type PublicPoolDiscovery = {
   feeVault: string;
   feePolicy: CipherDEXV1FeePolicy;
   privacyMode: typeof PRIVACY_MODE.TRANSPARENT;
-  poolKind: "public-erc20-cpmm-v2";
+  poolKind: "public-erc20-cpmm-v1";
 };
 
 const VERIFIED_PUBLIC_POOL_DISCOVERY: unique symbol = Symbol(
@@ -1583,7 +1738,7 @@ export function isConfidentialPoolDiscovery(
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     candidate.protocolVersion === CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION &&
-    candidate.poolKind === "private-erc20-cpmm-v3" &&
+    candidate.poolKind === "private-erc20-cpmm-v1" &&
     isAddressLike(candidate.pool) &&
     isAddressLike(candidate.token0) &&
     isAddressLike(candidate.token1) &&
@@ -2373,6 +2528,250 @@ export async function verifyConfidentialPoolDiscovery(
   return verified;
 }
 
+type DecodedConfidentialPositionResult = Readonly<{
+  shares: Ciphertext256;
+  amount0: Ciphertext256;
+  amount1: Ciphertext256;
+  priceX18: Ciphertext256;
+}>;
+
+function ciphertextFromEventWords(
+  words: string,
+  highIndex: number,
+): Ciphertext256 | undefined {
+  const ciphertextHigh = quantityFromAbiWord(abiWord(words, highIndex));
+  const ciphertextLow = quantityFromAbiWord(abiWord(words, highIndex + 1));
+  if (ciphertextHigh === undefined || ciphertextLow === undefined) return undefined;
+  return Object.freeze({ ciphertextHigh, ciphertextLow });
+}
+
+function decodeConfidentialPositionResultEvidence(
+  pool: VerifiedConfidentialPoolDiscovery,
+  expectation: ConfidentialPositionResultExpectation,
+  transaction: ConfidentialBestExecutionTransactionEvidence,
+  receipt: ConfidentialBestExecutionReceiptEvidence,
+): DecodedConfidentialPositionResult {
+  const locked = expectation.operation === "locked-position";
+  const removal = expectation.operation === "remove-liquidity-quote";
+  const expectedSelector = locked
+    ? CONFIDENTIAL_LOCKED_POSITION_SELECTOR
+    : removal
+      ? CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_SELECTOR
+      : CONFIDENTIAL_POSITION_SELECTOR;
+  const expectedTopic = locked
+    ? CONFIDENTIAL_LOCKED_POSITION_RESULT_TOPIC
+    : removal
+      ? CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_RESULT_TOPIC
+      : CONFIDENTIAL_POSITION_RESULT_TOPIC;
+  const zeroLock = /^0x0{64}$/i.test(expectation.lockId);
+
+  if (
+    !(locked || removal || expectation.operation === "active-position") ||
+    !isAddressLike(expectation.caller) ||
+    !isBytes32(expectation.requestId) ||
+    /^0x0{64}$/i.test(expectation.requestId) ||
+    !isBytes32(expectation.lockId) ||
+    (locked ? zeroLock : !zeroLock) ||
+    !isTransactionHash(expectation.transactionHash) ||
+    !isBoundedEvenHex(expectation.transactionData, MAX_EVIDENCE_CALLDATA_BYTES) ||
+    expectation.transactionData.length === 2 ||
+    !transaction ||
+    !receipt ||
+    !isTransactionHash(transaction.hash) ||
+    !isTransactionHash(receipt.transactionHash) ||
+    transaction.hash.toLowerCase() !== expectation.transactionHash.toLowerCase() ||
+    receipt.transactionHash.toLowerCase() !== expectation.transactionHash.toLowerCase() ||
+    !sameAddress(transaction.from, expectation.caller) ||
+    !sameAddress(transaction.to, pool.pool) ||
+    toSafeChainNumber(transaction.chainId) !== pool.chainId ||
+    !isBoundedEvenHex(transaction.data, MAX_EVIDENCE_CALLDATA_BYTES) ||
+    transaction.data.slice(0, 10).toLowerCase() !== expectedSelector ||
+    transaction.data.toLowerCase() !== expectation.transactionData.toLowerCase() ||
+    !(
+      (typeof receipt.status === "number" && receipt.status === 1) ||
+      (typeof receipt.status === "bigint" && receipt.status === 1n)
+    )
+  ) {
+    throw new TypeError("Invalid confidential position transaction evidence");
+  }
+
+  const callWords = transaction.data.slice(10);
+  const requestWord = abiWord(callWords, locked || removal ? 1 : 0);
+  const lockWord = locked ? abiWord(callWords, 0) : undefined;
+  if (
+    !requestWord ||
+    `0x${requestWord}`.toLowerCase() !== expectation.requestId.toLowerCase() ||
+    (locked && (!lockWord || `0x${lockWord}`.toLowerCase() !== expectation.lockId.toLowerCase()))
+  ) {
+    throw new TypeError("Invalid confidential position calldata binding");
+  }
+
+  const boundedLogs = snapshotBoundedEvidenceLogs(receipt.logs);
+  if (!boundedLogs) {
+    throw new TypeError("Confidential position receipt logs exceed evidence bounds");
+  }
+  const expectedTopics = locked ? 4 : 3;
+  const matchingLogs = boundedLogs.filter((log) =>
+    sameAddress(log.address, pool.pool) &&
+    log.topics.length === expectedTopics &&
+    log.topics[0]?.toLowerCase() === expectedTopic
+  );
+  if (matchingLogs.length !== 1) {
+    throw new TypeError("Confidential position result log is missing or ambiguous");
+  }
+  const log = matchingLogs[0]!;
+  const indexedCaller = addressFromAbiWord(log.topics[1]?.slice(2));
+  if (
+    !indexedCaller ||
+    !sameAddress(indexedCaller, expectation.caller) ||
+    log.topics[2]?.toLowerCase() !== expectation.requestId.toLowerCase() ||
+    (locked && log.topics[3]?.toLowerCase() !== expectation.lockId.toLowerCase()) ||
+    !/^0x[0-9a-fA-F]{512}$/.test(log.data)
+  ) {
+    throw new TypeError("Invalid confidential position result log");
+  }
+
+  const eventWords = log.data.slice(2);
+  const shares = ciphertextFromEventWords(eventWords, 0);
+  const amount0 = ciphertextFromEventWords(eventWords, 2);
+  const amount1 = ciphertextFromEventWords(eventWords, 4);
+  const priceX18 = ciphertextFromEventWords(eventWords, 6);
+  if (!shares || !amount0 || !amount1 || !priceX18) {
+    throw new TypeError("Invalid confidential position result encoding");
+  }
+  return Object.freeze({ shares, amount0, amount1, priceX18 });
+}
+
+/**
+ * Authenticates and decrypts one paid owner-only position result. The pool must
+ * be a process-local value returned by verifyConfidentialPoolDiscovery.
+ */
+export async function decryptConfidentialPositionResult(
+  pool: VerifiedConfidentialPoolDiscovery,
+  expectation: ConfidentialPositionResultExpectation,
+  adapter: ConfidentialPositionDecryptionAdapter,
+): Promise<ConfidentialPosition> {
+  if (!verifiedConfidentialPoolDiscoveries.has(pool)) {
+    throw new TypeError("Unverified confidential pool");
+  }
+  const snapshot = snapshotExactOwnRecord<ConfidentialPositionResultExpectation>(
+    expectation,
+    CONFIDENTIAL_POSITION_RESULT_EXPECTATION_FIELDS,
+  );
+  if (!snapshot) throw new TypeError("Invalid confidential position expectation");
+
+  let transaction: ConfidentialBestExecutionTransactionEvidence | null;
+  let receipt: ConfidentialBestExecutionReceiptEvidence | null;
+  let chainIdValue: number | bigint;
+  try {
+    [transaction, receipt, chainIdValue] = await Promise.all([
+      adapter.getTransaction(snapshot.transactionHash),
+      adapter.getTransactionReceipt(snapshot.transactionHash),
+      adapter.readChainId(),
+    ]);
+  } catch (error) {
+    throw new TypeError("Unable to fetch confidential position evidence", { cause: error });
+  }
+  if (!transaction || !receipt || toSafeChainNumber(chainIdValue) !== pool.chainId) {
+    throw new TypeError("Confidential position evidence is unavailable or on the wrong chain");
+  }
+  const decoded = decodeConfidentialPositionResultEvidence(
+    pool,
+    snapshot,
+    transaction,
+    receipt,
+  );
+  const [shares, amount0, amount1, priceX18] = await Promise.all([
+    adapter.decryptValue256(decoded.shares),
+    adapter.decryptValue256(decoded.amount0),
+    adapter.decryptValue256(decoded.amount1),
+    adapter.decryptValue256(decoded.priceX18),
+  ]);
+  if (
+    typeof shares !== "bigint" || shares <= 0n ||
+    typeof amount0 !== "bigint" || amount0 < 0n ||
+    typeof amount1 !== "bigint" || amount1 < 0n ||
+    typeof priceX18 !== "bigint" || priceX18 <= 0n
+  ) {
+    throw new TypeError("Invalid decrypted confidential position result");
+  }
+  return Object.freeze({
+    chainId: pool.chainId,
+    pool: pool.pool,
+    operation: snapshot.operation,
+    caller: snapshot.caller,
+    requestId: snapshot.requestId,
+    ...(snapshot.operation === "locked-position" ? { lockId: snapshot.lockId } : {}),
+    shares,
+    amount0,
+    amount1,
+    priceX18,
+    transactionHash: snapshot.transactionHash,
+  });
+}
+
+/** Reads and decrypts the caller's active cLP balance without fresh MPC work. */
+export async function readConfidentialActiveShares(
+  pool: VerifiedConfidentialPoolDiscovery,
+  owner: string,
+  adapter: ConfidentialOwnerReadAdapter,
+): Promise<bigint> {
+  if (!verifiedConfidentialPoolDiscoveries.has(pool) || !isAddressLike(owner)) {
+    throw new TypeError("Invalid confidential active-share read");
+  }
+  const [chainIdValue, ciphertext] = await Promise.all([
+    adapter.readChainId(),
+    adapter.readMyShares(pool.pool, owner),
+  ]);
+  if (toSafeChainNumber(chainIdValue) !== pool.chainId) {
+    throw new TypeError("Confidential active-share read is on the wrong chain");
+  }
+  assertCiphertext256(ciphertext);
+  const shares = await adapter.decryptValue256(Object.freeze({
+    ciphertextHigh: ciphertext.ciphertextHigh,
+    ciphertextLow: ciphertext.ciphertextLow,
+  }));
+  if (typeof shares !== "bigint" || shares < 0n) {
+    throw new TypeError("Invalid decrypted confidential active-share balance");
+  }
+  return shares;
+}
+
+/** Reads the owner-encrypted private-token allowance for one verified pool asset. */
+export async function readConfidentialTokenAllowance(
+  pool: VerifiedConfidentialPoolDiscovery,
+  token: string,
+  owner: string,
+  spender: string,
+  adapter: ConfidentialAllowanceReadAdapter,
+): Promise<bigint> {
+  if (
+    !verifiedConfidentialPoolDiscoveries.has(pool) ||
+    !isAddressLike(token) ||
+    !(sameAddress(token, pool.token0) || sameAddress(token, pool.token1)) ||
+    !isAddressLike(owner) ||
+    !isAddressLike(spender)
+  ) {
+    throw new TypeError("Invalid confidential allowance read");
+  }
+  const [chainIdValue, allowance] = await Promise.all([
+    adapter.readChainId(),
+    adapter.readAllowance(token, owner, spender),
+  ]);
+  if (toSafeChainNumber(chainIdValue) !== pool.chainId || !allowance) {
+    throw new TypeError("Confidential allowance read is on the wrong chain");
+  }
+  assertCiphertext256(allowance.ownerCiphertext);
+  const value = await adapter.decryptValue256(Object.freeze({
+    ciphertextHigh: allowance.ownerCiphertext.ciphertextHigh,
+    ciphertextLow: allowance.ownerCiphertext.ciphertextLow,
+  }));
+  if (typeof value !== "bigint" || value < 0n) {
+    throw new TypeError("Invalid decrypted confidential allowance");
+  }
+  return value;
+}
+
 export function isPublicPoolDiscovery(value: unknown): value is PublicPoolDiscovery {
   const descriptors = exactOwnDataDescriptors(value, PUBLIC_POOL_DISCOVERY_FIELDS);
   if (!descriptors) return false;
@@ -2382,7 +2781,7 @@ export function isPublicPoolDiscovery(value: unknown): value is PublicPoolDiscov
   return (
     candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
     candidate.protocolVersion === CIPHERDEX_PUBLIC_PROTOCOL_VERSION &&
-    candidate.poolKind === "public-erc20-cpmm-v2" &&
+    candidate.poolKind === "public-erc20-cpmm-v1" &&
     isAddressLike(candidate.pool) &&
     isAddressLike(candidate.token0) &&
     isAddressLike(candidate.token1) &&

@@ -19,7 +19,7 @@ import "./interfaces/IPublicFeeVault.sol";
 contract PublicCPMM is CipherDEXFeePolicy {
     using SafeERC20 for IERC20;
 
-    uint256 public constant PROTOCOL_VERSION = 2;
+    uint256 public constant PROTOCOL_VERSION = 1;
     uint8 public constant PRIVACY_MODE = 0;
     address public immutable token0;
     address public immutable token1;

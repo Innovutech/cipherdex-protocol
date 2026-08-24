@@ -63,7 +63,7 @@ contract ConfidentialInitializationStrategyRegistry is
         if (factory != address(0)) revert FactoryAlreadyBound();
         if (
             factory_.code.length == 0 ||
-            IConfidentialCPMMFactory(factory_).PROTOCOL_VERSION() != 3 ||
+            IConfidentialCPMMFactory(factory_).PROTOCOL_VERSION() != 1 ||
             IConfidentialCPMMFactory(factory_).PRIVACY_MODE() != 1 ||
             IConfidentialCPMMFactory(factory_).initializationStrategyRegistry() !=
                 address(this)
@@ -106,14 +106,14 @@ contract ConfidentialInitializationStrategyRegistry is
             !supported ||
             candidate.factory() != factory ||
             candidate.strategyRegistry() != address(this) ||
-            candidate.PROTOCOL_VERSION() != 3 ||
+            candidate.PROTOCOL_VERSION() != 1 ||
             candidate.PRIVACY_MODE() != 1 ||
             candidate.STRATEGY_VERSION() != 1 ||
             !candidate.configurationFinalized() ||
             migrator == address(0) ||
             migratorRuntimeCodehash == bytes32(0) ||
             migrator.codehash != migratorRuntimeCodehash ||
-            IConfidentialLaunchpadMigrator(migrator).PROTOCOL_VERSION() != 4 ||
+            IConfidentialLaunchpadMigrator(migrator).PROTOCOL_VERSION() != 1 ||
             IConfidentialLaunchpadMigrator(migrator).factory() != factory ||
             IConfidentialLaunchpadMigrator(migrator).initializationStrategy() !=
                 strategy ||

@@ -74,7 +74,10 @@ import {
 describe("stable SDK surface", function () {
 
   it("parses the published pool and factory ABI fragments", function () {
-    expect(DISCLOSURE_SCHEMA_VERSION).to.equal(7);
+    expect(DISCLOSURE_SCHEMA_VERSION).to.equal(1);
+    expect(CIPHERDEX_PUBLIC_PROTOCOL_VERSION).to.equal(1);
+    expect(CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION).to.equal(1);
+    expect(CIPHERDEX_PROTOCOL_VERSION).to.equal(1);
     const pool = new Interface(CONFIDENTIAL_CPMM_ABI);
     const factory = new Interface(CONFIDENTIAL_CPMM_FACTORY_ABI);
     const bestExecutionPool = new Interface(CONFIDENTIAL_BEST_EXECUTION_POOL_ABI);
@@ -94,8 +97,14 @@ describe("stable SDK surface", function () {
     expect(pool.getFunction("quoteExactInput")).to.not.equal(null);
     expect(pool.getFunction("requestQuoteExactInput")).to.not.equal(null);
     expect(pool.getFunction("requestAddLiquidityQuote")).to.not.equal(null);
+    expect(pool.getFunction("requestMyPosition")).to.not.equal(null);
+    expect(pool.getFunction("requestRemoveLiquidityQuote")).to.not.equal(null);
+    expect(pool.getFunction("requestLockedPosition")).to.not.equal(null);
     expect(pool.getEvent("ConfidentialQuoteResult")).to.not.equal(null);
     expect(pool.getEvent("ConfidentialLiquidityQuoteResult")).to.not.equal(null);
+    expect(pool.getEvent("ConfidentialPositionResult")).to.not.equal(null);
+    expect(pool.getEvent("ConfidentialRemoveLiquidityQuoteResult")).to.not.equal(null);
+    expect(pool.getEvent("ConfidentialLockedPositionResult")).to.not.equal(null);
     expect(pool.getFunction("collectProtocolFees")).to.not.equal(null);
     expect(pool.getFunction("protocolFees0")).to.equal(null);
     expect(pool.getFunction("protocolFees1")).to.equal(null);
@@ -239,7 +248,7 @@ describe("stable SDK surface", function () {
         strategyClass: 0,
         poolClass: "standard",
         initialized: true,
-        poolKind: "private-erc20-cpmm-v3",
+        poolKind: "private-erc20-cpmm-v1",
         quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
       }),
     ).to.equal(true);
@@ -271,7 +280,7 @@ describe("stable SDK surface", function () {
         feeVault,
         feePolicy,
         privacyMode: PRIVACY_MODE.TRANSPARENT,
-        poolKind: "public-erc20-cpmm-v2",
+        poolKind: "public-erc20-cpmm-v1",
       }),
     ).to.equal(true);
 
@@ -330,7 +339,7 @@ describe("stable SDK surface", function () {
         strategyClass: 0,
         poolClass: "standard",
         initialized: true,
-        poolKind: "private-erc20-cpmm-v3",
+        poolKind: "private-erc20-cpmm-v1",
         quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
         totalShares: "private",
       }),
@@ -1221,7 +1230,7 @@ describe("stable SDK surface", function () {
       strategyClass: 0,
       poolClass: "standard" as const,
       initialized: true,
-      poolKind: "private-erc20-cpmm-v3" as const,
+      poolKind: "private-erc20-cpmm-v1" as const,
       quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
     };
 
@@ -1275,7 +1284,7 @@ describe("stable SDK surface", function () {
       ...valid,
       metadata: deepRoot,
       privacyMode: PRIVACY_MODE.TRANSPARENT,
-      poolKind: "public-erc20-cpmm-v2",
+      poolKind: "public-erc20-cpmm-v1",
     })).to.equal(false);
     expect(isConfidentialLockDiscovery({
       disclosureSchemaVersion: DISCLOSURE_SCHEMA_VERSION,
@@ -1311,7 +1320,7 @@ describe("stable SDK surface", function () {
       feeVault: valid.feeVault,
       feePolicy: valid.feePolicy,
       privacyMode: PRIVACY_MODE.TRANSPARENT,
-      poolKind: "public-erc20-cpmm-v2",
+      poolKind: "public-erc20-cpmm-v1",
       amount0: "1",
     })).to.equal(false);
     expect(isConfidentialLockDiscovery({
@@ -1408,7 +1417,7 @@ describe("stable SDK surface", function () {
       strategyClass: 0,
       poolClass: "standard" as const,
       initialized: true,
-      poolKind: "private-erc20-cpmm-v3" as const,
+      poolKind: "private-erc20-cpmm-v1" as const,
       quoteTransport: CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT,
     });
     const adapter = (candidate: ReturnType<typeof discovery>, overrides: Record<string, unknown> = {}) => ({
@@ -1553,7 +1562,7 @@ describe("stable SDK surface", function () {
       feeVault,
       feePolicy: getCipherDEXV1FeePolicy(30),
       privacyMode: PRIVACY_MODE.TRANSPARENT,
-      poolKind: "public-erc20-cpmm-v2" as const,
+      poolKind: "public-erc20-cpmm-v1" as const,
     };
     const adapter = {
       readChainId: async () => BigInt(chainId),

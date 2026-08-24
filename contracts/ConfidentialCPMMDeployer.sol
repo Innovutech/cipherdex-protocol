@@ -29,7 +29,7 @@ contract ConfidentialCPMMDeployer is IConfidentialCPMMDeployer {
         if (factory != address(0)) revert FactoryAlreadyBound();
         if (
             factory_.code.length == 0 ||
-            IConfidentialCPMMFactory(factory_).PROTOCOL_VERSION() != 3 ||
+            IConfidentialCPMMFactory(factory_).PROTOCOL_VERSION() != 1 ||
             IConfidentialCPMMFactory(factory_).poolDeployer() != address(this)
         ) revert InvalidFactory();
         factory = factory_;

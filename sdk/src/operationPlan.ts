@@ -1,6 +1,9 @@
 export const CONFIDENTIAL_OPERATION = Object.freeze({
   QUOTE: "quote",
+  POSITION: "position",
   ADD_LIQUIDITY_QUOTE: "add-liquidity-quote",
+  REMOVE_LIQUIDITY_QUOTE: "remove-liquidity-quote",
+  LOCKED_POSITION: "locked-position",
   SWAP: "swap",
   ADD_LIQUIDITY: "add-liquidity",
   REMOVE_LIQUIDITY: "remove-liquidity",
@@ -45,7 +48,10 @@ export type ConfidentialSignatureStep = Readonly<{
 export type ConfidentialTransactionPurpose =
   | "token-approval"
   | "quote"
+  | "position"
   | "liquidity-quote"
+  | "remove-liquidity-quote"
+  | "locked-position"
   | "swap"
   | "add-liquidity"
   | "remove-liquidity"
@@ -119,7 +125,6 @@ function buildOperationPlan(input: Readonly<{
   if (
     signatureIds.size !== input.signatures.length ||
     transactionIds.size !== input.transactions.length ||
-    input.signatures.length === 0 ||
     input.transactions.length === 0
   ) {
     throw new TypeError("Invalid confidential operation steps");
@@ -252,6 +257,48 @@ export function buildConfidentialAddLiquidityQuoteOperationPlan(): ConfidentialO
       id: "request-liquidity-quote",
       purpose: "liquidity-quote",
       label: "Preview private liquidity ratio",
+    }],
+  });
+}
+
+export function buildConfidentialPositionOperationPlan(): ConfidentialOperationPlan {
+  return buildOperationPlan({
+    operation: CONFIDENTIAL_OPERATION.POSITION,
+    signatures: [],
+    transactions: [{
+      id: "request-position",
+      purpose: "position",
+      label: "Load private liquidity position",
+    }],
+  });
+}
+
+export function buildConfidentialRemoveLiquidityQuoteOperationPlan(): ConfidentialOperationPlan {
+  return buildOperationPlan({
+    operation: CONFIDENTIAL_OPERATION.REMOVE_LIQUIDITY_QUOTE,
+    signatures: [{
+      id: "remove-quote-shares",
+      purpose: CONFIDENTIAL_SIGNATURE_PURPOSE.SHARES,
+      field: "shares",
+      assetRole: "lp-token",
+      label: "Sign private LP shares to preview",
+    }],
+    transactions: [{
+      id: "request-remove-liquidity-quote",
+      purpose: "remove-liquidity-quote",
+      label: "Preview private liquidity withdrawal",
+    }],
+  });
+}
+
+export function buildConfidentialLockedPositionOperationPlan(): ConfidentialOperationPlan {
+  return buildOperationPlan({
+    operation: CONFIDENTIAL_OPERATION.LOCKED_POSITION,
+    signatures: [],
+    transactions: [{
+      id: "request-locked-position",
+      purpose: "locked-position",
+      label: "Load locked private liquidity position",
     }],
   });
 }

@@ -4,8 +4,11 @@ import {
   buildConfidentialAddLiquidityOperationPlan,
   buildConfidentialAddLiquidityQuoteOperationPlan,
   buildConfidentialLockLiquidityOperationPlan,
+  buildConfidentialLockedPositionOperationPlan,
+  buildConfidentialPositionOperationPlan,
   buildConfidentialQuoteOperationPlan,
   buildConfidentialRemoveLiquidityOperationPlan,
+  buildConfidentialRemoveLiquidityQuoteOperationPlan,
   buildConfidentialSwapOperationPlan,
   buildWalletCapabilitiesRequest,
   buildWalletCallsStatusRequest,
@@ -124,7 +127,7 @@ describe("SDK confidential operation planning", function () {
     });
   });
 
-  it("covers quote, removal, and lock signature progress", function () {
+  it("covers quote, position, removal, and lock signature progress", function () {
     const quote = buildConfidentialQuoteOperationPlan();
     const splitQuote = buildConfidentialQuoteOperationPlan({
       route: "best-execution",
@@ -132,6 +135,9 @@ describe("SDK confidential operation planning", function () {
     });
     const liquidityQuote = buildConfidentialAddLiquidityQuoteOperationPlan();
     const removal = buildConfidentialRemoveLiquidityOperationPlan();
+    const position = buildConfidentialPositionOperationPlan();
+    const removalQuote = buildConfidentialRemoveLiquidityQuoteOperationPlan();
+    const lockedPosition = buildConfidentialLockedPositionOperationPlan();
     const lock = buildConfidentialLockLiquidityOperationPlan();
 
     expect(quote.prompts.sequentialTotal).to.equal(2);
@@ -152,6 +158,15 @@ describe("SDK confidential operation planning", function () {
       "minimumAmount1",
     ]);
     expect(removal.prompts.sequentialTotal).to.equal(4);
+    expect(position).to.deep.include({ operation: "position" });
+    expect(position.signatures).to.deep.equal([]);
+    expect(position.prompts.sequentialTotal).to.equal(1);
+    expect(removalQuote).to.deep.include({ operation: "remove-liquidity-quote" });
+    expect(removalQuote.signatures[0].purpose).to.equal("shares");
+    expect(removalQuote.prompts.sequentialTotal).to.equal(2);
+    expect(lockedPosition).to.deep.include({ operation: "locked-position" });
+    expect(lockedPosition.signatures).to.deep.equal([]);
+    expect(lockedPosition.prompts.sequentialTotal).to.equal(1);
     expect(lock.prompts.sequentialTotal).to.equal(2);
     expect(lock.signatures[0]).to.deep.include({
       position: 1,

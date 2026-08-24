@@ -55,8 +55,14 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
     expect(abi.getFunction("quoteExactInput")).to.not.equal(null);
     expect(abi.getFunction("requestQuoteExactInput")).to.not.equal(null);
     expect(abi.getFunction("requestAddLiquidityQuote")).to.not.equal(null);
+    expect(abi.getFunction("requestMyPosition")).to.not.equal(null);
+    expect(abi.getFunction("requestRemoveLiquidityQuote")).to.not.equal(null);
+    expect(abi.getFunction("requestLockedPosition")).to.not.equal(null);
     expect(abi.getEvent("ConfidentialQuoteResult")).to.not.equal(null);
     expect(abi.getEvent("ConfidentialLiquidityQuoteResult")).to.not.equal(null);
+    expect(abi.getEvent("ConfidentialPositionResult")).to.not.equal(null);
+    expect(abi.getEvent("ConfidentialRemoveLiquidityQuoteResult")).to.not.equal(null);
+    expect(abi.getEvent("ConfidentialLockedPositionResult")).to.not.equal(null);
     expect(abi.getFunction("collectProtocolFees")).to.not.equal(null);
     expect(abi.getEvent("ConfidentialProtocolFeesCollected")).to.not.equal(null);
     expect(abi.getFunction("protocolFees0")).to.equal(null);
@@ -215,6 +221,38 @@ describe("ConfidentialCPMM metadata and construction guards", function () {
       ethers.ZeroHash,
       (1n << 64n) - 1n,
     )).to.be.revertedWithCustomError(pool, "InvalidRequestId");
+  });
+
+  it("rejects invalid position requests before touching pool state or MPC inputs", async function () {
+    const { pool } = await deploy();
+    const emptyInput = {
+      ciphertext: { ciphertextHigh: 0n, ciphertextLow: 0n },
+      signature: "0x",
+    };
+    const future = (1n << 64n) - 1n;
+    const requestId = ethers.id("position-request");
+    const lockId = ethers.id("position-lock");
+
+    await expect(pool.requestMyPosition(requestId, 0))
+      .to.be.revertedWithCustomError(pool, "DeadlineExpired");
+    await expect(pool.requestMyPosition(ethers.ZeroHash, future))
+      .to.be.revertedWithCustomError(pool, "InvalidRequestId");
+    await expect(pool.requestMyPosition(requestId, future))
+      .to.be.revertedWithCustomError(pool, "CanonicalLPTokenRequired");
+
+    await expect(pool.requestRemoveLiquidityQuote(emptyInput, requestId, 0))
+      .to.be.revertedWithCustomError(pool, "DeadlineExpired");
+    await expect(pool.requestRemoveLiquidityQuote(emptyInput, ethers.ZeroHash, future))
+      .to.be.revertedWithCustomError(pool, "InvalidRequestId");
+    await expect(pool.requestRemoveLiquidityQuote(emptyInput, requestId, future))
+      .to.be.revertedWithCustomError(pool, "CanonicalLPTokenRequired");
+
+    await expect(pool.requestLockedPosition(lockId, requestId, 0))
+      .to.be.revertedWithCustomError(pool, "DeadlineExpired");
+    await expect(pool.requestLockedPosition(lockId, ethers.ZeroHash, future))
+      .to.be.revertedWithCustomError(pool, "InvalidRequestId");
+    await expect(pool.requestLockedPosition(lockId, requestId, future))
+      .to.be.revertedWithCustomError(pool, "CanonicalLPTokenRequired");
   });
 
   it("rejects an empty confidential collection request before MPC work", async function () {

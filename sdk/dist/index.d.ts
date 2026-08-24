@@ -4,14 +4,14 @@ export * from "./walletCallBatch.js";
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
  *
- * These ABI fragments intentionally contain no balance, reserve, amount or LP
- * position read model. Clients must obtain private values through the official
- * COTI SDK and the caller's AES key.
+ * Private values are exposed only as caller ciphertexts. Clients must authenticate
+ * their provenance here, then decrypt them through the official COTI SDK with the
+ * caller's AES key. The SDK never accepts, stores or derives AES keys.
  */
-export declare const DISCLOSURE_SCHEMA_VERSION: 7;
-export declare const CIPHERDEX_PUBLIC_PROTOCOL_VERSION: 2;
-export declare const CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION: 3;
-export declare const CIPHERDEX_PROTOCOL_VERSION: 3;
+export declare const DISCLOSURE_SCHEMA_VERSION: 1;
+export declare const CIPHERDEX_PUBLIC_PROTOCOL_VERSION: 1;
+export declare const CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION: 1;
+export declare const CIPHERDEX_PROTOCOL_VERSION: 1;
 export declare const CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION: 2;
 export declare const CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION: 4;
 export declare const CONFIDENTIAL_INITIALIZATION_STRATEGY_VERSION: 1;
@@ -46,7 +46,7 @@ export declare const LP_DISPOSITION: {
     readonly TIMED_LOCK: 1;
     readonly PERMANENT_LOCK: 2;
 };
-export declare const CONFIDENTIAL_CPMM_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function LP_DISPOSITION_CREATOR_HELD() view returns (uint8)", "function LP_DISPOSITION_TIMED_LOCK() view returns (uint8)", "function LP_DISPOSITION_PERMANENT_LOCK() view returns (uint8)", "function token0() view returns (address)", "function token1() view returns (address)", "function token0Decimals() view returns (uint8)", "function token1Decimals() view returns (uint8)", "function scale0() view returns (uint256)", "function scale1() view returns (uint256)", "function feeBps() view returns (uint256)", "function feeVault() view returns (address)", "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)", "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)", "function MIN_CONFIDENTIAL_COLLECTION_SWAPS() view returns (uint32)", "function MIN_CONFIDENTIAL_COLLECTION_DELAY() view returns (uint64)", "function protocolFeeSwapCount0() view returns (uint32)", "function protocolFeeSwapCount1() view returns (uint32)", "function protocolFeeWindowStart0() view returns (uint64)", "function protocolFeeWindowStart1() view returns (uint64)", "function bootstrapper() view returns (address)", "function initializationStrategy() view returns (address)", "function lpToken() view returns (address)", "function initialized() view returns (bool)", "function protectedInitializationCompleted() view returns (bool)", "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))", "function requestQuoteExactInput(((uint256,uint256),bytes),bool,bytes32) returns ((uint256,uint256))", "function requestAddLiquidityQuote(((uint256,uint256),bytes),bool,bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256))", "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))", "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))", "function bootstrapLiquidity(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))", "function bootstrapLiquidityWithDisposition(address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)", "function removeLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256),(uint256,uint256))", "function collectProtocolFees(bool,bool)", "function myShares() view returns ((uint256,uint256))", "function lockInfo(bytes32) view returns (address,uint64,bool,bool)", "function lockShares(((uint256,uint256),bytes),uint64,bool,uint64) returns (bytes32)", "function unlockShares(bytes32)", "event SwapExecuted(address indexed trader,bool indexed zeroForOne)", "event LiquidityAdded(address indexed provider)", "event PoolBootstrapped(address indexed provider)", "event LiquidityRemoved(address indexed provider)", "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent)", "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner)", "event ConfidentialQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed zeroForOne,(uint256,uint256) result)", "event ConfidentialLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed token0Specified,(uint256,uint256) acceptedCiphertext,(uint256,uint256) counterpartCiphertext,(uint256,uint256) lpCiphertext)", "event ConfidentialProtocolFeesCollected(address indexed token,address indexed feeVault,uint32 aggregatedSwapCount)"];
+export declare const CONFIDENTIAL_CPMM_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function LP_DISPOSITION_CREATOR_HELD() view returns (uint8)", "function LP_DISPOSITION_TIMED_LOCK() view returns (uint8)", "function LP_DISPOSITION_PERMANENT_LOCK() view returns (uint8)", "function token0() view returns (address)", "function token1() view returns (address)", "function token0Decimals() view returns (uint8)", "function token1Decimals() view returns (uint8)", "function scale0() view returns (uint256)", "function scale1() view returns (uint256)", "function feeBps() view returns (uint256)", "function feeVault() view returns (address)", "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)", "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)", "function MIN_CONFIDENTIAL_COLLECTION_SWAPS() view returns (uint32)", "function MIN_CONFIDENTIAL_COLLECTION_DELAY() view returns (uint64)", "function protocolFeeSwapCount0() view returns (uint32)", "function protocolFeeSwapCount1() view returns (uint32)", "function protocolFeeWindowStart0() view returns (uint64)", "function protocolFeeWindowStart1() view returns (uint64)", "function bootstrapper() view returns (address)", "function initializationStrategy() view returns (address)", "function lpToken() view returns (address)", "function initialized() view returns (bool)", "function protectedInitializationCompleted() view returns (bool)", "function quoteExactInput(((uint256,uint256),bytes),bool) returns ((uint256,uint256))", "function requestQuoteExactInput(((uint256,uint256),bytes),bool,bytes32) returns ((uint256,uint256))", "function requestAddLiquidityQuote(((uint256,uint256),bytes),bool,bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256))", "function requestMyPosition(bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256),(uint256,uint256))", "function requestRemoveLiquidityQuote(((uint256,uint256),bytes),bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256),(uint256,uint256))", "function requestLockedPosition(bytes32,bytes32,uint64) returns ((uint256,uint256),(uint256,uint256),(uint256,uint256),(uint256,uint256))", "function swapExactInput(((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))", "function addLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),bool,uint64) returns ((uint256,uint256))", "function bootstrapLiquidity(address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))", "function bootstrapLiquidityWithDisposition(address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)", "function removeLiquidity(((uint256,uint256),bytes),((uint256,uint256),bytes),((uint256,uint256),bytes),uint64) returns ((uint256,uint256),(uint256,uint256))", "function collectProtocolFees(bool,bool)", "function myShares() view returns ((uint256,uint256))", "function lockInfo(bytes32) view returns (address,uint64,bool,bool)", "function lockShares(((uint256,uint256),bytes),uint64,bool,uint64) returns (bytes32)", "function unlockShares(bytes32)", "event SwapExecuted(address indexed trader,bool indexed zeroForOne)", "event LiquidityAdded(address indexed provider)", "event PoolBootstrapped(address indexed provider)", "event LiquidityRemoved(address indexed provider)", "event LiquidityLocked(bytes32 indexed lockId,address indexed owner,uint64 unlockTime,bool permanent)", "event LiquidityUnlocked(bytes32 indexed lockId,address indexed owner)", "event ConfidentialQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed zeroForOne,(uint256,uint256) result)", "event ConfidentialLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,bool indexed token0Specified,(uint256,uint256) acceptedCiphertext,(uint256,uint256) counterpartCiphertext,(uint256,uint256) lpCiphertext)", "event ConfidentialPositionResult(address indexed caller,bytes32 indexed requestId,(uint256,uint256) sharesCiphertext,(uint256,uint256) amount0Ciphertext,(uint256,uint256) amount1Ciphertext,(uint256,uint256) priceX18Ciphertext)", "event ConfidentialRemoveLiquidityQuoteResult(address indexed caller,bytes32 indexed requestId,(uint256,uint256) sharesCiphertext,(uint256,uint256) amount0Ciphertext,(uint256,uint256) amount1Ciphertext,(uint256,uint256) priceX18Ciphertext)", "event ConfidentialLockedPositionResult(address indexed caller,bytes32 indexed requestId,bytes32 indexed lockId,(uint256,uint256) sharesCiphertext,(uint256,uint256) amount0Ciphertext,(uint256,uint256) amount1Ciphertext,(uint256,uint256) priceX18Ciphertext)", "event ConfidentialProtocolFeesCollected(address indexed token,address indexed feeVault,uint32 aggregatedSwapCount)"];
 export declare const CONFIDENTIAL_CPMM_FACTORY_ABI: readonly ["function PROTOCOL_VERSION() view returns (uint256)", "function PRIVACY_MODE() view returns (uint8)", "function PRIVATE_LP_TOKEN_FACTORY_RUNTIME_CODEHASH() view returns (bytes32)", "function lpTokenFactory() view returns (address)", "function poolDeployer() view returns (address)", "function poolDeployerRuntimeCodehash() view returns (bytes32)", "function feeVault() view returns (address)", "function initializationStrategyRegistry() view returns (address)", "function initializationStrategyRegistryRuntimeCodehash() view returns (bytes32)", "function initializationStrategyRegistryFinalized() view returns (bool)", "function initializationStrategiesLength() view returns (uint256)", "function initializationStrategyAt(uint8) view returns (address)", "function initializationStrategyClass(address) view returns (uint8)", "function initializationStrategyRuntimeCodehash(address) view returns (bytes32)", "function initializationStrategyRegistration(address) view returns (bytes32)", "function isCompatiblePrivateToken(address) view returns (bool)", "function isApprovedFeeTier(uint256) pure returns (bool)", "function bootstrapConfigurator() view returns (address)", "function bestExecutionRouter() view returns (address)", "function BEST_EXECUTION_ROUTER_RUNTIME_CODEHASH() view returns (bytes32)", "function getPool(bytes32) view returns (address)", "function isPool(address) view returns (bool)", "function createPool(address,address,uint8,uint8,uint256) returns (address)", "function getOrCreatePoolForCommitment(address,address,uint8,uint8,uint256) returns (address)", "function setBestExecutionRouter(address)", "function poolKey(address,address,uint8,uint8,uint256,address) pure returns (bytes32)", "function allPoolsLength() view returns (uint256)", "function allPools(uint256) view returns (address)", "function bootstrapPool(address,bytes32,bytes32,address,address,uint256,uint256,uint256,uint256,uint256) returns ((uint256,uint256))", "function bootstrapPoolWithDisposition(address,bytes32,bytes32,address,address,uint256,uint256,uint256,uint256,uint256,uint8,uint64) returns ((uint256,uint256),bytes32)", "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address initializationStrategy,address pool)", "event PrivateLPTokenCreated(address indexed pool,address indexed token)", "event BestExecutionRouterConfigured(address indexed router)"];
 export declare const PRIVATE_LP_TOKEN_FACTORY_ABI: readonly ["function poolByToken(address) view returns (address)", "function issuerByToken(address) view returns (address)", "function isIssuedToken(address,address,address) view returns (bool)", "event PrivateLPTokenIssued(address indexed pool,address indexed token,address indexed issuer)"];
 export declare const CONFIDENTIAL_BEST_EXECUTION_POOL_ABI: readonly ["function quoteExactInputForRouter(uint256,bool) returns (uint256,uint256)", "function settleExactInputForRouter(address,uint256,uint256,bool,uint64) returns (uint256)"];
@@ -130,6 +130,15 @@ export declare const MAX_CONFIDENTIAL_ROUTE_CANDIDATES: 3;
 export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION: "requestAddLiquidityQuote";
 export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR: "0x6ad558a9";
 export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC: "0x4069fd369ee96a414b638a1f85119a2360ab4a7e05df9b1816582b1baf87a147";
+export declare const CONFIDENTIAL_POSITION_FUNCTION: "requestMyPosition";
+export declare const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_FUNCTION: "requestRemoveLiquidityQuote";
+export declare const CONFIDENTIAL_LOCKED_POSITION_FUNCTION: "requestLockedPosition";
+export declare const CONFIDENTIAL_POSITION_SELECTOR: "0x7bfbe73f";
+export declare const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_SELECTOR: "0x2ec34126";
+export declare const CONFIDENTIAL_LOCKED_POSITION_SELECTOR: "0xe6de11b2";
+export declare const CONFIDENTIAL_POSITION_RESULT_TOPIC: "0x41e5da4a9403b8e78894d18ca3bff0f8a0f5a8eae6e5636298446fe20471681e";
+export declare const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_RESULT_TOPIC: "0xf5618a97d75fcd6fe4fe31f19af15680ce40df584774f60e217af3bde0ad690d";
+export declare const CONFIDENTIAL_LOCKED_POSITION_RESULT_TOPIC: "0xe320f84a3eff475e8f2fcd51814b1d57a8e033b8ac63ec0e194f18b614125959";
 export declare const CONFIDENTIAL_BEST_QUOTE_RESULT_TOPIC: "0x74d60457cef138a4b1c57bac9346b347c04566dfa22699c3a3eab54267d0fdb7";
 export declare const CONFIDENTIAL_BEST_SWAP_RESULT_TOPIC: "0x4a0ef2bdc006487857271fcf656bebd35d04c28f1fc35b8aa460ded5ca8fc3dc";
 export declare const LAUNCHPAD_MIGRATION_TOPIC: "0x6227c8fb63c7ea6dc2225fbf219a361b834ac2a7bf43da0b32f1ef9f3b779956";
@@ -164,6 +173,18 @@ export type ConfidentialBestSwapWithCandidatesCall = Readonly<{
 export type ConfidentialLiquidityQuoteCall = Readonly<{
     functionName: typeof CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION;
     args: readonly [InputText256, boolean, string, bigint];
+}>;
+export type ConfidentialPositionCall = Readonly<{
+    functionName: typeof CONFIDENTIAL_POSITION_FUNCTION;
+    args: readonly [string, bigint];
+}>;
+export type ConfidentialRemoveLiquidityQuoteCall = Readonly<{
+    functionName: typeof CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_FUNCTION;
+    args: readonly [InputText256, string, bigint];
+}>;
+export type ConfidentialLockedPositionCall = Readonly<{
+    functionName: typeof CONFIDENTIAL_LOCKED_POSITION_FUNCTION;
+    args: readonly [string, string, bigint];
 }>;
 export type PublicCreateOrAddLiquidityCall = Readonly<{
     functionName: "createOrAddLiquidity";
@@ -292,6 +313,12 @@ export declare function buildConfidentialBestSwapWithCandidatesCall(tokenIn: str
  * specified amount must be bound to the target pool and this function selector.
  */
 export declare function buildConfidentialLiquidityQuoteCall(specifiedAmount: InputText256, amount0Specified: boolean, requestId: string, deadline: bigint): ConfidentialLiquidityQuoteCall;
+/** Builds the paid owner-only active-position disclosure call. */
+export declare function buildConfidentialPositionCall(requestId: string, deadline: bigint): ConfidentialPositionCall;
+/** Builds a paid caller-encrypted partial/full removal preview. */
+export declare function buildConfidentialRemoveLiquidityQuoteCall(shares: InputText256, requestId: string, deadline: bigint): ConfidentialRemoveLiquidityQuoteCall;
+/** Builds the paid owner-only disclosure call for one unreleased LP lock. */
+export declare function buildConfidentialLockedPositionCall(lockId: string, requestId: string, deadline: bigint): ConfidentialLockedPositionCall;
 /** Builds the public atomic create-or-add-liquidity periphery call. */
 export declare function buildPublicCreateOrAddLiquidityCall(input: Readonly<{
     tokenA: string;
@@ -352,7 +379,7 @@ export type ConfidentialPoolDiscovery = {
     strategyClass: number;
     poolClass: "standard" | "launch-protected";
     initialized: boolean;
-    poolKind: "private-erc20-cpmm-v3";
+    poolKind: "private-erc20-cpmm-v1";
     quoteTransport: typeof CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT;
 };
 declare const VERIFIED_CONFIDENTIAL_POOL_DISCOVERY: unique symbol;
@@ -361,6 +388,50 @@ export type VerifiedConfidentialPoolDiscovery = Readonly<ConfidentialPoolDiscove
     factory: string;
     readonly [VERIFIED_CONFIDENTIAL_POOL_DISCOVERY]: true;
 }>;
+export type ConfidentialPositionOperation = "active-position" | "remove-liquidity-quote" | "locked-position";
+export type ConfidentialPositionResultExpectation = Readonly<{
+    operation: ConfidentialPositionOperation;
+    caller: string;
+    requestId: string;
+    /** Zero hash for active-position and remove-liquidity-quote. */
+    lockId: string;
+    transactionHash: string;
+    transactionData: string;
+}>;
+export type ConfidentialPosition = Readonly<{
+    chainId: number;
+    pool: string;
+    operation: ConfidentialPositionOperation;
+    caller: string;
+    requestId: string;
+    lockId?: string;
+    shares: bigint;
+    amount0: bigint;
+    amount1: bigint;
+    priceX18: bigint;
+    transactionHash: string;
+}>;
+export interface ConfidentialPositionDecryptionAdapter {
+    readChainId(): Promise<number | bigint>;
+    getTransaction(transactionHash: string): Promise<ConfidentialBestExecutionTransactionEvidence | null>;
+    getTransactionReceipt(transactionHash: string): Promise<ConfidentialBestExecutionReceiptEvidence | null>;
+    decryptValue256(value: Ciphertext256): Promise<bigint>;
+}
+export interface ConfidentialOwnerReadAdapter {
+    readChainId(): Promise<number | bigint>;
+    readMyShares(pool: string, owner: string): Promise<Ciphertext256>;
+    decryptValue256(value: Ciphertext256): Promise<bigint>;
+}
+export type ConfidentialAllowanceCiphertexts = Readonly<{
+    ciphertext: Ciphertext256;
+    ownerCiphertext: Ciphertext256;
+    spenderCiphertext: Ciphertext256;
+}>;
+export interface ConfidentialAllowanceReadAdapter {
+    readChainId(): Promise<number | bigint>;
+    readAllowance(token: string, owner: string, spender: string): Promise<ConfidentialAllowanceCiphertexts>;
+    decryptValue256(value: Ciphertext256): Promise<bigint>;
+}
 export type ConfidentialPoolOnchainState = {
     protocolVersion: number | bigint;
     privacyMode: number | bigint;
@@ -414,7 +485,7 @@ export type PublicPoolDiscovery = {
     feeVault: string;
     feePolicy: CipherDEXV1FeePolicy;
     privacyMode: typeof PRIVACY_MODE.TRANSPARENT;
-    poolKind: "public-erc20-cpmm-v2";
+    poolKind: "public-erc20-cpmm-v1";
 };
 declare const VERIFIED_PUBLIC_POOL_DISCOVERY: unique symbol;
 export type VerifiedPublicPoolDiscovery = Readonly<PublicPoolDiscovery & {
@@ -532,6 +603,15 @@ export declare function decryptConfidentialBestExecutionResult(router: VerifiedC
  * canonical key, immutable pool metadata, fee vault, and protocol version.
  */
 export declare function verifyConfidentialPoolDiscovery(value: unknown, policy: ConfidentialPoolVerificationPolicy, adapter: ConfidentialPoolVerificationAdapter): Promise<VerifiedConfidentialPoolDiscovery>;
+/**
+ * Authenticates and decrypts one paid owner-only position result. The pool must
+ * be a process-local value returned by verifyConfidentialPoolDiscovery.
+ */
+export declare function decryptConfidentialPositionResult(pool: VerifiedConfidentialPoolDiscovery, expectation: ConfidentialPositionResultExpectation, adapter: ConfidentialPositionDecryptionAdapter): Promise<ConfidentialPosition>;
+/** Reads and decrypts the caller's active cLP balance without fresh MPC work. */
+export declare function readConfidentialActiveShares(pool: VerifiedConfidentialPoolDiscovery, owner: string, adapter: ConfidentialOwnerReadAdapter): Promise<bigint>;
+/** Reads the owner-encrypted private-token allowance for one verified pool asset. */
+export declare function readConfidentialTokenAllowance(pool: VerifiedConfidentialPoolDiscovery, token: string, owner: string, spender: string, adapter: ConfidentialAllowanceReadAdapter): Promise<bigint>;
 export declare function isPublicPoolDiscovery(value: unknown): value is PublicPoolDiscovery;
 export declare const isPublicPoolDiscoveryShape: typeof isPublicPoolDiscovery;
 /**

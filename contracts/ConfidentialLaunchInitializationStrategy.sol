@@ -21,7 +21,7 @@ contract ConfidentialLaunchInitializationStrategy is
     IConfidentialInitializationStrategy
 {
     uint256 public constant STRATEGY_VERSION = 1;
-    uint256 public constant PROTOCOL_VERSION = 3;
+    uint256 public constant PROTOCOL_VERSION = 1;
     uint8 public constant PRIVACY_MODE = 1;
     address public factory;
     address public strategyRegistry;

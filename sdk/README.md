@@ -70,13 +70,19 @@ address constants into multiple SDK modules. The manifest is testnet-only and is
 not a mainnet registry.
 
 Private amounts, reserves, balances and LP positions are not represented in the
-discovery schema. Use the official COTI SDK and the caller's AES key for
-caller-specific ciphertext preparation and decryption. Factory-created
+discovery schema. The confidential pool instead exposes paid, owner-targeted
+position results. `decryptConfidentialPositionResult` authenticates the exact
+chain, verified pool, caller, calldata, request ID, successful receipt and unique
+result event before decrypting active, removal-preview or locked-position values.
+`readConfidentialActiveShares` adapts the existing no-MPC `myShares` ciphertext,
+while `readConfidentialTokenAllowance` selects the owner ciphertext from the
+official private-token allowance response. Integrations supply COTI decryption
+adapters; the SDK never receives or stores an AES key. Factory-created
 confidential pools expose a pool-bound `PrivateLPToken`; its ABI fragment is
 available for encrypted LP transfers and approvals, while aggregate
 `totalSupply()` must not be used as a private-supply oracle.
 
-Discovery schema version 7 also binds every pool to the immutable CipherDEX v1
+Discovery schema version 1 also binds every pool to the immutable CipherDEX v1
 fee policy and fee vault. Integrations can present the complete total fee and
 its LP/protocol split without exposing accrued confidential amounts. The SDK's
 `calculateCipherDEXV1FeeBreakdown` mirrors pool integer rounding; it does not add
@@ -107,8 +113,8 @@ runtime codehash, through an RPC-backed adapter. The verifier proves deployed
 code, factory membership, canonical lookup, immutable pool metadata, the
 factory's helper address/codehash constant, helper runtime codehash, LP-token
 code, and exact `(pool, token, canonicalFactory)` issuance attestation before it
-returns a process-local verified value. Confidential protocol version 3 uses
-`private-erc20-cpmm-v3` and includes the initialization strategy, strategy class,
+returns a process-local verified value. The current protocol uses
+`private-erc20-cpmm-v1` and includes the initialization strategy, strategy class,
 standard/launch-protected class and initialized state. Canonical lookup is for
 the complete key `(ordered pair, fee tier, privacy mode, protocol version,
 initialization strategy)`. Only verified, initialized records may enter quote

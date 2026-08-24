@@ -46,7 +46,7 @@ describe("ConfidentialBestExecutionRouter canonical boundary", function () {
 
     const { factory, router } = await deploy();
     expect(await router.factory()).to.equal(await factory.getAddress());
-    expect(await router.PROTOCOL_VERSION()).to.equal(2n);
+    expect(await router.PROTOCOL_VERSION()).to.equal(1n);
     expect(await router.MAX_CANDIDATES()).to.equal(3n);
     expect(await router.MAX_QUOTE_CANDIDATES()).to.equal(9n);
     expect(await router.DEFAULT_STANDARD_CANDIDATE_BITMAP()).to.equal(73n);

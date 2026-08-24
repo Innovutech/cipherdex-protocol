@@ -1,6 +1,9 @@
 export const CONFIDENTIAL_OPERATION = Object.freeze({
     QUOTE: "quote",
+    POSITION: "position",
     ADD_LIQUIDITY_QUOTE: "add-liquidity-quote",
+    REMOVE_LIQUIDITY_QUOTE: "remove-liquidity-quote",
+    LOCKED_POSITION: "locked-position",
     SWAP: "swap",
     ADD_LIQUIDITY: "add-liquidity",
     REMOVE_LIQUIDITY: "remove-liquidity",
@@ -34,7 +37,6 @@ function buildOperationPlan(input) {
     const transactionIds = new Set(input.transactions.map((step) => step.id));
     if (signatureIds.size !== input.signatures.length ||
         transactionIds.size !== input.transactions.length ||
-        input.signatures.length === 0 ||
         input.transactions.length === 0) {
         throw new TypeError("Invalid confidential operation steps");
     }
@@ -145,6 +147,45 @@ export function buildConfidentialAddLiquidityQuoteOperationPlan() {
                 id: "request-liquidity-quote",
                 purpose: "liquidity-quote",
                 label: "Preview private liquidity ratio",
+            }],
+    });
+}
+export function buildConfidentialPositionOperationPlan() {
+    return buildOperationPlan({
+        operation: CONFIDENTIAL_OPERATION.POSITION,
+        signatures: [],
+        transactions: [{
+                id: "request-position",
+                purpose: "position",
+                label: "Load private liquidity position",
+            }],
+    });
+}
+export function buildConfidentialRemoveLiquidityQuoteOperationPlan() {
+    return buildOperationPlan({
+        operation: CONFIDENTIAL_OPERATION.REMOVE_LIQUIDITY_QUOTE,
+        signatures: [{
+                id: "remove-quote-shares",
+                purpose: CONFIDENTIAL_SIGNATURE_PURPOSE.SHARES,
+                field: "shares",
+                assetRole: "lp-token",
+                label: "Sign private LP shares to preview",
+            }],
+        transactions: [{
+                id: "request-remove-liquidity-quote",
+                purpose: "remove-liquidity-quote",
+                label: "Preview private liquidity withdrawal",
+            }],
+    });
+}
+export function buildConfidentialLockedPositionOperationPlan() {
+    return buildOperationPlan({
+        operation: CONFIDENTIAL_OPERATION.LOCKED_POSITION,
+        signatures: [],
+        transactions: [{
+                id: "request-locked-position",
+                purpose: "locked-position",
+                label: "Load locked private liquidity position",
             }],
     });
 }

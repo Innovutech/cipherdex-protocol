@@ -21,7 +21,7 @@ import "./interfaces/IConfidentialCPMMFactory.sol";
  * directly against the authenticated selected pool with a fresh minimumOut.
  */
 contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
-    uint256 public constant PROTOCOL_VERSION = 2;
+    uint256 public constant PROTOCOL_VERSION = 1;
     // Retained as the atomic best-swap ceiling for ABI compatibility.
     uint8 public constant MAX_CANDIDATES = 3;
     uint8 public constant MAX_QUOTE_CANDIDATES = 9;
@@ -98,7 +98,7 @@ contract ConfidentialBestExecutionRouter is CipherDEXFeePolicy {
         if (factory_.code.length == 0) revert InvalidFactory();
         IConfidentialCPMMFactory candidate = IConfidentialCPMMFactory(factory_);
         if (
-            candidate.PROTOCOL_VERSION() != 3 ||
+            candidate.PROTOCOL_VERSION() != 1 ||
             candidate.PRIVACY_MODE() != 1 ||
             !candidate.initializationStrategyRegistryFinalized() ||
             candidate.initializationStrategiesLength() > 2
