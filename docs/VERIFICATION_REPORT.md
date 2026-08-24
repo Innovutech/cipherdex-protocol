@@ -413,6 +413,39 @@ they are not the supported integration surface.
 
 ### Current exact-source deployment pending funded promotion
 
+Source commit `4f435f9cc96b41895604335d838287a60a25a3b3` was deployed to
+COTI testnet chain `7082400` through the authenticated exact-commit launcher.
+The complete 18-transaction deployment and binding record is
+`deployments/coti-testnet-4f435f9cc96b41895604335d838287a60a25a3b3.json`.
+All transactions succeeded, consumed `24726933` gas in total, and the deployment
+runner independently verified creation bytecode, constructor inputs, runtime
+codehashes and every immutable post-deployment relationship. Deployment created
+no pools and moved no private token.
+
+- Fee vault: `0x64776BE43B2e2Dc8cf1A2AC6765b94c4f72EA6fB`.
+- Private LP-token factory: `0x7f50a41D4E400574aA1cA842D99A88448A0905FA`.
+- Initialization-strategy registry:
+  `0xDF9293C58381ec0491a49a6a6c751351A2DfA9df`.
+- Confidential pool deployer:
+  `0x81C06Ffba141247c996FcD347608a7A60b34e8E5`.
+- Confidential factory: `0xC77D905539D94928615881c34B0717A6919B429a`.
+- Launch initialization strategy:
+  `0xBceD7D60dC34E8fF858589153a7b71F8457C213c`.
+- Launchpad migrator: `0x4184fC2a00689B05F017DA0DAFc12620bE97989a`.
+- Confidential best-execution router:
+  `0xE971e45D07E4155bE9cba5d3D29BBcD995c3B7d8`.
+- Public factory: `0x47340036f8B2099890CE5F6AA7015b7444E9Df86`.
+- Public quoter: `0x65be03EB099d035461498B5596ffD256bC62AeD0`.
+- Public swap router: `0xae478Cc2e878808025181E29fFf7D924896BfAA0`.
+- Public liquidity router: `0x1Fe51caA21c344974eedB3FC645536682b745E64`.
+
+This deployment contains the reviewed `90000000` funded quote envelope while
+retaining the protocol and SDK limits of nine quote-only candidates and three
+atomic candidates. Promotion requires the complete source-bound funded suite
+and final independent evidence verification described above.
+
+### Previous exact-source deployment with exhausted runner envelope
+
 Source commit `019769db8b994d84971769435d1d4a35158b3621` was deployed to
 COTI testnet chain `7082400` through the authenticated exact-commit launcher.
 The complete 18-transaction deployment and binding record is
