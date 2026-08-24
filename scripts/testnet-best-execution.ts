@@ -3091,6 +3091,11 @@ async function main(): Promise<void> {
         constructorArguments: [publicScenario.factoryDeployment.address],
       },
       {
+        label: "disposable public pool",
+        contractName: "PublicCPMM",
+        address: publicScenario.poolAddress,
+      },
+      {
         label: "disposable public token A",
         contractName: "MockERC20",
         address: publicScenario.tokenADeployment.address,

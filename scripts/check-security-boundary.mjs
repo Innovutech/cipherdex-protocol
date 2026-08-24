@@ -1328,6 +1328,17 @@ const fundedEvidenceSource = maskSourceCommentsAndLiterals(fundedEvidenceRawSour
 if (!fundedEvidenceSource.includes("input.expectedStrategyArtifactLabel")) {
   throw new Error("Funded launchpad migration evidence hardcodes one strategy artifact label");
 }
+for (const required of [
+  '"PublicCPMM",',
+  'label: /^public full liquidity cleanup$/',
+  'targetArtifactLabel: "disposable public pool"',
+  'const reviewedPool = artifactAddress(evidenceArtifacts, "disposable public pool")',
+  'pool !== reviewedPool',
+]) {
+  if (!fundedEvidenceRawSource.includes(required)) {
+    throw new Error(`Funded public-pool cleanup evidence omits reviewed binding: ${required}`);
+  }
+}
 const fundedRecoveryRawSource = await readFile(
   "scripts/funded-recovery-journal.ts",
   "utf8",
@@ -1511,6 +1522,15 @@ const bestExecutionAllowanceSource = await readFile(
   "scripts/testnet-best-execution.ts",
   "utf8",
 );
+for (const required of [
+  'label: "disposable public pool"',
+  'contractName: "PublicCPMM"',
+  "address: publicScenario.poolAddress",
+]) {
+  if (!bestExecutionAllowanceSource.includes(required)) {
+    throw new Error(`Best-execution evidence omits its factory-created public pool: ${required}`);
+  }
+}
 for (const required of [
   "async function setExactPublicAllowance(",
   'token.getFunction("approve")',

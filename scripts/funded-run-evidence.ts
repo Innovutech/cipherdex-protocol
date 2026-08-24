@@ -58,6 +58,7 @@ const SOURCE_COMMIT = /^[0-9a-f]{40}$/;
 const LABEL = /^[a-zA-Z0-9][a-zA-Z0-9 .:_+\-/()]{0,159}$/;
 const NESTED_CREATION_CONTRACTS = new Set([
   "ConfidentialCPMM",
+  "PublicCPMM",
   "PrivateLPToken",
   "ConfidentialLaunchpadMigrator",
 ]);
@@ -199,6 +200,7 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       ConfidentialCPMM: 9,
       PrivateLPToken: 9,
       PublicCPMMFactory: 1,
+      PublicCPMM: 1,
       PublicCPMMLiquidityRouter: 1,
       MockERC20: 2,
     },
@@ -230,6 +232,7 @@ const RUNNER_POLICIES = Object.freeze<Record<string, RunnerPolicy>>({
       { label: /^public atomic create rollback$/, status: 0, targetArtifactLabel: "disposable public liquidity router", selectors: [SELECTOR.publicCreateOrAdd] },
       { label: /^public atomic create and seed$/, status: 1, targetArtifactLabel: "disposable public liquidity router", selectors: [SELECTOR.publicCreateOrAdd] },
       { label: /^public proportional add and refund$/, status: 1, targetArtifactLabel: "disposable public liquidity router", selectors: [SELECTOR.publicCreateOrAdd] },
+      { label: /^public full liquidity cleanup$/, status: 1, targetArtifactLabel: "disposable public pool", selectors: [SELECTOR.publicRemoveLiquidity] },
     ],
   },
   "configured-compatibility": {
@@ -992,6 +995,7 @@ async function requirePublicLiquidityPeripheryBindings(
 ): Promise<void> {
   const feeVault = artifactAddress(evidenceArtifacts, "disposable fee vault");
   const factory = artifactAddress(evidenceArtifacts, "disposable public factory");
+  const reviewedPool = artifactAddress(evidenceArtifacts, "disposable public pool");
   const router = artifactAddress(evidenceArtifacts, "disposable public liquidity router");
   const tokenA = artifactAddress(evidenceArtifacts, "disposable public token A");
   const tokenB = artifactAddress(evidenceArtifacts, "disposable public token B");
@@ -1063,6 +1067,9 @@ async function requirePublicLiquidityPeripheryBindings(
   const created = routedEvent(create, true);
   const added = routedEvent(add, false);
   const pool = getAddress(String(created.args.pool));
+  if (pool !== reviewedPool) {
+    throw new Error("funded public liquidity event does not identify the reviewed pool");
+  }
   const aIsToken0 = BigInt(String(addCall[0])) < BigInt(String(addCall[1]));
   const amountAUsed = BigInt(aIsToken0 ? added.args.amount0 : added.args.amount1);
   const amountBUsed = BigInt(aIsToken0 ? added.args.amount1 : added.args.amount0);
