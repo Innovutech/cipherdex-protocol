@@ -1,6 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-
 import { ethers } from "../hardhat/runtime.js";
 
 import {
@@ -10,6 +7,7 @@ import {
   verifyFundedSuiteSources,
 } from "./funded-suite-evidence";
 import { createFundedDeploymentBinding } from "./funded-deployment-binding";
+import { fundedSuiteOutputPath } from "./funded-suite-output";
 import {
   requiredTestnetDeploymentRecordPath,
   verifyConfiguredTestnetDeployment,
@@ -37,10 +35,13 @@ async function main(): Promise<void> {
   await verifyFundedSuiteRuns(suite, ethers.provider);
   await verifyFundedSuiteSources(suite);
 
-  const path = resolve("evidence", `coti-testnet-${sourceCommit}.json`);
-  mkdirSync(dirname(path), { recursive: true });
+  const publicRepositoryRoot = process.env.CIPHERDEX_PUBLIC_REPOSITORY_ROOT?.trim();
+  if (!publicRepositoryRoot) {
+    throw new Error("funded finalization requires the public repository root");
+  }
+  const path = fundedSuiteOutputPath(publicRepositoryRoot, sourceCommit);
   writeUtf8FileAtomic(path, `${JSON.stringify(suite, null, 2)}\n`);
-  console.log(`Final funded suite evidence written to ${path}`);
+  console.log(`Final funded suite evidence written to evidence/coti-testnet-${sourceCommit}.json`);
 }
 
 void main().catch((error: unknown) => {
