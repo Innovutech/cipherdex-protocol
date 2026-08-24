@@ -1906,6 +1906,26 @@ export function requireOnchainSemanticBindings(
       artifacts,
       participants,
     });
+    for (const [transactionLabel, expectedFeeBps, expectedStrategyArtifactLabel,
+      expectedMigratorArtifactLabel, expectedPoolArtifactLabel] of [
+      ["initialize protected a 5 bps pool", 5, "disposable launch initialization strategy", "disposable launchpad migrator", "5 bps launch-protected a canonical pool"],
+      ["initialize protected a 100 bps pool", 100, "disposable launch initialization strategy", "disposable launchpad migrator", "100 bps launch-protected a canonical pool"],
+      ["initialize protected b 5 bps pool", 5, "disposable second launch initialization strategy", "disposable second launchpad migrator", "5 bps launch-protected b canonical pool"],
+      ["initialize protected b 30 bps pool", 30, "disposable second launch initialization strategy", "disposable second launchpad migrator", "30 bps launch-protected b canonical pool"],
+      ["initialize protected b 100 bps pool", 100, "disposable second launch initialization strategy", "disposable second launchpad migrator", "100 bps launch-protected b canonical pool"],
+    ] as const) {
+      requireLaunchpadMigrationBinding({
+        transactionLabel,
+        expectedFeeBps,
+        expectedStrategyArtifactLabel,
+        expectedMigratorArtifactLabel,
+        expectedPoolArtifactLabel,
+        configuration,
+        transactions,
+        artifacts,
+        participants,
+      });
+    }
     requireSelection(
       "two-candidate quote with absent tier",
       SELECTOR.bestQuote,
@@ -2221,26 +2241,6 @@ export function requireOnchainSemanticBindings(
       artifacts,
       participants,
     });
-    for (const [transactionLabel, expectedFeeBps, expectedStrategyArtifactLabel,
-      expectedMigratorArtifactLabel, expectedPoolArtifactLabel] of [
-      ["initialize protected a 5 bps pool", 5, "disposable launch initialization strategy", "disposable launchpad migrator", "5 bps launch-protected a canonical pool"],
-      ["initialize protected a 100 bps pool", 100, "disposable launch initialization strategy", "disposable launchpad migrator", "100 bps launch-protected a canonical pool"],
-      ["initialize protected b 5 bps pool", 5, "disposable second launch initialization strategy", "disposable second launchpad migrator", "5 bps launch-protected b canonical pool"],
-      ["initialize protected b 30 bps pool", 30, "disposable second launch initialization strategy", "disposable second launchpad migrator", "30 bps launch-protected b canonical pool"],
-      ["initialize protected b 100 bps pool", 100, "disposable second launch initialization strategy", "disposable second launchpad migrator", "100 bps launch-protected b canonical pool"],
-    ] as const) {
-      requireLaunchpadMigrationBinding({
-        transactionLabel,
-        expectedFeeBps,
-        expectedStrategyArtifactLabel,
-        expectedMigratorArtifactLabel,
-        expectedPoolArtifactLabel,
-        configuration,
-        transactions,
-        artifacts,
-        participants,
-      });
-    }
     const replay = decodeLaunchpadCall(requireUniqueTransaction(
       transactions,
       "launchpad replay probe",

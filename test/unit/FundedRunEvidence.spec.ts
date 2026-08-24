@@ -659,6 +659,17 @@ describe("funded run evidence", function () {
       participants,
     )).not.to.throw();
 
+    const missingExpandedMigration = transactions.filter((candidate) =>
+      candidate.label !== "initialize protected a 5 bps pool"
+    );
+    expect(() => requireOnchainSemanticBindings(
+      "best-execution",
+      configuration,
+      missingExpandedMigration,
+      artifacts,
+      participants,
+    )).to.throw("funded evidence lacks unique initialize protected a 5 bps pool transaction");
+
     const tampered = transactions.map((candidate) =>
       candidate.label === "post-tie 30 bps quote-plus-swap"
         ? { ...candidate, logs: [] }
