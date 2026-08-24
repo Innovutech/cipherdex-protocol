@@ -452,18 +452,30 @@ quote-and-swap consumed `38282486` gas. The run stopped before broadcast when a
 second protected-pool token approval reused the first protected pool's durable
 logical-operation label. No unknown transaction hash was produced.
 
-An exact-source recovery rerun closed the first three active disposable pools
-through transactions
-`0xfbe217...`, `0x441810...` and `0xfe727c...`; the abbreviated hashes are
-diagnostic only until terminal evidence is published. Recovery then stopped
-before its next broadcast because the cleanup operation label had the same
-fee-tier-only identity defect. The current runner binds pool approvals and
-cleanup operations to the complete disposable-resource identity, classifies
-duplicate operation identities as definite pre-broadcast failures, and adds an
+An exact-source recovery rerun first closed three active disposable pools. The
+sanitized diagnostic retained the transaction prefixes `0xfbe217`, `0x441810`
+and `0xfe727c`, with respective gas use of `11809855`, `11889855` and
+`13447967`; the durable authenticated journal, rather than these prefixes, is
+the recovery authority.
+Recovery then stopped before its next broadcast because the cleanup operation
+label had the same fee-tier-only identity defect. Source commit
+`019769db8b994d84971769435d1d4a35158b3621` binds pool approvals and cleanup
+operations to the complete disposable-resource identity, classifies duplicate
+operation identities as definite pre-broadcast failures, and adds an
 authenticated cleanup-only path that may open the original journal only when
 its supplied recovery source commit exactly matches this deployment manifest.
-The remaining disposable state must be closed through that path before a fresh
-source-bound deployment and funded promotion proceed.
+
+That cleanup-only path subsequently closed the remaining disposable pools
+through transactions
+`0x6b1f60612707128c8eb0ffecff75a9f3748fda9a2c0d2693928b4531646175f7`
+(`10241274` gas),
+`0x7ac0f5b0a3fc7b27516e5c4b737fc219766db49bcd03e66e0ca7dda907e0f496`
+(`10241322` gas), and
+`0x2ca9b0e3c0bcf29e8ea28d33e2e3f4e5923af8e483ab99e2b4bf58e484c13a49`
+(`10241346` gas). The authenticated journal reached zero active resources and
+zero allowance obligations and was terminalized without an unknown transaction
+outcome. A fresh source-bound deployment and funded promotion are still
+required for commit `019769db8b994d84971769435d1d4a35158b3621`.
 
 ### Superseded source-bound deployment with failed funded gate
 
