@@ -697,7 +697,10 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
     gasUsed: launchStrategyDeployment.gasUsed,
     artifact: launchpadArtifact,
   };
+  const recordedLaunchpadProtocolVersion =
+    await launchpadDeployment.contract.PROTOCOL_VERSION();
   await recordDeployment("launchpadMigrator", launchpadDeployment, {
+    protocolVersion: recordedLaunchpadProtocolVersion.toString(),
     creationKind: "strategy-constructor-child",
     creationParent: launchStrategyDeployment.address,
     constructorArgs: [factoryDeployment.address, launchStrategyDeployment.address],
@@ -758,8 +761,10 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
     factoryDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.confidentialBestExecutionRouter },
   );
+  const recordedConfidentialRouterProtocolVersion =
+    await confidentialRouterDeployment.contract.PROTOCOL_VERSION();
   await recordDeployment("confidentialBestExecutionRouter", confidentialRouterDeployment, {
-    protocolVersion: "2",
+    protocolVersion: recordedConfidentialRouterProtocolVersion.toString(),
     factory: factoryDeployment.address,
     constructorArgs: [factoryDeployment.address],
   });

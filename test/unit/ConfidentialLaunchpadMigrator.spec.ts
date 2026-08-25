@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "../../hardhat/runtime.js";
+import { CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION } from "../../sdk/src/index";
 import {
   configureConfidentialLaunch,
   deployConfidentialFactory,
@@ -125,7 +126,9 @@ describe("ConfidentialLaunchpadMigrator", function () {
       "ConfidentialLaunchpadMigrator",
     );
 
-    expect(await launch.migrator.PROTOCOL_VERSION()).to.equal(1n);
+    expect(await launch.migrator.PROTOCOL_VERSION()).to.equal(
+      BigInt(CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION),
+    );
     expect(await launch.migrator.factory()).to.equal(
       await deployment.factory.getAddress(),
     );

@@ -135,13 +135,18 @@ describe("stable SDK surface", function () {
     expect(bestExecutionRouter.getFunction("swapBestExactInput")).to.not.equal(null);
     expect(bestExecutionRouter.getEvent("ConfidentialBestQuoteResult")).to.not.equal(null);
     expect(bestExecutionRouter.getEvent("ConfidentialBestSwapResult")).to.not.equal(null);
-    expect(CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION).to.equal(2);
+    expect(CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION).to.equal(
+      CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION,
+    );
     expect(privateLpToken.getFunction("pool")).to.not.equal(null);
     expect(privateLpToken.getFunction("balanceOf")).to.not.equal(null);
     expect(launchpad.getFunction("migrate")).to.not.equal(null);
     expect(launchpad.getFunction("migrateWithDisposition")).to.not.equal(null);
     expect(launchpad.getEvent("LaunchpadMigration")).to.not.equal(null);
     expect(launchpad.getEvent("LaunchpadLockDisposition")).to.not.equal(null);
+    expect(CONFIDENTIAL_LAUNCHPAD_MIGRATOR_VERSION).to.equal(
+      CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION,
+    );
     expect(LP_DISPOSITION.PERMANENT_LOCK).to.equal(2);
     expect(publicPool.getFunction("swapExactInput")).to.not.equal(null);
     expect(publicPool.getFunction("PRIVACY_MODE")).to.not.equal(null);

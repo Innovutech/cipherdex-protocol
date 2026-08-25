@@ -96,7 +96,22 @@ complete quote callable. Integrations must first verify the configured router
 against deployed code, its protocol version, immutable `factory()` and the
 factory's one-time `bestExecutionRouter()` binding:
 
+The expected router version must come from the same reviewed deployment record
+as its address and runtime codehash. A package-level version constant describes
+the SDK's current contract build; it must not override a pinned historical or
+network-specific deployment record.
+
 ```ts
+const deployedRouter =
+  deployment.contracts.confidentialBestExecutionRouter;
+const deployedRouterProtocolVersion = Number(deployedRouter.protocolVersion);
+if (
+  !Number.isSafeInteger(deployedRouterProtocolVersion) ||
+  deployedRouterProtocolVersion <= 0
+) {
+  throw new Error("Invalid confidential router protocol version in deployment record.");
+}
+
 const router = await verifyConfidentialBestExecutionRouter(
   configuredRouter,
   {
@@ -104,11 +119,11 @@ const router = await verifyConfidentialBestExecutionRouter(
     expectedFactory: configuredFactory,
     expectedFactoryRuntimeCodehash:
       deployment.contracts.confidentialFactory.runtimeCodehash,
-    expectedRouter: deployment.contracts.confidentialBestExecutionRouter.address,
+    expectedRouter: deployedRouter.address,
     expectedRouterRuntimeCodehash:
-      deployment.contracts.confidentialBestExecutionRouter.runtimeCodehash,
+      deployedRouter.runtimeCodehash,
     expectedFactoryProtocolVersion: CIPHERDEX_PROTOCOL_VERSION,
-    expectedRouterProtocolVersion: CONFIDENTIAL_BEST_EXECUTION_ROUTER_VERSION,
+    expectedRouterProtocolVersion: deployedRouterProtocolVersion,
   },
   rpcBackedRouterVerificationAdapter,
 );
