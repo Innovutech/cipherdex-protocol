@@ -11,6 +11,8 @@ interface IPublicCPMM {
     function scale1() external view returns (uint256);
     function feeBps() external view returns (uint256);
     function feeVault() external view returns (address);
+    function lpTokenFactory() external view returns (address);
+    function lpToken() external view returns (address);
     function PROTOCOL_FEE_SHARE_NUMERATOR() external view returns (uint256);
     function PROTOCOL_FEE_SHARE_DENOMINATOR() external view returns (uint256);
     function protocolFees0() external view returns (uint256);
@@ -23,6 +25,7 @@ interface IPublicCPMM {
     function addLiquidity(uint256,uint256,uint256,uint256,uint256,uint64) external returns (uint256);
     function addLiquidityFor(address,uint256,uint256,uint256,uint256,uint256,uint64) external returns (uint256);
     function removeLiquidity(uint256,uint256,uint256,uint64) external returns (uint256,uint256);
+    function removeLiquidityTo(address,uint256,uint256,uint256,uint64) external returns (uint256,uint256);
     function collectProtocolFees(bool,bool) external returns (uint256,uint256);
     function effectiveReserves() external view returns (uint256,uint256);
     function lockShares(uint256,uint64,bool,uint64) external returns (bytes32);

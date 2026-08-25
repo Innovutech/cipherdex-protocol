@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "../../hardhat/runtime.js";
 import { deployFeeVault } from "../helpers/deployFeeVault";
+import { deployPublicLpTokenFactory } from "../helpers/deployPublicLpTokenFactory";
 import {
   createPublicPool,
   deployPublicFactory,
@@ -156,6 +157,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await token0.waitForDeployment();
     await token1.waitForDeployment();
     const vault = await deployFeeVault();
+    const lpTokenFactory = await deployPublicLpTokenFactory();
     const poolFactory = await ethers.getContractFactory("PublicCPMM");
     await expect(
       poolFactory.deploy(
@@ -165,6 +167,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
         18,
         1_001,
         await vault.getAddress(),
+        await lpTokenFactory.getAddress(),
       ),
     ).to.be.revertedWithCustomError(poolFactory, "InvalidFee");
   });
@@ -181,6 +184,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await reentrant.waitForDeployment();
     await normal.waitForDeployment();
     const vault = await deployFeeVault();
+    const lpTokenFactory = await deployPublicLpTokenFactory();
     const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
       await reentrant.getAddress(),
       await normal.getAddress(),
@@ -188,6 +192,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
       18,
       30,
       await vault.getAddress(),
+      await lpTokenFactory.getAddress(),
     );
     await pool.waitForDeployment();
 
@@ -230,6 +235,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await normal.waitForDeployment();
     await taxed.waitForDeployment();
     const vault = await deployFeeVault();
+    const lpTokenFactory = await deployPublicLpTokenFactory();
     const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
       await normal.getAddress(),
       await taxed.getAddress(),
@@ -237,6 +243,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
       18,
       30,
       await vault.getAddress(),
+      await lpTokenFactory.getAddress(),
     );
     await pool.waitForDeployment();
 
@@ -281,6 +288,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await normal.waitForDeployment();
     await taxed.waitForDeployment();
     const vault = await deployFeeVault();
+    const lpTokenFactory = await deployPublicLpTokenFactory();
     const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
       await normal.getAddress(),
       await taxed.getAddress(),
@@ -288,6 +296,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
       18,
       30,
       await vault.getAddress(),
+      await lpTokenFactory.getAddress(),
     );
     await pool.waitForDeployment();
 
@@ -419,6 +428,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     ).deploy("Paired Token", "PAIR", 18);
     await Promise.all([burnable.waitForDeployment(), paired.waitForDeployment()]);
     const vault = await deployFeeVault();
+    const lpTokenFactory = await deployPublicLpTokenFactory();
     const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
       await burnable.getAddress(),
       await paired.getAddress(),
@@ -426,6 +436,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
       18,
       30,
       await vault.getAddress(),
+      await lpTokenFactory.getAddress(),
     );
     await pool.waitForDeployment();
 
@@ -473,6 +484,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     ).deploy("Burnable B", "BURB", 18);
     await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
     const vault = await deployFeeVault();
+    const lpTokenFactory = await deployPublicLpTokenFactory();
     const pool = await (await ethers.getContractFactory("PublicCPMM")).deploy(
       await tokenA.getAddress(),
       await tokenB.getAddress(),
@@ -480,6 +492,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
       18,
       30,
       await vault.getAddress(),
+      await lpTokenFactory.getAddress(),
     );
     await pool.waitForDeployment();
 

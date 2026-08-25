@@ -174,15 +174,29 @@ async function main(): Promise<void> {
     await ethers.getContractFactory("PublicCPMMQuoter"),
     await publicFactory.getAddress(),
   );
-  await deployAndMeasure(
+  const publicRouter = await deployAndMeasure(
     "PublicCPMMRouter",
     await ethers.getContractFactory("PublicCPMMRouter"),
     await publicFactory.getAddress(),
   );
-  await deployAndMeasure(
+  const publicLiquidityRouter = await deployAndMeasure(
     "PublicCPMMLiquidityRouter",
     await ethers.getContractFactory("PublicCPMMLiquidityRouter"),
     await publicFactory.getAddress(),
+  );
+  const wrappedNative = await deployAndMeasure(
+    "WrappedNativeToken",
+    await ethers.getContractFactory("WrappedNativeToken"),
+    "Wrapped COTI",
+    "WCOTI",
+  );
+  await deployAndMeasure(
+    "PublicCPMMNativeRouter",
+    await ethers.getContractFactory("PublicCPMMNativeRouter"),
+    await publicFactory.getAddress(),
+    await publicRouter.getAddress(),
+    await publicLiquidityRouter.getAddress(),
+    await wrappedNative.getAddress(),
   );
 }
 

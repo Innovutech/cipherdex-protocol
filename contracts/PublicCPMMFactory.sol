@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "./PublicCPMM.sol";
 import "./CipherDEXFeePolicy.sol";
+import "./PublicLPTokenFactory.sol";
 
 /**
  * @title PublicCPMMFactory
@@ -16,6 +17,7 @@ contract PublicCPMMFactory is CipherDEXFeePolicy {
     mapping(address => bool) public isPool;
     address[] public allPools;
     address public immutable feeVault;
+    address public immutable lpTokenFactory;
 
     error InvalidTokenPair();
     error InvalidFee();
@@ -28,12 +30,14 @@ contract PublicCPMMFactory is CipherDEXFeePolicy {
         uint8 token0Decimals,
         uint8 token1Decimals,
         uint256 feeBps,
+        address lpToken,
         address pool
     );
 
     constructor(address feeVault_) {
         if (feeVault_.code.length == 0) revert InvalidFeeVault();
         feeVault = feeVault_;
+        lpTokenFactory = address(new PublicLPTokenFactory());
     }
 
     function createPool(
@@ -59,12 +63,21 @@ contract PublicCPMMFactory is CipherDEXFeePolicy {
             decimals0,
             decimals1,
             feeBps,
-            feeVault
+            feeVault,
+            lpTokenFactory
         ));
         getPool[key] = pool;
         isPool[pool] = true;
         allPools.push(pool);
-        emit PoolCreated(token0, token1, decimals0, decimals1, feeBps, pool);
+        emit PoolCreated(
+            token0,
+            token1,
+            decimals0,
+            decimals1,
+            feeBps,
+            PublicCPMM(pool).lpToken(),
+            pool
+        );
     }
 
     function poolKey(

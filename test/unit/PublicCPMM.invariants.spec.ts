@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "../../hardhat/runtime.js";
 import { deployFeeVault } from "../helpers/deployFeeVault";
+import { deployPublicLpTokenFactory } from "../helpers/deployPublicLpTokenFactory";
 
 const MAX_DEADLINE = 0xffffffff;
 const MAX_UINT256 = ethers.MaxUint256;
@@ -19,6 +20,7 @@ describe("PublicCPMM stateful invariants", function () {
     await tokenB.waitForDeployment();
 
     const vault = await deployFeeVault();
+    const lpTokenFactory = await deployPublicLpTokenFactory();
     const pool = await (
       await ethers.getContractFactory("PublicCPMM")
     ).deploy(
@@ -28,6 +30,7 @@ describe("PublicCPMM stateful invariants", function () {
       6,
       30,
       await vault.getAddress(),
+      await lpTokenFactory.getAddress(),
     );
     await pool.waitForDeployment();
 

@@ -64,10 +64,12 @@ const TESTNET_DEPLOY_GAS_LIMITS = {
   confidentialFactory: 8_000_000n,
   confidentialLaunchStrategy: 5_000_000n,
   confidentialBestExecutionRouter: 3_000_000n,
-  publicFactory: 4_500_000n,
+  publicFactory: 5_500_000n,
   publicQuoter: 400_000n,
   publicRouter: 1_250_000n,
   publicLiquidityRouter: 2_000_000n,
+  wrappedNative: 1_500_000n,
+  publicNativeRouter: 3_500_000n,
   vaultBinding: 250_000n,
   routerBinding: 250_000n,
   stackBinding: 500_000n,
@@ -164,6 +166,13 @@ type LaunchpadMigratorHandle = VersionedFactoryBoundHandle & {
 
 type PublicFactoryHandle = BaseContract & {
   feeVault(): Promise<string>;
+  lpTokenFactory(): Promise<string>;
+};
+
+type NativeRouterHandle = VersionedFactoryBoundHandle & {
+  publicRouter(): Promise<string>;
+  publicLiquidityRouter(): Promise<string>;
+  wrappedNative(): Promise<string>;
 };
 
 async function deployAndReport<T extends BaseContract>(
@@ -803,8 +812,18 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
     feeVaultDeployment.address,
     { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.publicFactory },
   );
+  const publicLpTokenFactory = await publicFactoryDeployment.contract.lpTokenFactory();
+  const publicLpTokenFactoryArtifact =
+    await verifyDeployedRuntimeArtifactWithProvenance(
+      "PublicLPTokenFactory",
+      publicLpTokenFactory,
+    );
+  journalCompiler.PublicLPTokenFactory = publicLpTokenFactoryArtifact;
   await recordDeployment("publicFactory", publicFactoryDeployment, {
     constructorArgs: [feeVaultDeployment.address],
+    lpTokenFactory: publicLpTokenFactory,
+    lpTokenFactoryRuntimeCodehash:
+      publicLpTokenFactoryArtifact.runtimeCodehash,
   });
 
   stage = "public fee-vault factory binding";
@@ -875,6 +894,46 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
     constructorArgs: [publicFactoryDeployment.address],
   });
 
+  stage = "WrappedNativeToken deployment";
+  const wrappedNativeDeployment = await deployAndReport(
+    "WrappedNativeToken",
+    await ethers.getContractFactory("WrappedNativeToken", deployer),
+    recoveryJournal,
+    recordTransaction,
+    "Wrapped COTI",
+    "WCOTI",
+    { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.wrappedNative },
+  );
+  await recordDeployment("wrappedNative", wrappedNativeDeployment, {
+    constructorArgs: ["Wrapped COTI", "WCOTI"],
+  });
+
+  stage = "PublicCPMMNativeRouter deployment";
+  const publicNativeRouterDeployment = await deployAndReport<NativeRouterHandle>(
+    "PublicCPMMNativeRouter",
+    await ethers.getContractFactory("PublicCPMMNativeRouter", deployer),
+    recoveryJournal,
+    recordTransaction,
+    publicFactoryDeployment.address,
+    publicRouterDeployment.address,
+    publicLiquidityRouterDeployment.address,
+    wrappedNativeDeployment.address,
+    { gasLimit: TESTNET_DEPLOY_GAS_LIMITS.publicNativeRouter },
+  );
+  await recordDeployment("publicNativeRouter", publicNativeRouterDeployment, {
+    protocolVersion: "1",
+    factory: publicFactoryDeployment.address,
+    publicRouter: publicRouterDeployment.address,
+    publicLiquidityRouter: publicLiquidityRouterDeployment.address,
+    wrappedNative: wrappedNativeDeployment.address,
+    constructorArgs: [
+      publicFactoryDeployment.address,
+      publicRouterDeployment.address,
+      publicLiquidityRouterDeployment.address,
+      wrappedNativeDeployment.address,
+    ],
+  });
+
   stage = "post-deployment immutable binding verification";
   const sameAddress = (actual: string, expected: string): boolean =>
     actual.toLowerCase() === expected.toLowerCase();
@@ -903,6 +962,12 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
     routerFactory,
     liquidityRouterFactory,
     liquidityRouterVersion,
+    deployedPublicLpTokenFactory,
+    nativeRouterFactory,
+    nativeRouterVersion,
+    nativeRouterPublicRouter,
+    nativeRouterLiquidityRouter,
+    nativeRouterWrappedNative,
   ] = await Promise.all([
     feeVaultDeployment.contract.beneficiary(),
     feeVaultDeployment.contract.confidentialFactory(),
@@ -930,6 +995,12 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
     publicRouterDeployment.contract.factory(),
     publicLiquidityRouterDeployment.contract.factory(),
     publicLiquidityRouterDeployment.contract.PROTOCOL_VERSION(),
+    publicFactoryDeployment.contract.lpTokenFactory(),
+    publicNativeRouterDeployment.contract.factory(),
+    publicNativeRouterDeployment.contract.PROTOCOL_VERSION(),
+    publicNativeRouterDeployment.contract.publicRouter(),
+    publicNativeRouterDeployment.contract.publicLiquidityRouter(),
+    publicNativeRouterDeployment.contract.wrappedNative(),
   ]);
   if (
     !sameAddress(String(deployedBeneficiary), feeBeneficiary) ||
@@ -955,7 +1026,16 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
     !sameAddress(String(quoterFactory), publicFactoryDeployment.address) ||
     !sameAddress(String(routerFactory), publicFactoryDeployment.address) ||
     !sameAddress(String(liquidityRouterFactory), publicFactoryDeployment.address) ||
-    liquidityRouterVersion !== 1n
+    liquidityRouterVersion !== 1n ||
+    !sameAddress(String(deployedPublicLpTokenFactory), publicLpTokenFactory) ||
+    !sameAddress(String(nativeRouterFactory), publicFactoryDeployment.address) ||
+    nativeRouterVersion !== 1n ||
+    !sameAddress(String(nativeRouterPublicRouter), publicRouterDeployment.address) ||
+    !sameAddress(
+      String(nativeRouterLiquidityRouter),
+      publicLiquidityRouterDeployment.address
+    ) ||
+    !sameAddress(String(nativeRouterWrappedNative), wrappedNativeDeployment.address)
   ) {
     throw new Error("post-deployment immutable binding verification failed");
   }
@@ -972,7 +1052,10 @@ export async function deployProtocol(profileName: DeploymentProfileName): Promis
   console.log(`confidentialBestExecutionRouter=${confidentialRouterDeployment.address}`);
   console.log(`launchpadMigrator=${launchpadDeployment.address}`);
   console.log(`publicFactory=${publicFactoryDeployment.address}`);
+  console.log(`publicLpTokenFactory=${publicLpTokenFactory}`);
   console.log(`publicLiquidityRouter=${publicLiquidityRouterDeployment.address}`);
+  console.log(`wrappedNative=${wrappedNativeDeployment.address}`);
+  console.log(`publicNativeRouter=${publicNativeRouterDeployment.address}`);
   console.log(`chainId=${network.chainId}`);
 
   stage = "deployment completion journal";

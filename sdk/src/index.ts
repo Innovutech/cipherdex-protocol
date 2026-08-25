@@ -1,6 +1,9 @@
 export * from "./tokenApproval.js";
 export * from "./operationPlan.js";
 export * from "./walletCallBatch.js";
+export * from "./nativeAsset.js";
+
+import { isEvmNativeAssetAddress } from "./nativeAsset.js";
 
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
@@ -70,6 +73,8 @@ export const CONFIDENTIAL_CPMM_ABI = [
   "function scale1() view returns (uint256)",
   "function feeBps() view returns (uint256)",
   "function feeVault() view returns (address)",
+  "function lpTokenFactory() view returns (address)",
+  "function lpToken() view returns (address)",
   "function PROTOCOL_FEE_SHARE_NUMERATOR() view returns (uint256)",
   "function PROTOCOL_FEE_SHARE_DENOMINATOR() view returns (uint256)",
   "function MIN_CONFIDENTIAL_COLLECTION_SWAPS() view returns (uint32)",
@@ -490,6 +495,7 @@ export const PUBLIC_CPMM_ABI = [
   "function addLiquidity(uint256,uint256,uint256,uint256,uint256,uint64) returns (uint256)",
   "function addLiquidityFor(address,uint256,uint256,uint256,uint256,uint256,uint64) returns (uint256)",
   "function removeLiquidity(uint256,uint256,uint256,uint64) returns (uint256,uint256)",
+  "function removeLiquidityTo(address,uint256,uint256,uint256,uint64) returns (uint256,uint256)",
   "function collectProtocolFees(bool,bool) returns (uint256,uint256)",
   "function effectiveReserves() view returns (uint256,uint256)",
   "function lockShares(uint256,uint64,bool,uint64) returns (bytes32)",
@@ -510,6 +516,7 @@ export const PUBLIC_CPMM_FACTORY_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function PRIVACY_MODE() view returns (uint8)",
   "function feeVault() view returns (address)",
+  "function lpTokenFactory() view returns (address)",
   "function isApprovedFeeTier(uint256) pure returns (bool)",
   "function getPool(bytes32) view returns (address)",
   "function isPool(address) view returns (bool)",
@@ -517,7 +524,30 @@ export const PUBLIC_CPMM_FACTORY_ABI = [
   "function poolKey(address,address,uint8,uint8,uint256) pure returns (bytes32)",
   "function allPoolsLength() view returns (uint256)",
   "function allPools(uint256) view returns (address)",
-  "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address pool)",
+  "event PoolCreated(address indexed token0,address indexed token1,uint8 token0Decimals,uint8 token1Decimals,uint256 feeBps,address lpToken,address pool)",
+] as const;
+
+export const PUBLIC_LP_TOKEN_ABI = [
+  "function pool() view returns (address)",
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)",
+  "function totalSupply() view returns (uint256)",
+  "function balanceOf(address) view returns (uint256)",
+  "function allowance(address,address) view returns (uint256)",
+  "function approve(address,uint256) returns (bool)",
+  "function transfer(address,uint256) returns (bool)",
+  "function transferFrom(address,address,uint256) returns (bool)",
+  "function nonces(address) view returns (uint256)",
+  "function DOMAIN_SEPARATOR() view returns (bytes32)",
+  "function permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+] as const;
+
+export const PUBLIC_LP_TOKEN_FACTORY_ABI = [
+  "function poolByToken(address) view returns (address)",
+  "function issuerByToken(address) view returns (address)",
+  "function isIssuedToken(address,address,address) view returns (bool)",
+  "event PublicLPTokenIssued(address indexed pool,address indexed token,address indexed issuer)",
 ] as const;
 
 export const PUBLIC_CPMM_QUOTER_ABI = [
@@ -537,6 +567,9 @@ export const PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI = [
   "function PROTOCOL_VERSION() view returns (uint256)",
   "function factory() view returns (address)",
   "function createOrAddLiquidity(address,address,uint8,uint8,uint256,uint256,uint256,uint256,uint256,uint256,uint64) returns (address,uint256,uint256,uint256)",
+  "function createOrAddLiquidityFor(address,address,address,uint8,uint8,uint256,uint256,uint256,uint256,uint256,uint256,uint64) returns (address,uint256,uint256,uint256)",
+  "function removeLiquidity(address,uint256,uint256,uint256,uint64,address) returns (uint256,uint256)",
+  "function removeLiquidityWithPermit(address,uint256,uint256,uint256,uint64,address,uint256,uint8,bytes32,bytes32) returns (uint256,uint256)",
   "event PublicLiquidityRouted(address indexed provider,address indexed pool,bool indexed poolCreated,uint256 amount0,uint256 amount1,uint256 shares)",
 ] as const;
 
@@ -1121,6 +1154,8 @@ export function buildPublicCreateOrAddLiquidityCall(input: Readonly<{
   if (
     !isAddressLike(input.tokenA) ||
     !isAddressLike(input.tokenB) ||
+    isEvmNativeAssetAddress(input.tokenA) ||
+    isEvmNativeAssetAddress(input.tokenB) ||
     input.tokenA.toLowerCase() === input.tokenB.toLowerCase() ||
     !Number.isInteger(input.decimalsA) ||
     !Number.isInteger(input.decimalsB) ||

@@ -168,7 +168,13 @@ not present in `.env.example` or Git.
    create a pool or move tokens. Pool GT quote/settlement hooks remain inaccessible
    until the canonical router binding succeeds, and bootstrap hooks remain
    disabled until the strategy pins its migrator and the reviewed registry is
-   finalized. The script fails before
+   finalized. The public deployment includes the factory-created public
+   LP-token factory, public quoter, swap router, atomic liquidity router,
+   immutable WCOTI wrapper, and native swap/liquidity router. Post-deployment
+   checks bind every public periphery contract to the same factory and verify
+   the native router's exact swap router, liquidity router, and WCOTI addresses.
+   A deployment record without those addresses and bindings is incomplete.
+   The script fails before
     connecting or sending a transaction unless the Git worktree is clean and
     `HEAD` is a full commit.
 

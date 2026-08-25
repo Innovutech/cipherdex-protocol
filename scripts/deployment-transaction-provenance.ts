@@ -6,6 +6,7 @@ type JsonRecord = Record<string, unknown>;
 type DeploymentArtifact = Readonly<{
   abi: InterfaceAbi;
   bytecode: string;
+  deployedBytecode: string;
 }>;
 
 export type DeploymentEvidenceProvider = Readonly<{
@@ -107,6 +108,8 @@ export const CANONICAL_TESTNET_DEPLOYMENTS: readonly CanonicalTestnetDeployment[
   Object.freeze({ key: "publicQuoter", contractName: "PublicCPMMQuoter", label: "PublicCPMMQuoter deployment" }),
   Object.freeze({ key: "publicRouter", contractName: "PublicCPMMRouter", label: "PublicCPMMRouter deployment" }),
   Object.freeze({ key: "publicLiquidityRouter", contractName: "PublicCPMMLiquidityRouter", label: "PublicCPMMLiquidityRouter deployment" }),
+  Object.freeze({ key: "wrappedNative", contractName: "WrappedNativeToken", label: "WrappedNativeToken deployment" }),
+  Object.freeze({ key: "publicNativeRouter", contractName: "PublicCPMMNativeRouter", label: "PublicCPMMNativeRouter deployment" }),
 ]);
 
 const BINDINGS = Object.freeze([
@@ -199,6 +202,8 @@ function expectedConstructorArgs(contracts: JsonRecord): Readonly<Record<string,
   const publicQuoter = asRecord(contracts.publicQuoter, "contracts.publicQuoter");
   const publicRouter = asRecord(contracts.publicRouter, "contracts.publicRouter");
   asRecord(contracts.publicLiquidityRouter, "contracts.publicLiquidityRouter");
+  const wrappedNative = asRecord(contracts.wrappedNative, "contracts.wrappedNative");
+  asRecord(contracts.publicNativeRouter, "contracts.publicNativeRouter");
 
   const feeVaultAddress = requireAddress(feeVault, "address", "contracts.feeVault");
   const confidentialFactoryAddress = requireAddress(
@@ -274,6 +279,17 @@ function expectedConstructorArgs(contracts: JsonRecord): Readonly<Record<string,
     publicQuoter: [publicFactoryAddress],
     publicRouter: [publicFactoryAddress],
     publicLiquidityRouter: [publicFactoryAddress],
+    wrappedNative: ["Wrapped COTI", "WCOTI"],
+    publicNativeRouter: [
+      publicFactoryAddress,
+      requireAddress(publicRouter, "address", "contracts.publicRouter"),
+      requireAddress(
+        asRecord(contracts.publicLiquidityRouter, "contracts.publicLiquidityRouter"),
+        "address",
+        "contracts.publicLiquidityRouter",
+      ),
+      requireAddress(wrappedNative, "address", "contracts.wrappedNative"),
+    ],
   });
 }
 
@@ -533,6 +549,23 @@ export async function verifyDeploymentTransactionEvidence(
   const confidentialRouterAddress = addressOf("confidentialBestExecutionRouter");
   const migratorAddress = addressOf("launchpadMigrator");
   const publicFactoryAddress = addressOf("publicFactory");
+  const publicLpTokenFactoryAddress = requireAddress(
+    asRecord(contracts.publicFactory, "contracts.publicFactory"),
+    "lpTokenFactory",
+    "contracts.publicFactory",
+  );
+  const publicLpTokenFactoryRuntimeCodehash = requiredString(
+    asRecord(contracts.publicFactory, "contracts.publicFactory"),
+    "lpTokenFactoryRuntimeCodehash",
+    "contracts.publicFactory",
+  );
+  if (!HASH_PATTERN.test(publicLpTokenFactoryRuntimeCodehash)) {
+    throw new Error("contracts.publicFactory.lpTokenFactoryRuntimeCodehash is invalid");
+  }
+  const wrappedNativeAddress = addressOf("wrappedNative");
+  const publicRouterAddress = addressOf("publicRouter");
+  const publicLiquidityRouterAddress = addressOf("publicLiquidityRouter");
+  const publicNativeRouterAddress = addressOf("publicNativeRouter");
   await assertAddressState("CipherDEXFeeVault", "feeVault", "beneficiary", requireAddress(
     asRecord(contracts.feeVault, "contracts.feeVault"),
     "beneficiary",
@@ -579,6 +612,25 @@ export async function verifyDeploymentTransactionEvidence(
     migratorAddress,
   );
   await assertAddressState("PublicCPMMFactory", "publicFactory", "feeVault", feeVaultAddress);
+  await assertAddressState(
+    "PublicCPMMFactory",
+    "publicFactory",
+    "lpTokenFactory",
+    publicLpTokenFactoryAddress,
+  );
+  const [publicLpTokenFactoryCode, publicLpTokenFactoryArtifact] = await Promise.all([
+    provider.getCode(publicLpTokenFactoryAddress),
+    artifactFor("PublicLPTokenFactory"),
+  ]);
+  if (
+    publicLpTokenFactoryCode === "0x" ||
+    !sameHex(keccak256(publicLpTokenFactoryCode), publicLpTokenFactoryRuntimeCodehash) ||
+    publicLpTokenFactoryArtifact.deployedBytecode.length === 0 ||
+    !sameHex(keccak256(publicLpTokenFactoryArtifact.deployedBytecode),
+      publicLpTokenFactoryRuntimeCodehash)
+  ) {
+    throw new Error("public LP-token factory runtime provenance is invalid");
+  }
   await assertAddressState("PublicCPMMQuoter", "publicQuoter", "factory", publicFactoryAddress);
   await assertAddressState("PublicCPMMRouter", "publicRouter", "factory", publicFactoryAddress);
   await assertAddressState(
@@ -586,6 +638,30 @@ export async function verifyDeploymentTransactionEvidence(
     "publicLiquidityRouter",
     "factory",
     publicFactoryAddress,
+  );
+  await assertAddressState(
+    "PublicCPMMNativeRouter",
+    "publicNativeRouter",
+    "factory",
+    publicFactoryAddress,
+  );
+  await assertAddressState(
+    "PublicCPMMNativeRouter",
+    "publicNativeRouter",
+    "publicRouter",
+    publicRouterAddress,
+  );
+  await assertAddressState(
+    "PublicCPMMNativeRouter",
+    "publicNativeRouter",
+    "publicLiquidityRouter",
+    publicLiquidityRouterAddress,
+  );
+  await assertAddressState(
+    "PublicCPMMNativeRouter",
+    "publicNativeRouter",
+    "wrappedNative",
+    wrappedNativeAddress,
   );
 
   const routerVersion = await readState(

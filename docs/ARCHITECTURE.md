@@ -28,6 +28,11 @@
 - `contracts/PublicCPMM.sol`: ordinary public/public ERC-20 CPMM with public
   amounts, fees, swaps, liquidity accounting and locks.
 - `contracts/PublicCPMMFactory.sol`: separate public/public pool registry.
+- `contracts/PublicLPToken.sol`: transferable EIP-2612 public LP shares whose
+  immutable issuing pool is the only mint, burn, and lock-escrow authority.
+- `contracts/PublicLPTokenFactory.sol`: public LP-token issuer and exact
+  `(pool, token, issuer)` provenance registry owned by the public pool creation
+  path.
 - `contracts/CipherDEXFeePolicy.sol`: immutable approved v1 total-fee tiers and
   LP/protocol split shared by both pool modes.
 - `contracts/CipherDEXFeeVault.sol`: immutable protocol-fee destination with
@@ -38,8 +43,15 @@
 - `contracts/PublicCPMMRouter.sol`: factory-gated exact-input routing for
   public pools only.
 - `contracts/PublicCPMMLiquidityRouter.sol`: factory-gated atomic create-or-add
-  liquidity periphery. It mints pool shares directly to the funding user and
-  refunds unused proportional token maxima in the same transaction.
+  and remove-liquidity periphery. It mints pool-bound ERC-20 shares directly to
+  the recipient, refunds unused proportional token maxima, and supports
+  EIP-2612 permit removal without a separate approval transaction.
+- `contracts/WrappedNativeToken.sol`: immutable administrator-free WCOTI using
+  one-to-one deposit/withdraw semantics. Forced native transfers can only
+  over-collateralize it.
+- `contracts/PublicCPMMNativeRouter.sol`: factory-bound native COTI adapter for
+  public swaps and liquidity. It wraps/unwraps atomically and verifies canonical
+  pools and LP-token provenance before removing liquidity.
 - `contracts/ConfidentialBestExecutionRouter.sol`: factory-bound, single-hop
   encrypted best quote and atomic best execution over a bounded nine-bit
   fee-tier/strategy-class namespace. Quote requests may select up to nine bits;
@@ -139,6 +151,20 @@ scales. The factory remains permissionless, but it cannot create a pool whose
 declared decimals silently disagree with the token contract.
 
 ## LP accounting
+
+Public and confidential LP representations are deliberately different. A
+public pool owns one ordinary transferable `PublicLPToken` with EIP-2612 permit.
+Its total supply is the public pool's `totalShares`, and holder balances are the
+public `shares` view. The pool is the only supply authority. Timed or permanent
+locks move shares into pool escrow; only a valid timed lock can release them.
+Public liquidity periphery may pull shares with an allowance or a holder-signed
+permit, but it cannot mint, recover, or redirect them.
+
+Native COTI is not a pool asset. Public pools pair WCOTI with another ERC-20;
+the native router wraps exact native input before a pool call and unwraps exact
+WCOTI output afterward. It clears temporary allowances and rejects residual
+balances. This follows the established wrapped-native/periphery boundary and
+keeps CPMM accounting token-only.
 
 LP shares are ciphertext stored in aggregate by the pool. Factory-created pools
 also mint a pool-bound `PrivateLPToken` for each provider, so the encrypted share

@@ -27,13 +27,31 @@ const requiredNonReentrant = new Map([
     "contracts/ConfidentialLaunchpadMigrator.sol",
     ["migrate", "migrateWithDisposition"],
   ],
-  ["contracts/PublicCPMM.sol", ["swapExactInput", "addLiquidity", "addLiquidityFor", "removeLiquidity", "collectProtocolFees", "lockShares", "unlockShares"]],
+  ["contracts/PublicCPMM.sol", ["swapExactInput", "addLiquidity", "addLiquidityFor", "removeLiquidity", "removeLiquidityTo", "collectProtocolFees", "lockShares", "unlockShares"]],
   [
     "contracts/CipherDEXFeeVault.sol",
     ["depositPublicFees", "depositConfidentialFees", "sweepPublicToken", "sweepConfidentialToken"],
   ],
   ["contracts/PublicCPMMRouter.sol", ["swapExactInput"]],
-  ["contracts/PublicCPMMLiquidityRouter.sol", ["createOrAddLiquidity"]],
+  [
+    "contracts/PublicCPMMLiquidityRouter.sol",
+    [
+      "createOrAddLiquidity",
+      "createOrAddLiquidityFor",
+      "removeLiquidity",
+      "removeLiquidityWithPermit",
+    ],
+  ],
+  [
+    "contracts/PublicCPMMNativeRouter.sol",
+    [
+      "swapExactNativeForToken",
+      "swapExactTokenForNative",
+      "createOrAddLiquidityNative",
+      "removeLiquidityNative",
+      "removeLiquidityNativeWithPermit",
+    ],
+  ],
   [
     "contracts/ConfidentialBestExecutionRouter.sol",
     ["requestBestQuoteExactInput", "swapBestExactInput"],
@@ -61,6 +79,18 @@ const publicRouterSource = maskSourceCommentsAndLiterals(
 );
 const publicLiquidityRouterSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicCPMMLiquidityRouter.sol", "utf8"),
+);
+const publicNativeRouterSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/PublicCPMMNativeRouter.sol", "utf8"),
+);
+const wrappedNativeSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/WrappedNativeToken.sol", "utf8"),
+);
+const publicLpTokenSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/PublicLPToken.sol", "utf8"),
+);
+const publicLpTokenFactorySource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/PublicLPTokenFactory.sol", "utf8"),
 );
 const runtimeArtifactRawSource = await readFile("scripts/runtime-artifact.ts", "utf8");
 const runtimeArtifactSource = maskSourceCommentsAndLiterals(runtimeArtifactRawSource);
@@ -90,10 +120,107 @@ if (/\bdelegatecall\b|\bselfdestruct\b/.test(confidentialSource)) {
 if (/\bdelegatecall\b|\bselfdestruct\b/.test(publicLiquidityRouterSource)) {
   throw new Error("Public liquidity router contains an unsafe dynamic execution primitive");
 }
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(publicNativeRouterSource)) {
+  throw new Error("Public native router contains an unsafe dynamic execution primitive");
+}
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(wrappedNativeSource)) {
+  throw new Error("Wrapped native token contains an unsafe dynamic execution primitive");
+}
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(publicLpTokenSource)) {
+  throw new Error("Public LP token contains an unsafe dynamic execution primitive");
+}
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(publicLpTokenFactorySource)) {
+  throw new Error("Public LP token factory contains an unsafe dynamic execution primitive");
+}
+
+for (const forbidden of [
+  "Ownable",
+  "AccessControl",
+  "onlyOwner",
+  "upgradeTo",
+  "delegatecall",
+  "selfdestruct",
+]) {
+  if (wrappedNativeSource.includes(forbidden)) {
+    throw new Error(`Wrapped native token contains forbidden authority: ${forbidden}`);
+  }
+}
+for (const functionName of [
+  "mintFromPool",
+  "burnFromPool",
+  "escrowFromPool",
+  "releaseFromPool",
+]) {
+  const declaration = uniqueFunctionDeclaration(
+    publicLpTokenSource,
+    functionName,
+    "contracts/PublicLPToken.sol",
+  );
+  if (!/\bonlyPool\b/.test(declaration)) {
+    throw new Error(`Public LP token ${functionName} is not restricted to its issuing pool`);
+  }
+}
+if (
+  !publicLpTokenSource.includes("ERC20Permit") ||
+  !publicLpTokenSource.includes("immutable pool") ||
+  !publicLpTokenFactorySource.includes("new PublicLPToken(pool)") ||
+  !publicLpTokenFactorySource.includes("poolByToken[token] = pool") ||
+  !publicLpTokenFactorySource.includes("issuerByToken[token] = msg.sender")
+) {
+  throw new Error("Public LP-token issuance or permit provenance is incomplete");
+}
+
+const nativeInputSwapBody = functionBody(
+  publicNativeRouterSource,
+  "swapExactNativeForToken",
+);
+for (const fragment of [
+  "deposit{value: msg.value}()",
+  "wrapped.forceApprove(publicRouter, msg.value)",
+  "wrapped.forceApprove(publicRouter, 0)",
+  "wrapped.balanceOf(address(this)) != wrappedBefore",
+  "_transferTokenOut(",
+]) {
+  if (!nativeInputSwapBody.includes(fragment)) {
+    throw new Error("Public native-input routing omits custody or allowance cleanup");
+  }
+}
+
+const nativeOutputSwapBody = functionBody(
+  publicNativeRouterSource,
+  "swapExactTokenForNative",
+);
+for (const fragment of [
+  "input.safeTransferFrom(msg.sender, address(this), amountIn)",
+  "input.forceApprove(publicRouter, amountIn)",
+  "input.forceApprove(publicRouter, 0)",
+  "IWrappedNativeToken(wrappedNative).withdraw(routedAmountOut)",
+  "recipient.call{value: routedAmountOut}",
+]) {
+  if (!nativeOutputSwapBody.includes(fragment)) {
+    throw new Error("Public native-output routing omits custody or allowance cleanup");
+  }
+}
+
+const wrappedWithdrawBody = functionBody(wrappedNativeSource, "withdraw");
+if (
+  wrappedWithdrawBody.indexOf("_burn(msg.sender, amount)") < 0 ||
+  wrappedWithdrawBody.indexOf("payable(msg.sender).call{value: amount}") < 0 ||
+  wrappedWithdrawBody.indexOf("_burn(msg.sender, amount)") >
+    wrappedWithdrawBody.indexOf("payable(msg.sender).call{value: amount}")
+) {
+  throw new Error("Wrapped native withdrawal does not burn before external transfer");
+}
+if (
+  !functionBody(wrappedNativeSource, "deposit").includes("_mint(msg.sender, msg.value)") ||
+  !wrappedNativeSource.includes("receive() external payable")
+) {
+  throw new Error("Wrapped native deposit semantics are incomplete");
+}
 
 const publicLiquidityRouteBody = functionBody(
   publicLiquidityRouterSource,
-  "createOrAddLiquidity",
+  "_createOrAddLiquidity",
 );
 for (const fragment of [
   "canonicalFactory.getPool(key)",
@@ -113,6 +240,57 @@ for (const fragment of [
 ]) {
   if (!publicLiquidityRouteBody.includes(fragment)) {
     throw new Error("Public liquidity router omits atomic custody or cleanup enforcement");
+  }
+}
+
+const publicLiquidityRemovalBody = functionBody(
+  publicLiquidityRouterSource,
+  "_removeLiquidity",
+);
+for (const fragment of [
+  "_pullExact(lp, msg.sender, shareInput, startingBalance)",
+  "removeLiquidityTo(",
+  "recipient,",
+  "shareInput,",
+  "lp.balanceOf(address(this)) != startingBalance",
+]) {
+  if (!publicLiquidityRemovalBody.includes(fragment)) {
+    throw new Error("Public liquidity removal omits LP custody or allowance cleanup");
+  }
+}
+
+const nativeLiquidityAddBody = functionBody(
+  publicNativeRouterSource,
+  "createOrAddLiquidityNative",
+);
+for (const fragment of [
+  "IWrappedNativeToken(wrappedNative).deposit{value: msg.value}()",
+  "wrapped.forceApprove(publicLiquidityRouter, msg.value)",
+  "paired.forceApprove(publicLiquidityRouter, tokenAmountDesired)",
+  "wrapped.forceApprove(publicLiquidityRouter, 0)",
+  "paired.forceApprove(publicLiquidityRouter, 0)",
+  "IWrappedNativeToken(wrappedNative).withdraw(wrappedRefund)",
+  "_sendNative(payable(msg.sender), wrappedRefund)",
+]) {
+  if (!nativeLiquidityAddBody.includes(fragment)) {
+    throw new Error("Public native liquidity addition omits custody, refund, or cleanup enforcement");
+  }
+}
+
+const nativeLiquidityRemovalBody = functionBody(
+  publicNativeRouterSource,
+  "_removeLiquidityNative",
+);
+for (const fragment of [
+  "_pullExact(lp, msg.sender, shareInput, lpBefore)",
+  "lp.forceApprove(publicLiquidityRouter, shareInput)",
+  "removeLiquidity(",
+  "lp.forceApprove(publicLiquidityRouter, 0)",
+  "IWrappedNativeToken(wrappedNative).withdraw(nativeAmount)",
+  "_sendNative(recipient, nativeAmount)",
+]) {
+  if (!nativeLiquidityRemovalBody.includes(fragment)) {
+    throw new Error("Public native liquidity removal omits LP custody, unwrap, or cleanup enforcement");
   }
 }
 
@@ -1050,6 +1228,12 @@ if (!hasStringCall(deploymentAst, "getContractFactory", "ConfidentialBestExecuti
 if (!hasStringCall(deploymentAst, "getContractFactory", "PublicCPMMLiquidityRouter")) {
   throw new Error("Protocol deployment does not deploy the public liquidity router");
 }
+if (!hasStringCall(deploymentAst, "getContractFactory", "WrappedNativeToken")) {
+  throw new Error("Protocol deployment does not deploy the canonical wrapped-native token");
+}
+if (!hasStringCall(deploymentAst, "getContractFactory", "PublicCPMMNativeRouter")) {
+  throw new Error("Protocol deployment does not deploy the public native router");
+}
 for (const contractName of [
   "ConfidentialCPMMDeployer",
   "ConfidentialInitializationStrategyRegistry",
@@ -1079,6 +1263,24 @@ if (!hasStringCall(deploymentAst, "recordDeployment", "confidentialBestExecution
 }
 if (!hasStringCall(deploymentAst, "recordDeployment", "publicLiquidityRouter")) {
   throw new Error("Protocol deployment omits the public liquidity-router journal");
+}
+if (!hasStringCall(deploymentAst, "recordDeployment", "wrappedNative")) {
+  throw new Error("Protocol deployment omits the wrapped-native deployment journal");
+}
+if (!hasStringCall(deploymentAst, "recordDeployment", "publicNativeRouter")) {
+  throw new Error("Protocol deployment omits the public native-router journal");
+}
+for (const fragment of [
+  "publicFactoryDeployment.contract.lpTokenFactory()",
+  "publicLpTokenFactoryArtifact.runtimeCodehash",
+  "publicNativeRouterDeployment.contract.factory()",
+  "publicNativeRouterDeployment.contract.publicRouter()",
+  "publicNativeRouterDeployment.contract.publicLiquidityRouter()",
+  "publicNativeRouterDeployment.contract.wrappedNative()",
+]) {
+  if (!deploymentSource.includes(fragment)) {
+    throw new Error("Protocol deployment omits public native or LP-token binding verification");
+  }
 }
 
 const sdkSource = maskSourceCommentsAndLiterals(

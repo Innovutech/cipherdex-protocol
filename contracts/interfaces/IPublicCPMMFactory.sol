@@ -8,11 +8,13 @@ interface IPublicCPMMFactory {
         uint8 token0Decimals,
         uint8 token1Decimals,
         uint256 feeBps,
+        address lpToken,
         address pool
     );
 
     function PROTOCOL_VERSION() external view returns (uint256);
     function feeVault() external view returns (address);
+    function lpTokenFactory() external view returns (address);
     function isApprovedFeeTier(uint256) external pure returns (bool);
     function getPool(bytes32) external view returns (address);
     function isPool(address) external view returns (bool);

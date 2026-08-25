@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "../../hardhat/runtime.js";
 import { deployFeeVault } from "../helpers/deployFeeVault";
+import { deployPublicLpTokenFactory } from "../helpers/deployPublicLpTokenFactory";
 
 describe("PublicCPMM", function () {
   async function deployPool() {
@@ -266,6 +267,7 @@ describe("PublicCPMM", function () {
 
     const poolFactory = await ethers.getContractFactory("PublicCPMM");
     const vault = await deployFeeVault();
+    const lpTokenFactory = await deployPublicLpTokenFactory();
     const pool = await poolFactory.deploy(
       await token0.getAddress(),
       await token1.getAddress(),
@@ -273,6 +275,7 @@ describe("PublicCPMM", function () {
       18,
       30,
       await vault.getAddress(),
+      await lpTokenFactory.getAddress(),
     );
     await pool.waitForDeployment();
 

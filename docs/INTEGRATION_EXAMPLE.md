@@ -21,6 +21,18 @@ call accepts token-order-independent desired maxima, price bounds and minimum
 shares. It mints shares directly to the caller and refunds unused maxima. Direct
 factory and pool calls remain available for existing integrations.
 
+Each pool exposes `lpToken()`. Authenticate it against the public factory's
+`lpTokenFactory()` and the helper's exact `(pool, lpToken, pool)` issuance
+attestation before presenting it as a CipherDEX position. LP removal can use a
+normal allowance or `removeLiquidityWithPermit` with an EIP-2612 signature.
+
+Treat the standard EVM `0xEeee...` address only as a UI/RPC native-asset
+sentinel. Resolve it to the deployment's reviewed `wrappedNative` address for
+pool discovery and quotes. Use `PublicCPMMNativeRouter` for native-input/output
+swaps, native liquidity adds, and LP removal with atomic unwrapping. Do not send
+the sentinel to a factory or pool. The SDK exports native-aware builders and
+returns the correct approval spender for each path.
+
 ## Confidential pool discovery
 
 Index `PoolCreated` from `ConfidentialCPMMFactory` or enumerate `allPools`. Build

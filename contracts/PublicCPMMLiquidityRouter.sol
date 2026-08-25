@@ -2,11 +2,13 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "./interfaces/IPublicCPMM.sol";
 import "./interfaces/IPublicCPMMFactory.sol";
 import "./interfaces/IPublicCPMMLiquidityRouter.sol";
+import "./interfaces/IPublicLPTokenFactory.sol";
 
 /**
  * @title PublicCPMMLiquidityRouter
@@ -22,6 +24,20 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
     address public immutable factory;
     uint256 private reentrancyState = 1;
 
+    struct CreateLiquidityParams {
+        address tokenA;
+        address tokenB;
+        uint8 decimalsA;
+        uint8 decimalsB;
+        uint256 feeBps;
+        uint256 amountADesired;
+        uint256 amountBDesired;
+        uint256 minShares;
+        uint256 minPriceX18;
+        uint256 maxPriceX18;
+        uint64 deadline;
+    }
+
     error InvalidFactory();
     error InvalidPool();
     error InvalidTokenPair();
@@ -29,6 +45,9 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
     error DeadlineExpired();
     error TransferAmountMismatch();
     error ResidualAllowance();
+    error InvalidRecipient();
+    error InvalidLPToken();
+    error PermitFailed();
     error Reentrancy();
 
     modifier nonReentrant() {
@@ -65,19 +84,90 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
         uint256 amountAUsed,
         uint256 amountBUsed
     ) {
-        if (block.timestamp > deadline) revert DeadlineExpired();
-        if (tokenA == address(0) || tokenB == address(0) || tokenA == tokenB) {
+        CreateLiquidityParams memory params;
+        params.tokenA = tokenA;
+        params.tokenB = tokenB;
+        params.decimalsA = decimalsA;
+        params.decimalsB = decimalsB;
+        params.feeBps = feeBps;
+        params.amountADesired = amountADesired;
+        params.amountBDesired = amountBDesired;
+        params.minShares = minShares;
+        params.minPriceX18 = minPriceX18;
+        params.maxPriceX18 = maxPriceX18;
+        params.deadline = deadline;
+        return _createOrAddLiquidity(msg.sender, params);
+    }
+
+    function createOrAddLiquidityFor(
+        address recipient,
+        address tokenA,
+        address tokenB,
+        uint8 decimalsA,
+        uint8 decimalsB,
+        uint256 feeBps,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 minShares,
+        uint256 minPriceX18,
+        uint256 maxPriceX18,
+        uint64 deadline
+    ) external nonReentrant returns (
+        address pool,
+        uint256 mintedShares,
+        uint256 amountAUsed,
+        uint256 amountBUsed
+    ) {
+        if (recipient == address(0) || recipient == address(this)) {
+            revert InvalidRecipient();
+        }
+        CreateLiquidityParams memory params;
+        params.tokenA = tokenA;
+        params.tokenB = tokenB;
+        params.decimalsA = decimalsA;
+        params.decimalsB = decimalsB;
+        params.feeBps = feeBps;
+        params.amountADesired = amountADesired;
+        params.amountBDesired = amountBDesired;
+        params.minShares = minShares;
+        params.minPriceX18 = minPriceX18;
+        params.maxPriceX18 = maxPriceX18;
+        params.deadline = deadline;
+        return _createOrAddLiquidity(recipient, params);
+    }
+
+    function _createOrAddLiquidity(
+        address recipient,
+        CreateLiquidityParams memory params
+    ) internal returns (
+        address pool,
+        uint256 mintedShares,
+        uint256 amountAUsed,
+        uint256 amountBUsed
+    ) {
+        if (block.timestamp > params.deadline) revert DeadlineExpired();
+        if (
+            params.tokenA == address(0) ||
+            params.tokenB == address(0) ||
+            params.tokenA == params.tokenB
+        ) {
             revert InvalidTokenPair();
         }
-        if (amountADesired == 0 || amountBDesired == 0) revert InvalidAmount();
+        if (params.amountADesired == 0 || params.amountBDesired == 0) {
+            revert InvalidAmount();
+        }
 
-        bool aIsToken0 = tokenA < tokenB;
-        address token0 = aIsToken0 ? tokenA : tokenB;
-        address token1 = aIsToken0 ? tokenB : tokenA;
-        uint8 decimals0 = aIsToken0 ? decimalsA : decimalsB;
-        uint8 decimals1 = aIsToken0 ? decimalsB : decimalsA;
-        uint256 desired0 = aIsToken0 ? amountADesired : amountBDesired;
-        uint256 desired1 = aIsToken0 ? amountBDesired : amountADesired;
+        bool aIsToken0 = params.tokenA < params.tokenB;
+        address token0 = aIsToken0 ? params.tokenA : params.tokenB;
+        address token1 = aIsToken0 ? params.tokenB : params.tokenA;
+        uint8 decimals0 = aIsToken0 ? params.decimalsA : params.decimalsB;
+        uint8 decimals1 = aIsToken0 ? params.decimalsB : params.decimalsA;
+        uint256 desired0 = aIsToken0
+            ? params.amountADesired
+            : params.amountBDesired;
+        uint256 desired1 = aIsToken0
+            ? params.amountBDesired
+            : params.amountADesired;
 
         IPublicCPMMFactory canonicalFactory = IPublicCPMMFactory(factory);
         bytes32 key = canonicalFactory.poolKey(
@@ -85,7 +175,7 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
             token1,
             decimals0,
             decimals1,
-            feeBps
+            params.feeBps
         );
         pool = canonicalFactory.getPool(key);
         bool poolCreated = pool == address(0);
@@ -95,7 +185,7 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
                 token1,
                 decimals0,
                 decimals1,
-                feeBps
+                params.feeBps
             );
         }
         _requireCanonicalPool(
@@ -105,7 +195,7 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
             token1,
             decimals0,
             decimals1,
-            feeBps
+            params.feeBps
         );
 
         IERC20 first = IERC20(token0);
@@ -118,13 +208,13 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
         first.forceApprove(pool, desired0);
         second.forceApprove(pool, desired1);
         mintedShares = IPublicCPMM(pool).addLiquidityFor(
-            msg.sender,
+            recipient,
             desired0,
             desired1,
-            minShares,
-            minPriceX18,
-            maxPriceX18,
-            deadline
+            params.minShares,
+            params.minPriceX18,
+            params.maxPriceX18,
+            params.deadline
         );
         first.forceApprove(pool, 0);
         second.forceApprove(pool, 0);
@@ -148,13 +238,96 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
         ) revert TransferAmountMismatch();
 
         emit PublicLiquidityRouted(
-            msg.sender,
+            recipient,
             pool,
             poolCreated,
             aIsToken0 ? amountAUsed : amountBUsed,
             aIsToken0 ? amountBUsed : amountAUsed,
             mintedShares
         );
+    }
+
+    function removeLiquidity(
+        address pool,
+        uint256 shareInput,
+        uint256 minAmount0,
+        uint256 minAmount1,
+        uint64 deadline,
+        address recipient
+    ) external nonReentrant returns (uint256 amount0, uint256 amount1) {
+        return _removeLiquidity(
+            pool,
+            shareInput,
+            minAmount0,
+            minAmount1,
+            deadline,
+            recipient
+        );
+    }
+
+    function removeLiquidityWithPermit(
+        address pool,
+        uint256 shareInput,
+        uint256 minAmount0,
+        uint256 minAmount1,
+        uint64 deadline,
+        address recipient,
+        uint256 permitDeadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant returns (uint256 amount0, uint256 amount1) {
+        address lpToken = _requireRegisteredPool(pool).lpToken();
+        try IERC20Permit(lpToken).permit(
+            msg.sender,
+            address(this),
+            shareInput,
+            permitDeadline,
+            v,
+            r,
+            s
+        ) {} catch {
+            if (IERC20(lpToken).allowance(msg.sender, address(this)) < shareInput) {
+                revert PermitFailed();
+            }
+        }
+        return _removeLiquidity(
+            pool,
+            shareInput,
+            minAmount0,
+            minAmount1,
+            deadline,
+            recipient
+        );
+    }
+
+    function _removeLiquidity(
+        address pool,
+        uint256 shareInput,
+        uint256 minAmount0,
+        uint256 minAmount1,
+        uint64 deadline,
+        address recipient
+    ) internal returns (uint256 amount0, uint256 amount1) {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (shareInput == 0) revert InvalidAmount();
+        if (recipient == address(0) || recipient == address(this)) {
+            revert InvalidRecipient();
+        }
+        IPublicCPMM canonicalPool = _requireRegisteredPool(pool);
+        IERC20 lp = IERC20(canonicalPool.lpToken());
+        uint256 startingBalance = lp.balanceOf(address(this));
+        _pullExact(lp, msg.sender, shareInput, startingBalance);
+        (amount0, amount1) = canonicalPool.removeLiquidityTo(
+            recipient,
+            shareInput,
+            minAmount0,
+            minAmount1,
+            deadline
+        );
+        if (lp.balanceOf(address(this)) != startingBalance) {
+            revert TransferAmountMismatch();
+        }
     }
 
     function _requireCanonicalPool(
@@ -177,8 +350,44 @@ contract PublicCPMMLiquidityRouter is IPublicCPMMLiquidityRouter {
             candidate.token0Decimals() != decimals0 ||
             candidate.token1Decimals() != decimals1 ||
             candidate.feeBps() != feeBps ||
-            candidate.feeVault() != canonicalFactory.feeVault()
+            candidate.feeVault() != canonicalFactory.feeVault() ||
+            candidate.lpTokenFactory() != canonicalFactory.lpTokenFactory()
         ) revert InvalidPool();
+        _requireCanonicalLPToken(canonicalFactory, candidate, pool);
+    }
+
+    function _requireRegisteredPool(address pool)
+        internal
+        view
+        returns (IPublicCPMM candidate)
+    {
+        IPublicCPMMFactory canonicalFactory = IPublicCPMMFactory(factory);
+        if (pool.code.length == 0 || !canonicalFactory.isPool(pool)) {
+            revert InvalidPool();
+        }
+        candidate = IPublicCPMM(pool);
+        if (
+            candidate.PROTOCOL_VERSION() != canonicalFactory.PROTOCOL_VERSION() ||
+            candidate.feeVault() != canonicalFactory.feeVault() ||
+            candidate.lpTokenFactory() != canonicalFactory.lpTokenFactory()
+        ) revert InvalidPool();
+        _requireCanonicalLPToken(canonicalFactory, candidate, pool);
+    }
+
+    function _requireCanonicalLPToken(
+        IPublicCPMMFactory canonicalFactory,
+        IPublicCPMM candidate,
+        address pool
+    ) internal view {
+        address token = candidate.lpToken();
+        if (
+            token.code.length == 0 ||
+            !IPublicLPTokenFactory(canonicalFactory.lpTokenFactory()).isIssuedToken(
+                pool,
+                token,
+                pool
+            )
+        ) revert InvalidLPToken();
     }
 
     function _pullExact(

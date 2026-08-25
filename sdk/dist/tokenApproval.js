@@ -1,3 +1,4 @@
+import { isEvmNativeAssetAddress } from "./nativeAsset.js";
 export const TOKEN_APPROVAL_MODE = Object.freeze({
     EXACT: "exact",
     UNLIMITED: "unlimited",
@@ -11,7 +12,7 @@ export const PUBLIC_ERC20_APPROVAL_ABI = [
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = /^0x0{40}$/i;
 function assertAddress(value, label) {
-    if (!ADDRESS.test(value) || ZERO_ADDRESS.test(value)) {
+    if (!ADDRESS.test(value) || ZERO_ADDRESS.test(value) || isEvmNativeAssetAddress(value)) {
         throw new TypeError(`Invalid ${label} address`);
     }
 }

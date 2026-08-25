@@ -38,7 +38,19 @@ transactions instead of hiding them.
 
 `PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI` and
 `buildPublicCreateOrAddLiquidityCall` cover atomic public pool creation/seeding
-and proportional joins. `buildConfidentialLiquidityQuoteCall` and
+and proportional joins. Public pools expose transferable permit-enabled LP
+tokens. `buildPublicLpPermitTypedData` prepares the EIP-2612 signature, while
+`buildPublicLiquidityRemovalExecution` selects allowance or permit removal and
+native or ERC-20 output without signing or sending anything.
+
+`isEvmNativeAssetAddress` recognizes the standard `0xEeee...` UI/RPC sentinel.
+`resolvePublicPoolAsset` maps that sentinel to the reviewed WCOTI address for
+pool lookup. `buildPublicSwapExecution`,
+`buildPublicNativeLiquidityAddExecution`, and the removal builder select the
+factory-bound native router when wrapping or unwrapping is required. The
+sentinel is never a contract address, approval target, or canonical pool asset.
+
+`buildConfidentialLiquidityQuoteCall` and
 `buildConfidentialAddLiquidityQuoteOperationPlan` cover the paid private
 liquidity preview. The preview takes one encrypted side and returns the accepted
 specified amount, counterpart and expected shares encrypted for the caller; it

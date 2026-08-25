@@ -6,6 +6,8 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./CipherDEXFeePolicy.sol";
 import "./interfaces/IPublicFeeVault.sol";
+import "./interfaces/IPublicLPToken.sol";
+import "./interfaces/IPublicLPTokenFactory.sol";
 
 /**
  * @title PublicCPMM
@@ -29,10 +31,10 @@ contract PublicCPMM is CipherDEXFeePolicy {
     uint256 public immutable scale1;
     uint256 public immutable feeBps;
     address public immutable feeVault;
+    address public immutable lpTokenFactory;
+    address public immutable lpToken;
 
     bool public initialized;
-    uint256 public totalShares;
-    mapping(address => uint256) public shares;
     uint256 public protocolFees0;
     uint256 public protocolFees1;
     uint256 public nextLockNonce;
@@ -64,6 +66,8 @@ contract PublicCPMM is CipherDEXFeePolicy {
     error InvalidDecimals();
     error InvalidFee();
     error InvalidFeeVault();
+    error InvalidLPTokenFactory();
+    error InvalidLPToken();
     error InvalidAmount();
     error PoolNotInitialized();
     error PoolAlreadyInitialized();
@@ -142,7 +146,8 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint8 token0Decimals_,
         uint8 token1Decimals_,
         uint256 feeBps_,
-        address feeVault_
+        address feeVault_,
+        address lpTokenFactory_
     ) {
         if (token0_ == address(0) || token1_ == address(0) || token0_ == token1_) {
             revert InvalidTokenPair();
@@ -150,6 +155,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
         if (token0Decimals_ > 18 || token1Decimals_ > 18) revert InvalidDecimals();
         if (!isApprovedFeeTier(feeBps_)) revert InvalidFee();
         if (feeVault_.code.length == 0) revert InvalidFeeVault();
+        if (lpTokenFactory_.code.length == 0) revert InvalidLPTokenFactory();
         if (_readTokenDecimals(token0_) != token0Decimals_) revert InvalidDecimals();
         if (_readTokenDecimals(token1_) != token1Decimals_) revert InvalidDecimals();
 
@@ -161,6 +167,29 @@ contract PublicCPMM is CipherDEXFeePolicy {
         scale1 = 10 ** (18 - token1Decimals_);
         feeBps = feeBps_;
         feeVault = feeVault_;
+        lpTokenFactory = lpTokenFactory_;
+
+        address issuedToken = IPublicLPTokenFactory(lpTokenFactory_).create(
+            address(this)
+        );
+        if (
+            issuedToken.code.length == 0 ||
+            IPublicLPToken(issuedToken).pool() != address(this) ||
+            !IPublicLPTokenFactory(lpTokenFactory_).isIssuedToken(
+                address(this),
+                issuedToken,
+                address(this)
+            )
+        ) revert InvalidLPToken();
+        lpToken = issuedToken;
+    }
+
+    function totalShares() public view returns (uint256) {
+        return IERC20(lpToken).totalSupply();
+    }
+
+    function shares(address provider) public view returns (uint256) {
+        return IERC20(lpToken).balanceOf(provider);
     }
 
     function quoteExactInput(uint256 amountIn, bool zeroForOne)
@@ -285,24 +314,25 @@ contract PublicCPMM is CipherDEXFeePolicy {
             cache.before1 = _effectiveBalance(cache.rawBefore1, protocolFees1);
             if (cache.before0 != 0 || cache.before1 != 0) revert UnmanagedBalance();
         } else {
-            if (cache.before0 == 0 || cache.before1 == 0 || totalShares == 0) {
+            uint256 existingShares = totalShares();
+            if (cache.before0 == 0 || cache.before1 == 0 || existingShares == 0) {
                 revert PoolNotInitialized();
             }
-            uint256 share0Max = Math.mulDiv(amount0, totalShares, cache.before0);
-            uint256 share1Max = Math.mulDiv(amount1, totalShares, cache.before1);
+            uint256 share0Max = Math.mulDiv(amount0, existingShares, cache.before0);
+            uint256 share1Max = Math.mulDiv(amount1, existingShares, cache.before1);
             mintedShares = Math.min(share0Max, share1Max);
             if (mintedShares == 0) revert InvalidLiquidityRatio();
             if (mintedShares < minShares) revert SlippageExceeded();
             amount0 = Math.mulDiv(
                 mintedShares,
                 cache.before0,
-                totalShares,
+                existingShares,
                 Math.Rounding.Ceil
             );
             amount1 = Math.mulDiv(
                 mintedShares,
                 cache.before1,
-                totalShares,
+                existingShares,
                 Math.Rounding.Ceil
             );
         }
@@ -341,8 +371,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
         }
 
         if (mintedShares < minShares) revert SlippageExceeded();
-        totalShares += mintedShares;
-        shares[recipient] += mintedShares;
+        IPublicLPToken(lpToken).mintFromPool(recipient, mintedShares);
         emit LiquidityAdded(recipient, cache.received0, cache.received1, mintedShares);
     }
 
@@ -352,9 +381,45 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint256 minAmount1,
         uint64 deadline
     ) external nonReentrant returns (uint256 amount0, uint256 amount1) {
+        return _removeLiquidity(
+            msg.sender,
+            shareInput,
+            minAmount0,
+            minAmount1,
+            deadline
+        );
+    }
+
+    function removeLiquidityTo(
+        address recipient,
+        uint256 shareInput,
+        uint256 minAmount0,
+        uint256 minAmount1,
+        uint64 deadline
+    ) external nonReentrant returns (uint256 amount0, uint256 amount1) {
+        if (recipient == address(0) || recipient == address(this)) {
+            revert InvalidLiquidityRecipient();
+        }
+        return _removeLiquidity(
+            recipient,
+            shareInput,
+            minAmount0,
+            minAmount1,
+            deadline
+        );
+    }
+
+    function _removeLiquidity(
+        address recipient,
+        uint256 shareInput,
+        uint256 minAmount0,
+        uint256 minAmount1,
+        uint64 deadline
+    ) internal returns (uint256 amount0, uint256 amount1) {
         _requireBeforeDeadline(deadline);
-        if (shareInput == 0 || totalShares == 0) revert InsufficientShares();
-        if (shareInput > shares[msg.sender]) revert InsufficientShares();
+        uint256 existingShares = totalShares();
+        if (shareInput == 0 || existingShares == 0) revert InsufficientShares();
+        if (shareInput > shares(msg.sender)) revert InsufficientShares();
         _reconcileProtocolFeeLosses();
 
         (uint256 reserve0, uint256 reserve1) = _effectiveReserves();
@@ -363,22 +428,21 @@ contract PublicCPMM is CipherDEXFeePolicy {
             reserve1 == 0 &&
             (minAmount0 != 0 || minAmount1 != 0)
         ) revert InsufficientLiquidity();
-        bool fullExit = shareInput == totalShares;
+        bool fullExit = shareInput == existingShares;
         uint256 nominalAmount0 = fullExit
             ? reserve0
-            : Math.mulDiv(shareInput, reserve0, totalShares);
+            : Math.mulDiv(shareInput, reserve0, existingShares);
         uint256 nominalAmount1 = fullExit
             ? reserve1
-            : Math.mulDiv(shareInput, reserve1, totalShares);
+            : Math.mulDiv(shareInput, reserve1, existingShares);
         if (nominalAmount0 < minAmount0 || nominalAmount1 < minAmount1) {
             revert SlippageExceeded();
         }
 
-        shares[msg.sender] -= shareInput;
-        totalShares -= shareInput;
+        IPublicLPToken(lpToken).burnFromPool(msg.sender, shareInput);
         if (fullExit) initialized = false;
-        amount0 = _transferOut(IERC20(token0), msg.sender, nominalAmount0);
-        amount1 = _transferOut(IERC20(token1), msg.sender, nominalAmount1);
+        amount0 = _transferOut(IERC20(token0), recipient, nominalAmount0);
+        amount1 = _transferOut(IERC20(token1), recipient, nominalAmount1);
         if (amount0 < minAmount0 || amount1 < minAmount1) revert SlippageExceeded();
         emit LiquidityRemoved(msg.sender, amount0, amount1, shareInput);
     }
@@ -425,7 +489,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint64 deadline
     ) external nonReentrant returns (bytes32 lockId) {
         _requireBeforeDeadline(deadline);
-        if (shareInput == 0 || shareInput > shares[msg.sender]) revert InsufficientShares();
+        if (shareInput == 0 || shareInput > shares(msg.sender)) revert InsufficientShares();
         if (
             permanent
                 ? unlockTime != 0
@@ -440,7 +504,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
             released: false,
             amount: shareInput
         });
-        shares[msg.sender] -= shareInput;
+        IPublicLPToken(lpToken).escrowFromPool(msg.sender, shareInput);
         emit LiquidityLocked(lockId, msg.sender, unlockTime, permanent, shareInput);
     }
 
@@ -449,7 +513,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
         if (record.owner != msg.sender || record.released || record.permanent) revert InvalidLock();
         if (block.timestamp < record.unlockTime) revert InvalidLock();
         record.released = true;
-        shares[msg.sender] += record.amount;
+        IPublicLPToken(lpToken).releaseFromPool(msg.sender, record.amount);
         emit LiquidityUnlocked(lockId, msg.sender, record.amount);
     }
 

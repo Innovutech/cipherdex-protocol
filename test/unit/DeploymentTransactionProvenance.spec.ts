@@ -209,6 +209,10 @@ describe("deployment transaction provenance", function () {
       [vault.record.address],
       vault.record.address,
     );
+    publicFactory.record.lpTokenFactory = await publicFactory.contract.lpTokenFactory();
+    publicFactory.record.lpTokenFactoryRuntimeCodehash = ethers.keccak256(
+      await ethers.provider.getCode(publicFactory.record.lpTokenFactory),
+    );
     const publicVaultBinding = await bound(
       "public fee-vault factory binding",
       "publicFeeVaultBinding",
@@ -234,6 +238,27 @@ describe("deployment transaction provenance", function () {
       [publicFactory.record.address],
       publicFactory.record.address,
     );
+    const wrappedNative = await deployed(
+      "wrappedNative",
+      "WrappedNativeToken",
+      ["Wrapped COTI", "WCOTI"],
+      "Wrapped COTI",
+      "WCOTI",
+    );
+    const publicNativeRouter = await deployed(
+      "publicNativeRouter",
+      "PublicCPMMNativeRouter",
+      [
+        publicFactory.record.address,
+        publicRouter.record.address,
+        publicLiquidityRouter.record.address,
+        wrappedNative.record.address,
+      ],
+      publicFactory.record.address,
+      publicRouter.record.address,
+      publicLiquidityRouter.record.address,
+      wrappedNative.record.address,
+    );
 
     return {
       contracts: {
@@ -256,6 +281,8 @@ describe("deployment transaction provenance", function () {
         publicQuoter: publicQuoter.record,
         publicRouter: publicRouter.record,
         publicLiquidityRouter: publicLiquidityRouter.record,
+        wrappedNative: wrappedNative.record,
+        publicNativeRouter: publicNativeRouter.record,
       },
       transactions,
     };
@@ -281,6 +308,16 @@ describe("deployment transaction provenance", function () {
     await expectRejected(
       verifyDeploymentTransactionEvidence(record, ethers.provider),
       "transaction hashes must be unique",
+    );
+  });
+
+  it("rejects a forged public LP-token factory runtime", async function () {
+    const record = await fixture();
+    record.contracts.publicFactory.lpTokenFactoryRuntimeCodehash =
+      `0x${"77".repeat(32)}`;
+    await expectRejected(
+      verifyDeploymentTransactionEvidence(record, ethers.provider),
+      "public LP-token factory runtime provenance is invalid",
     );
   });
 

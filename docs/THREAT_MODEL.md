@@ -15,6 +15,13 @@
   pool price;
 - passing confidential tokens through the public fee-vault sweep ABI;
 - administrator-controlled liquidity unlocks or withdrawals.
+- unauthorized public LP mint/burn/escrow, forged LP-token provenance, or a
+  permit replay withdrawing another holder's position;
+- a wrapped-native administrator minting unbacked WCOTI or recovering backing;
+- native periphery retaining token/native residue, stale allowances, or sending
+  an unwrap to an attacker-selected intermediate recipient;
+- a forced native transfer making WCOTI under-collateralized (it can only create
+  excess backing because supply changes solely through deposit/withdraw);
 - stale signed inputs executing after their intended deadline.
 - launchpad bootstrap changing an initialized pool or bypassing the factory,
   reviewed strategy and pinned-migrator boundary;

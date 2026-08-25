@@ -35,7 +35,10 @@ creators use the same end-to-end authorization boundary.
 
 `PublicCPMM` and `PublicCPMMFactory` are a separate public/public mode. Their
 public amount events and share accounting are not reused by the confidential
-mode. A public/private mode will only be added where COTI MPC can settle the
+mode. Each canonical public pool issues one transferable EIP-2612 LP token
+through the factory-owned `PublicLPTokenFactory`; the pool alone can mint, burn,
+or escrow those shares. Existing timed and permanent locks remain pool-enforced.
+A public/private mode will only be added where COTI MPC can settle the
 private leg without decrypting it inside the contract.
 
 Both modes use the immutable CipherDEX v1 fee policy. The advertised fee is
@@ -75,7 +78,14 @@ Public pools expose a factory-gated exact-input router, gasless quoter and an
 atomic create-or-add liquidity router. The liquidity router resolves or creates
 the canonical pool, pulls exact maxima, mints shares directly to the user,
 refunds unused proportional amounts and leaves no token balance or allowance
-residue. Existing direct factory and pool methods remain supported.
+residue. It also removes transferable LP shares directly or through one
+EIP-2612 permit. Existing direct factory and pool methods remain supported.
+`WrappedNativeToken` is an immutable, administrator-free one-to-one WCOTI
+wrapper built from OpenZeppelin ERC-20 primitives and established WETH
+deposit/withdraw semantics. `PublicCPMMNativeRouter` atomically wraps or unwraps
+native COTI around swaps and liquidity operations while public pools remain
+ERC-20-only. The standard `0xEeee...` native sentinel exists only at the SDK/UI
+boundary and is never stored as a pool token.
 The dependency-free SDK defaults public token spending to exact allowances and
 offers an explicit `unlimited` mode. Its approval-plan builder takes the observed
 current allowance, reduces larger residual allowances when exact mode is chosen,
