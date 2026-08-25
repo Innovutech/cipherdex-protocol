@@ -21,6 +21,7 @@ import {
   verifyRecoveryResourceCreation,
   verifyRecoveryResourceTerminalState,
 } from "../../scripts/funded-recovery-journal";
+import { validateFundedDeploymentBinding } from "../../scripts/funded-deployment-binding";
 import {
   deriveFundedRecoveryKeyFromSecret,
   FundedWallet,
@@ -134,6 +135,19 @@ describe("funded recovery journal", function () {
 
   afterEach(function () {
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("accepts only canonical COTI testnet and mainnet deployment bindings", function () {
+    for (const network of ["testnet", "mainnet"]) {
+      expect(validateFundedDeploymentBinding({
+        ...DEPLOYMENT,
+        recordPath: `deployments/coti-${network}-${COMMIT}.json`,
+      }).recordPath).to.equal(`deployments/coti-${network}-${COMMIT}.json`);
+    }
+    expect(() => validateFundedDeploymentBinding({
+      ...DEPLOYMENT,
+      recordPath: `deployments/coti-staging-${COMMIT}.json`,
+    })).to.throw("invalid provenance");
   });
 
   it("derives a domain-bound recovery key without a signer private key", function () {
