@@ -1,8 +1,32 @@
 # Verification Report
 
-Date: 2026-08-24
+Date: 2026-08-25
 
-## Status
+## Current COTI mainnet deployment
+
+Source commit `03ee787585961b06033bb22421d720abc2e687ec` was deployed to
+COTI mainnet (`2632500`) through the authenticated external launcher. The
+commit-bound public record is
+`deployments/coti-mainnet-03ee787585961b06033bb22421d720abc2e687ec.json`.
+It completed with 20 recorded transactions and no uncertain broadcasts. The
+deployment runner verified runtime code hashes and all post-deployment immutable
+bindings before promoting the record.
+
+- fee vault: `0x16439098e667C072E2B75Cd62C395Ec1d84762A1`
+- confidential factory: `0x00719f7112055DE41adD49Cf58B3F9cF89b97801`
+- confidential best-execution router: `0x80929FDD678C4E564c433d5Da1641129a4EBc42e`
+- public factory: `0x294f0FA03D5eEC0457Aba77B95613546FCB22452`
+- public LP-token factory: `0x00C925107DDcD72895f05b1e8B41A016143dE3b3`
+- public quoter: `0x1Ee4c3B5D10a631691C3A1457D50027c8AAb0396`
+- public swap router: `0x7DF1d7fdA490d1971B863B856d4B11fa0143E200`
+- public liquidity router: `0xbEEF7ab094bDd103638581362ef8c96815D82f8C`
+- wrapped COTI: `0xe90382343f895fDF0e0A28bCABa7c38f19Bb1FC3`
+- public native router: `0xf6c48af72e376674980741A4CebF52a1A47B86CF`
+
+This records deployment and on-chain binding evidence only. It is not a claim
+of explorer source-code verification or external audit.
+
+## Historical testnet status
 
 This is retired historical evidence for disposable pre-v1 testnet iterations.
 It is not a release record or a supported deployment manifest. Current source
