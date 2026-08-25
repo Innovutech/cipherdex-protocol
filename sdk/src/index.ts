@@ -2,8 +2,13 @@ export * from "./tokenApproval.js";
 export * from "./operationPlan.js";
 export * from "./walletCallBatch.js";
 export * from "./nativeAsset.js";
+export * from "./liquidity.js";
 
 import { isEvmNativeAssetAddress } from "./nativeAsset.js";
+import {
+  liquiditySideToContractBoolean,
+  type LiquiditySide,
+} from "./liquidity.js";
 
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
@@ -605,8 +610,6 @@ export const MAX_CONFIDENTIAL_ROUTE_CANDIDATES = 3 as const;
 export const CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION =
   "requestAddLiquidityQuote" as const;
 export const CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR = "0x6ad558a9" as const;
-export const CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC =
-  "0x4069fd369ee96a414b638a1f85119a2360ab4a7e05df9b1816582b1baf87a147" as const;
 export const CONFIDENTIAL_POSITION_FUNCTION = "requestMyPosition" as const;
 export const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_FUNCTION =
   "requestRemoveLiquidityQuote" as const;
@@ -1062,13 +1065,11 @@ export function buildConfidentialBestSwapWithCandidatesCall(
  */
 export function buildConfidentialLiquidityQuoteCall(
   specifiedAmount: InputText256,
-  amount0Specified: boolean,
+  specifiedSide: LiquiditySide,
   requestId: string,
   deadline: bigint,
 ): ConfidentialLiquidityQuoteCall {
-  if (typeof amount0Specified !== "boolean") {
-    throw new TypeError("Invalid confidential liquidity quote side");
-  }
+  const amount0Specified = liquiditySideToContractBoolean(specifiedSide);
   if (!isBytes32(requestId) || /^0x0{64}$/i.test(requestId)) {
     throw new TypeError("Invalid confidential liquidity quote request ID");
   }

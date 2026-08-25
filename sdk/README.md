@@ -43,18 +43,42 @@ tokens. `buildPublicLpPermitTypedData` prepares the EIP-2612 signature, while
 `buildPublicLiquidityRemovalExecution` selects allowance or permit removal and
 native or ERC-20 output without signing or sending anything.
 
+For an existing public pool, use `previewPublicProportionalLiquidity` with the
+current effective reserves, total LP shares, a typed `"token0" | "token1"`
+specified side and its raw-unit amount. The helper mirrors the pool's
+full-precision `mulDiv` behavior: shares round down and accepted token amounts
+round up. The two submitted amounts are maxima, not promised deposits; the
+liquidity router refunds excess. After confirmation,
+`parsePublicLiquidityRoutedResult` authenticates the successful transaction,
+reviewed router and provider before returning the pool, creation flag, actual
+amounts, minted shares and refunds.
+
 `isEvmNativeAssetAddress` recognizes the standard `0xEeee...` UI/RPC sentinel.
 `resolvePublicPoolAsset` maps that sentinel to the reviewed WCOTI address for
 pool lookup. `buildPublicSwapExecution`,
 `buildPublicNativeLiquidityAddExecution`, and the removal builder select the
 factory-bound native router when wrapping or unwrapping is required. The
 sentinel is never a contract address, approval target, or canonical pool asset.
+`parseNativeLiquidityAddedResult` authenticates both the native-router event and
+its nested public-liquidity-router event before returning actual native/token
+amounts, minted shares, creation state and derived refunds.
 
 `buildConfidentialLiquidityQuoteCall` and
 `buildConfidentialAddLiquidityQuoteOperationPlan` cover the paid private
 liquidity preview. The preview takes one encrypted side and returns the accepted
 specified amount, counterpart and expected shares encrypted for the caller; it
 does not reserve state or replace the bounded `addLiquidity` settlement call.
+`parseConfidentialAddLiquidityQuoteResult` authenticates the typed event boundary
+and maps its specified/counterpart ciphertexts to token0/token1. Decryption stays
+in the connected wallet integration; the SDK never receives an AES key.
+
+For every existing pool, users specify one side and the application derives the
+other proportionally. Editing either displayed amount invalidates a confidential
+preview: generate a new request ID, new function-bound ciphertext and new paid
+preview before confirmation. Only new-pool initialization treats both amounts
+as the initial price ratio. In every flow, the confirmed router events are
+authoritative; a local preview is presentation and slippage-planning data, not
+settlement evidence.
 
 The SDK exposes shape parsers and semantic guards for privacy-minimal lock and
 launchpad migration records. Shape or semantic validity is not chain

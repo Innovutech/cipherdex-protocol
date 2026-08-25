@@ -2,6 +2,8 @@ export * from "./tokenApproval.js";
 export * from "./operationPlan.js";
 export * from "./walletCallBatch.js";
 export * from "./nativeAsset.js";
+export * from "./liquidity.js";
+import { type LiquiditySide } from "./liquidity.js";
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
  *
@@ -132,7 +134,6 @@ export declare const MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES: 3;
 export declare const MAX_CONFIDENTIAL_ROUTE_CANDIDATES: 3;
 export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION: "requestAddLiquidityQuote";
 export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR: "0x6ad558a9";
-export declare const CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC: "0x4069fd369ee96a414b638a1f85119a2360ab4a7e05df9b1816582b1baf87a147";
 export declare const CONFIDENTIAL_POSITION_FUNCTION: "requestMyPosition";
 export declare const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_FUNCTION: "requestRemoveLiquidityQuote";
 export declare const CONFIDENTIAL_LOCKED_POSITION_FUNCTION: "requestLockedPosition";
@@ -315,7 +316,7 @@ export declare function buildConfidentialBestSwapWithCandidatesCall(tokenIn: str
  * Builds the paid confidential proportional-liquidity preview. The encrypted
  * specified amount must be bound to the target pool and this function selector.
  */
-export declare function buildConfidentialLiquidityQuoteCall(specifiedAmount: InputText256, amount0Specified: boolean, requestId: string, deadline: bigint): ConfidentialLiquidityQuoteCall;
+export declare function buildConfidentialLiquidityQuoteCall(specifiedAmount: InputText256, specifiedSide: LiquiditySide, requestId: string, deadline: bigint): ConfidentialLiquidityQuoteCall;
 /** Builds the paid owner-only active-position disclosure call. */
 export declare function buildConfidentialPositionCall(requestId: string, deadline: bigint): ConfidentialPositionCall;
 /** Builds a paid caller-encrypted partial/full removal preview. */

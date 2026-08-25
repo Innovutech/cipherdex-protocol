@@ -208,7 +208,7 @@ describe("stable SDK surface", function () {
 
     const liquidityQuote = buildConfidentialLiquidityQuoteCall(
       encrypted,
-      true,
+      "token0",
       requestId,
       deadline,
     );

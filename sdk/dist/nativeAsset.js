@@ -24,6 +24,8 @@ export const PUBLIC_CPMM_NATIVE_ROUTER_ABI = [
     "function removeLiquidityNative(address,uint256,uint256,uint256,uint64,address) returns (uint256,uint256)",
     "function removeLiquidityNativeWithPermit(address,uint256,uint256,uint256,uint64,address,uint256,uint8,bytes32,bytes32) returns (uint256,uint256)",
     "event NativeSwapRouted(address indexed trader,address indexed recipient,address indexed pool,address inputToken,address outputToken,uint256 amountIn,uint256 amountOut)",
+    "event NativeLiquidityAdded(address indexed provider,address indexed recipient,address indexed pool,address pairedToken,uint256 nativeAmount,uint256 tokenAmount,uint256 shares)",
+    "event NativeLiquidityRemoved(address indexed provider,address indexed recipient,address indexed pool,address pairedToken,uint256 nativeAmount,uint256 tokenAmount,uint256 shares)",
 ];
 export const PUBLIC_LP_PERMIT_EIP712_TYPES = Object.freeze({
     Permit: Object.freeze([

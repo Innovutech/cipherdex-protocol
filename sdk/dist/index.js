@@ -2,7 +2,9 @@ export * from "./tokenApproval.js";
 export * from "./operationPlan.js";
 export * from "./walletCallBatch.js";
 export * from "./nativeAsset.js";
+export * from "./liquidity.js";
 import { isEvmNativeAssetAddress } from "./nativeAsset.js";
+import { liquiditySideToContractBoolean, } from "./liquidity.js";
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
  *
@@ -544,7 +546,6 @@ export const MAX_CONFIDENTIAL_ATOMIC_SWAP_CANDIDATES = 3;
 export const MAX_CONFIDENTIAL_ROUTE_CANDIDATES = 3;
 export const CONFIDENTIAL_LIQUIDITY_QUOTE_FUNCTION = "requestAddLiquidityQuote";
 export const CONFIDENTIAL_LIQUIDITY_QUOTE_SELECTOR = "0x6ad558a9";
-export const CONFIDENTIAL_LIQUIDITY_QUOTE_RESULT_TOPIC = "0x4069fd369ee96a414b638a1f85119a2360ab4a7e05df9b1816582b1baf87a147";
 export const CONFIDENTIAL_POSITION_FUNCTION = "requestMyPosition";
 export const CONFIDENTIAL_REMOVE_LIQUIDITY_QUOTE_FUNCTION = "requestRemoveLiquidityQuote";
 export const CONFIDENTIAL_LOCKED_POSITION_FUNCTION = "requestLockedPosition";
@@ -750,10 +751,8 @@ export function buildConfidentialBestSwapWithCandidatesCall(tokenIn, tokenOut, a
  * Builds the paid confidential proportional-liquidity preview. The encrypted
  * specified amount must be bound to the target pool and this function selector.
  */
-export function buildConfidentialLiquidityQuoteCall(specifiedAmount, amount0Specified, requestId, deadline) {
-    if (typeof amount0Specified !== "boolean") {
-        throw new TypeError("Invalid confidential liquidity quote side");
-    }
+export function buildConfidentialLiquidityQuoteCall(specifiedAmount, specifiedSide, requestId, deadline) {
+    const amount0Specified = liquiditySideToContractBoolean(specifiedSide);
     if (!isBytes32(requestId) || /^0x0{64}$/i.test(requestId)) {
         throw new TypeError("Invalid confidential liquidity quote request ID");
     }

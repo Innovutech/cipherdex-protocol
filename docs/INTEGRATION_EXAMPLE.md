@@ -21,6 +21,26 @@ call accepts token-order-independent desired maxima, price bounds and minimum
 shares. It mints shares directly to the caller and refunds unused maxima. Direct
 factory and pool calls remain available for existing integrations.
 
+For an existing pool, let the user edit one explicit side and derive the other
+from current chain state. Token decimals do not change this raw-unit calculation:
+
+```ts
+const preview = previewPublicProportionalLiquidity({
+  reserve0: effectiveReserve0,
+  reserve1: effectiveReserve1,
+  totalLpShares,
+  specifiedSide: "token0",
+  specifiedAmount: amount0Maximum,
+});
+```
+
+The helper matches pool rounding exactly: expected shares round down, then both
+accepted amounts round up. Submit reviewed maxima and suitable minimum-share and
+price bounds; do not silently replace the user's specified maximum. After a
+successful transaction, treat `parsePublicLiquidityRoutedResult` as
+authoritative for the actual pool, creation state, amounts used, minted shares
+and refunds. A local preview can become stale before inclusion.
+
 Each pool exposes `lpToken()`. Authenticate it against the public factory's
 `lpTokenFactory()` and the helper's exact `(pool, lpToken, pool)` issuance
 attestation before presenting it as a CipherDEX position. LP removal can use a
@@ -31,7 +51,14 @@ sentinel. Resolve it to the deployment's reviewed `wrappedNative` address for
 pool discovery and quotes. Use `PublicCPMMNativeRouter` for native-input/output
 swaps, native liquidity adds, and LP removal with atomic unwrapping. Do not send
 the sentinel to a factory or pool. The SDK exports native-aware builders and
-returns the correct approval spender for each path.
+returns the correct approval spender for each path. For native liquidity,
+`parseNativeLiquidityAddedResult` requires the native event and nested
+`PublicLiquidityRouted` event to agree, then returns the actual native/token
+amounts, minted shares, creation state and derived refunds.
+
+New-pool initialization is the only liquidity flow where both input amounts
+define the initial pool ratio. Do not apply the existing-pool proportional
+preview to an uninitialized pool.
 
 ## Confidential pool discovery
 
@@ -230,13 +257,20 @@ For an existing initialized pool, encrypt one token-side maximum for
 request ID and deadline. Its result event contains the accepted specified
 amount, required proportional counterpart and expected shares as ciphertexts
 offboarded only to the caller. Authenticate the canonical pool, successful
-receipt, exact caller, request ID and side before decrypting the event.
+receipt, exact caller, request ID and typed `"token0" | "token1"` side with
+`parseConfidentialAddLiquidityQuoteResult` before decrypting the event. The
+parser only establishes the result boundary and token-side mapping. Keep COTI
+wallet-specific ciphertext decryption outside the SDK.
 
 The preview discloses the pool ratio/depth to that active caller in the same way
 as repeated exact swap quotes. It does not reserve state. Re-read balances and
 allowances, apply explicit tolerance to minimum shares and normalized price
 bounds, create fresh pool/function-bound encrypted inputs, then submit
 `addLiquidity`. Never turn the preview into an unbounded or zero-minimum add.
+Editing either amount after preview invalidates it. Obtain a new request ID and
+fresh paid encrypted preview before enabling confirmation. The confirmed pool
+and router events are authoritative; decrypted preview values are not proof of
+the amounts eventually settled.
 
 ## Optional wallet batching and signing UI
 

@@ -52,6 +52,8 @@ describe("SDK native asset handling", function () {
     expect(routerInterface.getFunction("swapExactTokenForNative")).to.not.equal(null);
     expect(routerInterface.getFunction("createOrAddLiquidityNative")).to.not.equal(null);
     expect(routerInterface.getFunction("removeLiquidityNativeWithPermit")).to.not.equal(null);
+    expect(routerInterface.getEvent("NativeLiquidityAdded")).to.not.equal(null);
+    expect(routerInterface.getEvent("NativeLiquidityRemoved")).to.not.equal(null);
     expect(lpInterface.getFunction("permit")).to.not.equal(null);
     expect(lpFactoryInterface.getFunction("isIssuedToken")).to.not.equal(null);
   });
