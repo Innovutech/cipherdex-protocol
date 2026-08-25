@@ -32,7 +32,7 @@ type FundedTransactionContext = Readonly<{
 const transactionContext = new AsyncLocalStorage<FundedTransactionContext>();
 
 export const REVIEWED_MAX_FEE_PER_GAS_WEI = 10_000_000_000n;
-const DEFAULT_MAX_PRIORITY_FEE_PER_GAS_WEI = 2_000_000_000n;
+export const REVIEWED_MAX_PRIORITY_FEE_PER_GAS_WEI = 5_000_000_000n;
 const DEFAULT_MAX_TRANSACTION_FEE_WEI = 300_000_000_000_000_000n;
 const RECOVERY_KEY_DOMAIN = "cipherdex-funded-recovery-key/v1";
 
@@ -128,7 +128,7 @@ export type FundedFeePolicy = Readonly<{
 export function reviewedFundedFeePolicy(): FundedFeePolicy {
   return Object.freeze({
     maxFeePerGasWei: REVIEWED_MAX_FEE_PER_GAS_WEI,
-    maxPriorityFeePerGasWei: DEFAULT_MAX_PRIORITY_FEE_PER_GAS_WEI,
+    maxPriorityFeePerGasWei: REVIEWED_MAX_PRIORITY_FEE_PER_GAS_WEI,
     maxTransactionFeeWei: DEFAULT_MAX_TRANSACTION_FEE_WEI,
   });
 }

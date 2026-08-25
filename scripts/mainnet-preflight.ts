@@ -8,7 +8,10 @@ import {
 } from "./deploy-protocol";
 import { resolveNewDeploymentRecordPath } from "./deployment-record";
 import { CastLedgerWallet, type ReviewedCastLedgerConfiguration } from "./cast-ledger-wallet";
-import { REVIEWED_MAX_FEE_PER_GAS_WEI } from "./funded-transaction-wallet";
+import {
+  REVIEWED_MAX_FEE_PER_GAS_WEI,
+  REVIEWED_MAX_PRIORITY_FEE_PER_GAS_WEI,
+} from "./funded-transaction-wallet";
 
 const COTI_MAINNET_CHAIN_ID = 2_632_500n;
 
@@ -85,6 +88,12 @@ async function main(): Promise<void> {
   const currentMaximumFee = feeData.maxFeePerGas ?? feeData.gasPrice;
   if (!currentMaximumFee || currentMaximumFee > REVIEWED_MAX_FEE_PER_GAS_WEI) {
     throw new Error("COTI mainnet RPC fee exceeds the reviewed deployment cap");
+  }
+  if (
+    feeData.maxPriorityFeePerGas !== null &&
+    feeData.maxPriorityFeePerGas > REVIEWED_MAX_PRIORITY_FEE_PER_GAS_WEI
+  ) {
+    throw new Error("COTI mainnet RPC priority fee exceeds the reviewed deployment cap");
   }
   const maximumDeploymentCost = DEPLOYMENT_MAX_GAS_UNITS * REVIEWED_MAX_FEE_PER_GAS_WEI;
   if (balance < maximumDeploymentCost) {
