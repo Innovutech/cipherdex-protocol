@@ -87,6 +87,47 @@ mistaken for an audited release.
    report in a separate evidence commit. Source code is never amended to
    hard-code deployed addresses.
 
+### Cotiscan source verification
+
+`scripts/cotiscan-verify.mjs` publishes source for a selected direct deployment
+on COTI mainnet or testnet. It is manifest-driven rather than contract-specific:
+the `--contract` value is a key under the reviewed deployment record's
+`contracts` object. Binding-only entries and contracts created inside another
+contract's transaction are rejected because they do not have the same direct
+creation-transaction proof.
+
+The verifier uses only the repository's existing runtime dependencies. Before
+submission it binds the selected address to the manifest, exact compiler input,
+artifact build information, constructor arguments, deployment transaction and
+live runtime code. It submits the exact Standard JSON compiler input and then
+requires a verified Cotiscan readback with the exact source set, compiler
+settings, constructor arguments, creation bytecode and deployed bytecode. It
+never loads a signer or sends a chain transaction. Cotiscan may label builds
+compiled with `metadata.bytecodeHash: "none"` as a partial rather than full
+match; the verifier reports that explorer classification but accepts it only
+after its stricter manifest and bytecode equality checks pass.
+
+Run the default dry-run first:
+
+```text
+npm run verify:cotiscan -- --manifest deployments/coti-mainnet-<commit>.json --contract wrappedNative
+```
+
+Review the printed public provenance, then explicitly publish that same selected
+contract:
+
+```text
+npm run verify:cotiscan -- --manifest deployments/coti-mainnet-<commit>.json --contract wrappedNative --submit
+```
+
+To verify another direct deployment, replace `wrappedNative` with its manifest
+key, such as `publicFactory`. The current checkout must retain the exact artifact
+and build-info input recorded by that manifest; the command fails closed if a
+later compile no longer matches the recorded compiler-input hash. The verifier
+uses `COTI_MAINNET_RPC_URL` or
+`COTI_TESTNET_RPC_URL` when set and otherwise uses the corresponding official
+COTI RPC. RPC overrides must use HTTPS, except for local loopback diagnostics.
+
 ## COTI testnet deployment and funded validation
 
 The existing funded testnet deployment target remains supported and uses a separate
