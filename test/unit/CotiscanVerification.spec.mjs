@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { after, before, test } from "node:test";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,13 @@ const historicalManifestPath =
   "deployments/coti-mainnet-03ee787585961b06033bb22421d720abc2e687ec.json";
 const manifestPath = `deployments/.cotiscan-current-build-${process.pid}.json`;
 const manifestAbsolutePath = resolve(repositoryRoot, manifestPath);
+const fixtureCommit = "1".repeat(40);
+const fixtureEvidenceRoot = resolve(
+  repositoryRoot,
+  "deployments",
+  "compiler-inputs",
+  fixtureCommit,
+);
 const wrappedAddress = "0x1111111111111111111111111111111111111111";
 const factoryAddress = "0x2222222222222222222222222222222222222222";
 const vaultAddress = "0x3333333333333333333333333333333333333333";
@@ -36,6 +43,7 @@ async function compilerFixture(sourceName, contractName) {
   const compilerInputHash = keccak256(toUtf8Bytes(JSON.stringify(buildInfo.input)));
   return {
     artifact,
+    buildInfo,
     runtimeCodehash,
     compilerInputHash,
     compiler: {
@@ -70,10 +78,29 @@ before(async () => {
     "PublicCPMMFactory",
   );
   wrappedCompilerInputHash = wrapped.compilerInputHash;
+  await mkdir(fixtureEvidenceRoot, { recursive: true, mode: 0o700 });
+  for (const fixture of [wrapped, factory]) {
+    await writeFile(
+      resolve(
+        fixtureEvidenceRoot,
+        `${fixture.compilerInputHash.slice(2).toLowerCase()}.json`,
+      ),
+      `${JSON.stringify({
+        schema: "cipherdex.compiler-input/v1",
+        sourceCommit: fixtureCommit,
+        compilerInputHash: fixture.compilerInputHash,
+        solcVersion: fixture.compiler.solcVersion,
+        solcLongVersion: fixture.compiler.solcLongVersion,
+        userSourceNameMap: fixture.buildInfo.userSourceNameMap,
+        input: fixture.buildInfo.input,
+      }, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+  }
   await writeFile(manifestAbsolutePath, `${JSON.stringify({
     schemaVersion: 2,
     status: "complete",
-    sourceCommit: "1".repeat(40),
+    sourceCommit: fixtureCommit,
     network: "cotiMainnet",
     chainId: "2632500",
     contracts: {
@@ -110,6 +137,7 @@ before(async () => {
 
 after(async () => {
   await rm(manifestAbsolutePath, { force: true });
+  await rm(fixtureEvidenceRoot, { force: true, recursive: true });
 });
 
 test("parses a manifest-bound dry-run and explicit submit mode", () => {
@@ -158,6 +186,13 @@ test("resolves WCOTI only through reviewed manifest and compiler provenance", as
   assert.equal(plan.compilerSettings.viaIR, false);
   assert.equal(plan.compilerSettings.metadataBytecodeHash, "none");
   assert.equal(plan.compilerInputHash, wrappedCompilerInputHash);
+  assert.equal(
+    plan.compilerEvidencePath,
+    resolve(
+      fixtureEvidenceRoot,
+      `${wrappedCompilerInputHash.slice(2).toLowerCase()}.json`,
+    ),
+  );
   assert.equal(plan.licenseType, "mit");
   assert.match(plan.constructorArgs, /^0x[0-9a-f]+$/u);
   assert.match(plan.expectedCreationInput, /^0x[0-9a-f]+$/u);

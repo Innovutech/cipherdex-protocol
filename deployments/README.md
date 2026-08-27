@@ -37,7 +37,9 @@ mutable generated file. After review:
    `git add -f deployments/coti-testnet-<commit>.json` for testnet or
    `git add -f deployments/coti-mainnet-<commit>.json` for mainnet. Public-only
    replacement records use the corresponding narrow
-   `coti-<network>-public-<commit>.json` namespace;
+   `coti-<network>-public-<commit>.json` namespace. When the authenticated build
+   produced compiler-input evidence, also stage only its fixed
+   `deployments/compiler-inputs/<commit>/` directory;
 3. create a separate evidence commit after the source commit used for
    deployment; and
 4. run funded verification only from a clean checkout of that evidence commit.

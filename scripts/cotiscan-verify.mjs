@@ -177,6 +177,68 @@ function compareCompilerSettings(compiler, buildInfo) {
   }
 }
 
+async function resolveReviewedCompilerBuild({
+  root,
+  deploymentsRoot,
+  manifest,
+  compiler,
+  artifact,
+}) {
+  const evidenceCandidate = resolve(
+    deploymentsRoot,
+    "compiler-inputs",
+    manifest.sourceCommit.toLowerCase(),
+    `${compiler.compilerInputHash.slice(2).toLowerCase()}.json`,
+  );
+  let compilerEvidencePath;
+  try {
+    compilerEvidencePath = pathInside(
+      deploymentsRoot,
+      await realpath(evidenceCandidate),
+      "compiler-input evidence",
+    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  if (compilerEvidencePath) {
+    const evidence = await readJsonFile(
+      compilerEvidencePath,
+      "compiler-input evidence",
+    );
+    if (
+      !isRecord(evidence) ||
+      evidence.schema !== "cipherdex.compiler-input/v1" ||
+      evidence.sourceCommit !== manifest.sourceCommit.toLowerCase() ||
+      evidence.compilerInputHash !== compiler.compilerInputHash.toLowerCase() ||
+      evidence.solcVersion !== compiler.solcVersion ||
+      evidence.solcLongVersion !== compiler.solcLongVersion ||
+      !isRecord(evidence.input) ||
+      !isRecord(evidence.input.settings) ||
+      !isRecord(evidence.input.sources) ||
+      !isRecord(evidence.userSourceNameMap)
+    ) throw new Error("compiler-input evidence does not match the reviewed manifest");
+    const evidenceHash = keccak256(toUtf8Bytes(JSON.stringify(evidence.input)));
+    if (evidenceHash.toLowerCase() !== compiler.compilerInputHash.toLowerCase()) {
+      throw new Error("compiler-input evidence hash does not match the reviewed manifest");
+    }
+    compareCompilerSettings(compiler, evidence);
+    return Object.freeze({
+      buildInfo: evidence,
+      compilerEvidencePath,
+    });
+  }
+
+  const artifactsRoot = await realpath(resolve(root, "artifacts"));
+  const buildInfoPath = pathInside(
+    artifactsRoot,
+    resolve(artifactsRoot, "build-info", `${artifact.buildInfoId}.json`),
+    "compiler build info",
+  );
+  const buildInfo = await readJsonFile(buildInfoPath, "compiler build info");
+  return Object.freeze({ buildInfo, compilerEvidencePath: undefined });
+}
+
 function inferLicense(input, compilerSourceName) {
   const content = input.sources?.[compilerSourceName]?.content;
   if (typeof content !== "string") throw new Error("primary compiler source is unavailable");
@@ -299,12 +361,14 @@ export async function resolveCotiscanVerificationPlan({
     throw new Error("contract artifact does not match reviewed compiler identity");
   }
 
-  const buildInfoPath = pathInside(
-    artifactsRoot,
-    resolve(artifactsRoot, "build-info", `${artifact.buildInfoId}.json`),
-    "compiler build info",
-  );
-  const buildInfo = await readJsonFile(buildInfoPath, "compiler build info");
+  const reviewedBuild = await resolveReviewedCompilerBuild({
+    root,
+    deploymentsRoot,
+    manifest,
+    compiler,
+    artifact,
+  });
+  const buildInfo = reviewedBuild.buildInfo;
   if (
     !isRecord(buildInfo) ||
     !isRecord(buildInfo.input) ||
@@ -356,6 +420,7 @@ export async function resolveCotiscanVerificationPlan({
     compiledRuntime: artifact.deployedBytecode,
     immutableReferences: Object.freeze({ ...(artifact.immutableReferences ?? {}) }),
     standardJsonInput: Object.freeze(buildInfo.input),
+    compilerEvidencePath: reviewedBuild.compilerEvidencePath,
     licenseType,
   });
 }
@@ -653,6 +718,7 @@ export function publicVerificationSummary(plan, mode) {
     compilerInputHash: plan.compilerInputHash,
     compilerVersion: plan.compilerVersion,
     compilerSettings: plan.compilerSettings,
+    compilerEvidence: plan.compilerEvidencePath,
     constructorArgs: plan.constructorArgs,
     licenseType: plan.licenseType,
   });

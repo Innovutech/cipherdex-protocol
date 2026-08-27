@@ -163,7 +163,14 @@ npm run verify:cotiscan -- --manifest deployments/coti-mainnet-<commit>.json --c
 To verify another direct deployment, replace `wrappedNative` with its manifest
 key, such as `publicFactory`. The current checkout must retain the exact artifact
 and build-info input recorded by that manifest; the command fails closed if a
-later compile no longer matches the recorded compiler-input hash. The verifier
+later compile no longer matches the recorded compiler-input hash. When Hardhat
+groups shared dependency sources into an equivalent but differently shaped
+compilation job, deployment evidence retains the exact authenticated Standard
+JSON input at
+`deployments/compiler-inputs/<source-commit>/<compiler-input-hash>.json`. The
+verifier accepts only that fixed commit/hash location, recomputes its hash, and
+validates its compiler version, settings and source mapping before use. Local
+artifacts and live runtime/creation evidence remain mandatory. The verifier
 uses `COTI_MAINNET_RPC_URL` or
 `COTI_TESTNET_RPC_URL` when set and otherwise uses the corresponding official
 COTI RPC. RPC overrides must use HTTPS, except for local loopback diagnostics.
