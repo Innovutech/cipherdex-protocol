@@ -22,6 +22,8 @@
   an unwrap to an attacker-selected intermediate recipient;
 - a forced native transfer making WCOTI under-collateralized (it can only create
   excess backing because supply changes solely through deposit/withdraw);
+- WCOTI becoming stranded through a direct or delegated transfer to the wrapper
+  itself, or callback reentry withdrawing more native backing than was burned;
 - stale signed inputs executing after their intended deadline.
 - launchpad bootstrap changing an initialized pool or bypassing the factory,
   reviewed strategy and pinned-migrator boundary;

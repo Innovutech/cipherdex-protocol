@@ -223,6 +223,14 @@ if (
 ) {
   throw new Error("Wrapped native deposit semantics are incomplete");
 }
+const wrappedUpdateBody = functionBody(wrappedNativeSource, "_update");
+if (
+  !wrappedUpdateBody.includes("to == address(this)") ||
+  !wrappedUpdateBody.includes("revert InvalidRecipient()") ||
+  !wrappedUpdateBody.includes("super._update(from, to, value)")
+) {
+  throw new Error("Wrapped native token permits transfers that strand WCOTI in the wrapper");
+}
 
 const publicLiquidityRouteBody = functionBody(
   publicLiquidityRouterSource,

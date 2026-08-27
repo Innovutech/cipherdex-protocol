@@ -84,7 +84,10 @@ residue. It also removes transferable LP shares directly or through one
 EIP-2612 permit. Existing direct factory and pool methods remain supported.
 `WrappedNativeToken` is an immutable, administrator-free one-to-one WCOTI
 wrapper built from OpenZeppelin ERC-20 primitives and established WETH
-deposit/withdraw semantics. `PublicCPMMNativeRouter` atomically wraps or unwraps
+deposit/withdraw semantics. Transfers to the wrapper itself are rejected so
+WCOTI cannot be accidentally stranded. Withdrawal burns before making the
+native transfer, so callback reentry cannot withdraw more backing than the
+receiver burns. `PublicCPMMNativeRouter` atomically wraps or unwraps
 native COTI around swaps and liquidity operations while public pools remain
 ERC-20-only. The standard `0xEeee...` native sentinel exists only at the SDK/UI
 boundary and is never stored as a pool token.

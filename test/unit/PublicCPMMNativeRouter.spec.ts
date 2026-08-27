@@ -269,6 +269,78 @@ describe("PublicCPMM native periphery", function () {
     expect(await ethers.provider.getBalance(await wrapped.getAddress())).to.equal(backingBefore);
   });
 
+  it("rejects transfers that would strand WCOTI inside its wrapper", async function () {
+    const [owner, spender] = await ethers.getSigners();
+    const wrapped = await (await ethers.getContractFactory("WrappedNativeToken")).deploy(
+      "Wrapped COTI",
+      "WCOTI",
+    );
+    await wrapped.waitForDeployment();
+    const wrapperAddress = await wrapped.getAddress();
+    const amount = ethers.parseEther("1");
+    await wrapped.deposit({ value: amount });
+
+    await expect(wrapped.transfer(wrapperAddress, 1n)).to.be.revertedWithCustomError(
+      wrapped,
+      "InvalidRecipient",
+    );
+    await wrapped.approve(spender.address, 1n);
+    await expect(
+      wrapped.connect(spender).transferFrom(owner.address, wrapperAddress, 1n),
+    ).to.be.revertedWithCustomError(wrapped, "InvalidRecipient");
+
+    expect(await wrapped.balanceOf(owner.address)).to.equal(amount);
+    expect(await wrapped.balanceOf(wrapperAddress)).to.equal(0n);
+    expect(await wrapped.allowance(owner.address, spender.address)).to.equal(1n);
+  });
+
+  it("preserves exact backing through receiver reentrancy without a guard", async function () {
+    const wrapped = await (await ethers.getContractFactory("WrappedNativeToken")).deploy(
+      "Wrapped COTI",
+      "WCOTI",
+    );
+    await wrapped.waitForDeployment();
+    const receiver = await (
+      await ethers.getContractFactory("ReentrantWrappedNativeReceiver")
+    ).deploy(await wrapped.getAddress());
+    await receiver.waitForDeployment();
+    const receiverAddress = await receiver.getAddress();
+    const unit = ethers.parseEther("1");
+    await receiver.deposit({ value: unit * 2n });
+
+    await receiver.withdrawWithReentry(unit, unit);
+
+    expect(await wrapped.balanceOf(receiverAddress)).to.equal(0n);
+    expect(await wrapped.totalSupply()).to.equal(0n);
+    expect(await ethers.provider.getBalance(await wrapped.getAddress())).to.equal(0n);
+    expect(await ethers.provider.getBalance(receiverAddress)).to.equal(unit * 2n);
+  });
+
+  it("rolls back an overdrawn reentrant withdrawal", async function () {
+    const wrapped = await (await ethers.getContractFactory("WrappedNativeToken")).deploy(
+      "Wrapped COTI",
+      "WCOTI",
+    );
+    await wrapped.waitForDeployment();
+    const receiver = await (
+      await ethers.getContractFactory("ReentrantWrappedNativeReceiver")
+    ).deploy(await wrapped.getAddress());
+    await receiver.waitForDeployment();
+    const receiverAddress = await receiver.getAddress();
+    const unit = ethers.parseEther("1");
+    await receiver.deposit({ value: unit });
+
+    await expect(receiver.withdrawWithReentry(unit, unit)).to.be.revertedWithCustomError(
+      wrapped,
+      "NativeTransferFailed",
+    );
+
+    expect(await wrapped.balanceOf(receiverAddress)).to.equal(unit);
+    expect(await wrapped.totalSupply()).to.equal(unit);
+    expect(await ethers.provider.getBalance(await wrapped.getAddress())).to.equal(unit);
+    expect(await ethers.provider.getBalance(receiverAddress)).to.equal(0n);
+  });
+
   it("adds native liquidity atomically and refunds the unused paired-token maximum", async function () {
     const { owner, wrapped, token, pool, nativeRouter } = await deployFixture();
     const nativeDesired = ethers.parseEther("1");

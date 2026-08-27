@@ -47,7 +47,8 @@
   the recipient, refunds unused proportional token maxima, and supports
   EIP-2612 permit removal without a separate approval transaction.
 - `contracts/WrappedNativeToken.sol`: immutable administrator-free WCOTI using
-  one-to-one deposit/withdraw semantics. Forced native transfers can only
+  one-to-one deposit/withdraw semantics. It rejects transfers to itself, burns
+  before native withdrawal callbacks, and forced native transfers can only
   over-collateralize it.
 - `contracts/PublicCPMMNativeRouter.sol`: factory-bound native COTI adapter for
   public swaps and liquidity. It wraps/unwraps atomically and verifies canonical
@@ -167,7 +168,8 @@ Native COTI is not a pool asset. Public pools pair WCOTI with another ERC-20;
 the native router wraps exact native input before a pool call and unwraps exact
 WCOTI output afterward. It clears temporary allowances and rejects residual
 balances. This follows the established wrapped-native/periphery boundary and
-keeps CPMM accounting token-only.
+keeps CPMM accounting token-only. WCOTI cannot be transferred to its own
+contract address, where it would otherwise become irrecoverably stranded.
 
 LP shares are ciphertext stored in aggregate by the pool. Factory-created pools
 also mint a pool-bound `PrivateLPToken` for each provider, so the encrypted share

@@ -12,6 +12,7 @@ import "./interfaces/IWrappedNativeToken.sol";
  */
 contract WrappedNativeToken is ERC20, IWrappedNativeToken {
     error InvalidAmount();
+    error InvalidRecipient();
     error NativeTransferFailed();
 
     event Deposit(address indexed account, uint256 amount);
@@ -35,5 +36,10 @@ contract WrappedNativeToken is ERC20, IWrappedNativeToken {
         (bool success, ) = payable(msg.sender).call{value: amount}("");
         if (!success) revert NativeTransferFailed();
         emit Withdrawal(msg.sender, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (to == address(this)) revert InvalidRecipient();
+        super._update(from, to, value);
     }
 }

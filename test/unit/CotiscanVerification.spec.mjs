@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
-import { test } from "node:test";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { after, before, test } from "node:test";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { keccak256, toUtf8Bytes } from "ethers";
 
 import {
   parseCotiscanArguments,
@@ -11,8 +13,104 @@ import {
 } from "../../scripts/cotiscan-verify.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const manifestPath =
+const historicalManifestPath =
   "deployments/coti-mainnet-03ee787585961b06033bb22421d720abc2e687ec.json";
+const manifestPath = `deployments/.cotiscan-current-build-${process.pid}.json`;
+const manifestAbsolutePath = resolve(repositoryRoot, manifestPath);
+const wrappedAddress = "0x1111111111111111111111111111111111111111";
+const factoryAddress = "0x2222222222222222222222222222222222222222";
+const vaultAddress = "0x3333333333333333333333333333333333333333";
+const deploymentHash = (byte) => `0x${byte.repeat(64)}`;
+let wrappedCompilerInputHash;
+
+async function compilerFixture(sourceName, contractName) {
+  const artifact = JSON.parse(await readFile(
+    resolve(repositoryRoot, "artifacts", sourceName, `${contractName}.json`),
+    "utf8",
+  ));
+  const buildInfo = JSON.parse(await readFile(
+    resolve(repositoryRoot, "artifacts", "build-info", `${artifact.buildInfoId}.json`),
+    "utf8",
+  ));
+  const runtimeCodehash = keccak256(artifact.deployedBytecode);
+  const compilerInputHash = keccak256(toUtf8Bytes(JSON.stringify(buildInfo.input)));
+  return {
+    artifact,
+    runtimeCodehash,
+    compilerInputHash,
+    compiler: {
+      contractName,
+      sourceName,
+      runtimeCodehash,
+      compilerInputHash,
+      solcVersion: buildInfo.solcVersion,
+      solcLongVersion: buildInfo.solcLongVersion,
+      immutableReferenceCount: Object.values(artifact.immutableReferences ?? {})
+        .flat().length,
+      settings: {
+        evmVersion: buildInfo.input.settings.evmVersion,
+        viaIR: buildInfo.input.settings.viaIR ?? false,
+        optimizer: {
+          enabled: buildInfo.input.settings.optimizer.enabled,
+          runs: buildInfo.input.settings.optimizer.runs,
+        },
+        metadataBytecodeHash: buildInfo.input.settings.metadata.bytecodeHash,
+      },
+    },
+  };
+}
+
+before(async () => {
+  const wrapped = await compilerFixture(
+    "contracts/WrappedNativeToken.sol",
+    "WrappedNativeToken",
+  );
+  const factory = await compilerFixture(
+    "contracts/PublicCPMMFactory.sol",
+    "PublicCPMMFactory",
+  );
+  wrappedCompilerInputHash = wrapped.compilerInputHash;
+  await writeFile(manifestAbsolutePath, `${JSON.stringify({
+    schemaVersion: 2,
+    status: "complete",
+    sourceCommit: "1".repeat(40),
+    network: "cotiMainnet",
+    chainId: "2632500",
+    contracts: {
+      wrappedNative: {
+        address: wrappedAddress,
+        runtimeCodehash: wrapped.runtimeCodehash,
+        deploymentTx: deploymentHash("4"),
+        constructorArgs: ["Wrapped COTI", "WCOTI"],
+      },
+      publicFactory: {
+        address: factoryAddress,
+        runtimeCodehash: factory.runtimeCodehash,
+        deploymentTx: deploymentHash("5"),
+        constructorArgs: [vaultAddress],
+      },
+      publicFeeVaultBinding: {
+        address: factoryAddress,
+        target: vaultAddress,
+      },
+      launchpadMigrator: {
+        address: "0x6666666666666666666666666666666666666666",
+        runtimeCodehash: deploymentHash("7"),
+        deploymentTx: deploymentHash("8"),
+        creationKind: "strategy-constructor-child",
+        constructorArgs: [],
+      },
+    },
+    compiler: {
+      WrappedNativeToken: wrapped.compiler,
+      PublicCPMMFactory: factory.compiler,
+    },
+  }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+});
+
+after(async () => {
+  await rm(manifestAbsolutePath, { force: true });
+});
 
 test("parses a manifest-bound dry-run and explicit submit mode", () => {
   assert.deepEqual(
@@ -54,15 +152,12 @@ test("resolves WCOTI only through reviewed manifest and compiler provenance", as
   assert.equal(plan.chainId, "2632500");
   assert.equal(plan.contractName, "WrappedNativeToken");
   assert.equal(plan.sourceName, "contracts/WrappedNativeToken.sol");
-  assert.equal(plan.address, "0xe90382343f895fDF0e0A28bCABa7c38f19Bb1FC3");
+  assert.equal(plan.address, wrappedAddress);
   assert.equal(plan.compilerVersion, "0.8.28+commit.7893614a");
   assert.equal(plan.compilerSettings.optimizer.runs, 200);
   assert.equal(plan.compilerSettings.viaIR, false);
   assert.equal(plan.compilerSettings.metadataBytecodeHash, "none");
-  assert.equal(
-    plan.compilerInputHash,
-    "0xa9ce0dff778958e5aa03c55be7108ed58532fe281b6c60317aad9d09e4937088",
-  );
+  assert.equal(plan.compilerInputHash, wrappedCompilerInputHash);
   assert.equal(plan.licenseType, "mit");
   assert.match(plan.constructorArgs, /^0x[0-9a-f]+$/u);
   assert.match(plan.expectedCreationInput, /^0x[0-9a-f]+$/u);
@@ -81,7 +176,18 @@ test("selects another direct deployment without contract-specific logic", async 
   assert.equal(plan.contractKey, "publicFactory");
   assert.equal(plan.contractName, "PublicCPMMFactory");
   assert.equal(plan.sourceName, "contracts/PublicCPMMFactory.sol");
-  assert.equal(plan.address, "0x294f0FA03D5eEC0457Aba77B95613546FCB22452");
+  assert.equal(plan.address, factoryAddress);
+});
+
+test("rejects a historical manifest after its compiler source changes", async () => {
+  await assert.rejects(
+    resolveCotiscanVerificationPlan({
+      repositoryRoot,
+      manifestPath: historicalManifestPath,
+      contractKey: "wrappedNative",
+    }),
+    /compiler input hash/u,
+  );
 });
 
 test("rejects non-deployment manifest keys and unavailable artifacts", async () => {
