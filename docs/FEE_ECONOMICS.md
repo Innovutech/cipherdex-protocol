@@ -58,9 +58,12 @@ execution use the same arithmetic and validity rule for their pool mode.
 ## Public pools
 
 `PublicCPMM` maintains separate `protocolFees0` and `protocolFees1` counters.
-Effective reserves are raw token balances minus the corresponding protocol-fee
-counter. Swaps, quotes, liquidity joins, withdrawals, and invariant checks use
-only effective reserves.
+LP reserves are separate stored accounting state. Swaps, quotes, liquidity
+joins, withdrawals, and invariant checks use only those reserves; raw balances
+above reserves plus protocol fees are unpriced surplus. Direct transfers and
+positive rebases therefore do not change pool price or LP ownership. Anyone may
+call `sweepSurplus`, but it can move only the exact surplus to the immutable fee
+vault and provides no caller-selected recipient or upward reserve synchronization.
 
 `collectProtocolFees(collectToken0, collectToken1)` is permissionless but can
 transfer only to the pool's immutable `CipherDEXFeeVault`. Each side is selected
@@ -68,12 +71,12 @@ independently, so a reverting token cannot block collection of its paired asset.
 Collection requires the pool debit to equal the selected claim exactly, while the
 vault records only its measured net credit. This permits a sender-taxed token
 without charging LP-owned reserves or inflating the vault claim. A prior external
-token loss is reconciled conservatively against protocol-owned claims before
-effective reserves are used; LP-owned liquidity is never silently reclassified
-as a protocol fee. A successful collection removes the same nominal amount from
-raw balance and protocol claims, so effective reserves and price do not change. A
-full LP exit withdraws all effective reserves but leaves protocol-owned balances
-behind.
+token loss is reconciled against protocol-owned claims before stored LP reserves.
+If the loss exceeds the protocol claim, the affected reserve is reduced with a
+`ReserveLossReconciled` event so the paired asset remains recoverable. A successful
+collection removes the same nominal amount from raw balance and protocol claims,
+so effective reserves and price do not change. A full LP exit withdraws all
+stored reserves but leaves protocol-owned balances and unaccounted surplus behind.
 
 ## Confidential pools
 

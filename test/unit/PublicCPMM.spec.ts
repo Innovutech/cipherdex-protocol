@@ -257,7 +257,7 @@ describe("PublicCPMM", function () {
     expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("91"));
   });
 
-  it("accepts bounded rounded deposits without requiring an exact reserve multiple", async function () {
+  it("ignores donated surplus when deriving bounded rounded deposits", async function () {
     const [owner] = await ethers.getSigners();
     const tokenFactory = await ethers.getContractFactory("MockERC20");
     const token0 = await tokenFactory.deploy("Token 0", "TK0", 18);
@@ -292,16 +292,22 @@ describe("PublicCPMM", function () {
       0xffffffff,
     );
 
-    // The extra wei makes the raw reserve ratio 11:10. The 2:1 deposit would
-    // produce the same floored share value under the old implementation, but
-    // is not actually proportional and must not donate the excess token.
+    const quoteBefore = await pool.quoteExactInput(10_000n, true);
     await token0.transfer(await pool.getAddress(), 1n);
+    expect(await pool.quoteExactInput(10_000n, true)).to.equal(quoteBefore);
+    expect(await pool.effectiveReserves()).to.deep.equal([
+      ethers.parseEther("10"),
+      ethers.parseEther("10"),
+    ]);
+    expect(await pool.surplusBalances()).to.deep.equal([1n, 0n]);
+
     const owner0Before = await token0.balanceOf(owner.address);
     const owner1Before = await token1.balanceOf(owner.address);
     await pool.addLiquidity(2n, 1n, 1n, 0n, ethers.MaxUint256, 0xffffffff);
 
-    expect(await token0.balanceOf(owner.address)).to.equal(owner0Before - 2n);
+    expect(await token0.balanceOf(owner.address)).to.equal(owner0Before - 1n);
     expect(await token1.balanceOf(owner.address)).to.equal(owner1Before - 1n);
     expect(await pool.shares(owner.address)).to.equal(ethers.parseEther("10") + 1n);
+    expect(await pool.surplusBalances()).to.deep.equal([1n, 0n]);
   });
 });

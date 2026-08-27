@@ -87,6 +87,46 @@ mistaken for an audited release.
    report in a separate evidence commit. Source code is never amended to
    hard-code deployed addresses.
 
+### Public-only replacement deployment
+
+`scripts/deploy-public-stack.ts` replaces only the transparent CPMM stack. It
+deploys a new dedicated `CipherDEXFeeVault`, public factory, quoter, swap router,
+liquidity router and native router. The existing vault cannot be reused because
+its public-factory binding is one-time. Confidential contracts and their vault
+remain untouched. Mainnet reuses the exact reviewed WCOTI deployment; testnet
+deploys a fresh wrapper when `CIPHERDEX_EXISTING_WRAPPED_NATIVE` is unset.
+
+Use a record named `deployments/coti-mainnet-public-<commit>.json` and add this
+value to the external mainnet environment:
+
+```text
+CIPHERDEX_EXISTING_WRAPPED_NATIVE=<reviewed-mainnet-WCOTI-address>
+```
+
+Run the public-only preflight and deployment through the authenticated launcher:
+
+```text
+node <external-launcher> --repository <repository> --commit <commit> --environment <absolute-mainnet-env> --target scripts/mainnet-public-preflight.ts -- --network cotiMainnet
+node <external-launcher> --repository <repository> --commit <commit> --environment <absolute-mainnet-env> --target scripts/deploy-public-mainnet.ts -- --network cotiMainnet
+```
+
+The preflight is read-only. The mainnet deployment performs bytecode and
+immutable-binding verification but creates no pool and moves no liquidity.
+
+For testnet, use
+`COTI_DEPLOYMENT_RECORD=deployments/coti-testnet-public-<commit>.json` and run:
+
+```text
+node <external-launcher> --repository <repository> --commit <commit> --environment <absolute-testnet-env> --target scripts/deploy-public-testnet.ts -- --network cotiTestnet
+```
+
+The testnet target additionally deploys one disposable 6-decimal token and runs
+the focused mixed-decimal/native reserve smoke: create and seed, one-sided
+donation isolation, fixed-vault surplus sweep, proportional add, both native
+swap directions, protocol-fee collection and full cleanup. It records every
+transaction and fails completion if any reserve, share, allowance or router
+residue remains.
+
 ### Cotiscan source verification
 
 `scripts/cotiscan-verify.mjs` publishes source for a selected direct deployment

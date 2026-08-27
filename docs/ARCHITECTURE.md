@@ -124,7 +124,10 @@ of its integer-rounded value accrues to the protocol and the remainder stays in
 effective reserves for LPs. There is no additional native-COTI swap payment.
 Public pools track each token's protocol fees in public counters; confidential
 pools use encrypted counters. Public collection moves only a selected token
-side. Confidential collection grants an exact temporary allowance and deposits
+side. Public LP reserves are explicit stored accounting state, so unsolicited
+token transfers and positive rebases remain unpriced surplus until anyone moves
+that exact excess to the immutable fee vault. Confidential collection grants an
+exact temporary allowance and deposits
 the encrypted aggregate into a factory-bound vault, which combines the same
 token across canonical pools and fixed daily epochs. A full LP exit deposits
 even a sub-threshold terminal encrypted aggregate before clearing pool state, so
@@ -321,6 +324,15 @@ cannot initialize it again.
 The first LP establishes any non-zero normalized price. Unmanaged balances sent
 before initialization are swept to the immutable fee vault before the first
 deposit, so a one-unit donation cannot brick or benefit the initializer.
+After initialization, stored LP reserves rather than raw token balances drive
+quotes, swaps, joins and exits. Direct transfers and positive rebases therefore
+cannot change pool price, minting ratios or LP withdrawals. `surplusBalances`
+reports that unaccounted excess, and permissionless `sweepSurplus` can move it
+only to the immutable fee vault. There is deliberately no upward `sync` path.
+If an external token destroys pool balance, protocol-owned fees absorb the loss
+first; any remaining LP-reserve loss is reconciled downward with an explicit
+event so the healthy paired reserve and LP shares do not become permanently
+locked.
 Subsequent liquidity amounts are maxima: shares round down, accepted proportional
 amounts round up, and only the accepted amounts are pulled. Incremental joins
 require exact receipt so fee-on-transfer behavior cannot silently donate assets.

@@ -2,6 +2,10 @@ import { expect } from "chai";
 import { ethers } from "../../hardhat/runtime.js";
 import { deployFeeVault } from "../helpers/deployFeeVault";
 import { deployPublicLpTokenFactory } from "../helpers/deployPublicLpTokenFactory";
+import {
+  createPublicPool,
+  deployPublicFactory,
+} from "../helpers/deployPublicFactory";
 
 const MAX_DEADLINE = 0xffffffff;
 const MAX_UINT256 = ethers.MaxUint256;
@@ -104,5 +108,77 @@ describe("PublicCPMM stateful invariants", function () {
         `constant-product invariant failed at swap ${index}`,
       );
     }
+  });
+
+  it("keeps reserves, fees, and donated surplus disjoint across state transitions", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const tokenA = await tokenFactory.deploy("Token A", "TKA", 18);
+    const tokenB = await tokenFactory.deploy("Token B", "TKB", 6);
+    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
+    const { vault, factory } = await deployPublicFactory();
+    const pool = await createPublicPool(
+      factory,
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      6,
+      30,
+    );
+    const token0IsA = (await pool.token0()).toLowerCase() ===
+      (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const initial0 = token0IsA ? ethers.parseEther("1000") : 1_000_000_000n;
+    const initial1 = token0IsA ? 1_000_000_000n : ethers.parseEther("1000");
+
+    for (const [token, amount] of [[token0, initial0], [token1, initial1]] as const) {
+      await token.mint(owner.address, amount);
+      await token.mint(trader.address, amount);
+      await token.connect(owner).approve(await pool.getAddress(), amount);
+      await token.connect(trader).approve(await pool.getAddress(), MAX_UINT256);
+    }
+    await pool.addLiquidity(initial0, initial1, 1n, 0n, MAX_UINT256, MAX_DEADLINE);
+
+    const probe0 = initial0 / 1_000_000n;
+    const probe1 = initial1 / 1_000_000n;
+    let donated0 = 0n;
+    let donated1 = 0n;
+    for (let index = 0; index < 12; index += 1) {
+      const zeroForOne = index % 2 === 0;
+      const donatedToken = zeroForOne ? token0 : token1;
+      const donation = BigInt(index + 1);
+      const quotesBefore = [
+        await pool.quoteExactInput(probe0, true),
+        await pool.quoteExactInput(probe1, false),
+      ];
+      await donatedToken.connect(trader).transfer(await pool.getAddress(), donation);
+      if (zeroForOne) donated0 += donation;
+      else donated1 += donation;
+
+      expect(await pool.surplusBalances()).to.deep.equal([donated0, donated1]);
+      expect(await pool.quoteExactInput(probe0, true)).to.equal(quotesBefore[0]);
+      expect(await pool.quoteExactInput(probe1, false)).to.equal(quotesBefore[1]);
+
+      const input = (zeroForOne ? probe0 : probe1) + BigInt(index);
+      await pool.connect(trader).swapExactInput(
+        input,
+        await pool.quoteExactInput(input, zeroForOne),
+        zeroForOne,
+        MAX_DEADLINE,
+      );
+      const [reserve0, reserve1] = await pool.effectiveReserves();
+      expect(await token0.balanceOf(await pool.getAddress())).to.equal(
+        reserve0 + await pool.protocolFees0() + donated0,
+      );
+      expect(await token1.balanceOf(await pool.getAddress())).to.equal(
+        reserve1 + await pool.protocolFees1() + donated1,
+      );
+    }
+
+    await pool.connect(trader).sweepSurplus(true, true);
+    expect(await pool.surplusBalances()).to.deep.equal([0n, 0n]);
+    expect(await token0.balanceOf(await vault.getAddress())).to.equal(donated0);
+    expect(await token1.balanceOf(await vault.getAddress())).to.equal(donated1);
   });
 });

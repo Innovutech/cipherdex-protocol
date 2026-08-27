@@ -1,7 +1,7 @@
 import type { VerifiedTestnetDeploymentRecord } from "./testnet-deployment-provenance";
 const COMMIT = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-const RECORD_PATH = /^deployments\/coti-(?:testnet|mainnet)-([0-9a-f]{40})\.json$/;
+const RECORD_PATH = /^deployments\/coti-(?:testnet|mainnet)(?:-public)?-([0-9a-f]{40})\.json$/;
 
 export type FundedDeploymentBinding = Readonly<{
   recordPath: string;

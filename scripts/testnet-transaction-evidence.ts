@@ -284,9 +284,8 @@ export function safeTestnetErrorSummary(error: unknown, depth = 0): string {
     publicTransactionHashSuffix(error);
 }
 
-async function requireMinedStatus<TReceipt extends ReceiptLike>(
+export async function requireMinedReceipt<TReceipt extends ReceiptLike>(
   label: string,
-  expectedStatus: 0 | 1,
   operation: () => Promise<TransactionLike<TReceipt>>,
   getReceipt: (transactionHash: string) => Promise<TReceipt | null>,
   onBroadcast?: (transactionHash: string) => void | Promise<void>,
@@ -310,16 +309,8 @@ async function requireMinedStatus<TReceipt extends ReceiptLike>(
         cause,
       );
     }
-    if (receipt?.status === expectedStatus) {
-      return Object.freeze({ transactionHash, receipt });
-    }
     if (receipt?.status === 0 || receipt?.status === 1) {
-      throw new MinedTransactionStatusError(
-        label,
-        transactionHash,
-        expectedStatus,
-        receipt.status,
-      );
+      return Object.freeze({ transactionHash, receipt });
     }
     throw new UnknownBroadcastOutcomeError(label, transactionHash, cause);
   };
@@ -372,6 +363,30 @@ async function requireMinedStatus<TReceipt extends ReceiptLike>(
     }
   }
   return validate(transaction.hash, receipt, waitError);
+}
+
+async function requireMinedStatus<TReceipt extends ReceiptLike>(
+  label: string,
+  expectedStatus: 0 | 1,
+  operation: () => Promise<TransactionLike<TReceipt>>,
+  getReceipt: (transactionHash: string) => Promise<TReceipt | null>,
+  onBroadcast?: (transactionHash: string) => void | Promise<void>,
+  onSubmission?: () => void | Promise<void>,
+): Promise<Readonly<{ transactionHash: string; receipt: TReceipt }>> {
+  const evidence = await requireMinedReceipt(
+    label,
+    operation,
+    getReceipt,
+    onBroadcast,
+    onSubmission,
+  );
+  if (evidence.receipt.status === expectedStatus) return evidence;
+  throw new MinedTransactionStatusError(
+    label,
+    evidence.transactionHash,
+    expectedStatus,
+    evidence.receipt.status as 0 | 1,
+  );
 }
 
 export async function requireMinedSuccess<TReceipt extends ReceiptLike>(

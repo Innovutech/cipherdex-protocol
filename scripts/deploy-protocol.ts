@@ -1,6 +1,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { BaseContract, ContractFactory, ContractTransactionResponse } from "ethers";
+import {
+  BaseContract,
+  ContractFactory,
+  ContractTransactionResponse,
+  type Provider,
+} from "ethers";
 import { artifacts, ethers } from "../hardhat/runtime.js";
 import {
   DeploymentRecordWriter,
@@ -14,7 +19,7 @@ import {
 } from "./runtime-artifact";
 import {
   MinedTransactionStatusError,
-  requireMinedSuccess,
+  requireMinedReceipt,
   safeTestnetErrorSummary,
   transactionHashFromError,
   UnknownBroadcastOutcomeError,
@@ -36,6 +41,10 @@ import {
   CastLedgerWallet,
   type ReviewedCastLedgerConfiguration,
 } from "./cast-ledger-wallet";
+import {
+  FUNDED_TRANSACTION_MINIMUM_CONFIRMATIONS,
+  inspectFundedTransaction,
+} from "./funded-rpc-confirmation.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -56,7 +65,7 @@ const DEPLOYMENT_PROFILES = Object.freeze({
   }),
 });
 
-const TESTNET_DEPLOY_GAS_LIMITS = {
+export const TESTNET_DEPLOY_GAS_LIMITS = {
   feeVault: 2_500_000n,
   privateLpTokenFactory: 8_000_000n,
   confidentialPoolDeployer: 5_000_000n,
@@ -80,7 +89,10 @@ export const DEPLOYMENT_MAX_GAS_UNITS =
   TESTNET_DEPLOY_GAS_LIMITS.vaultBinding +
   3n * TESTNET_DEPLOY_GAS_LIMITS.stackBinding;
 
-type DeploymentResult<T extends BaseContract = BaseContract> = {
+const DEPLOYMENT_CONFIRMATION_TIMEOUT_MS = 300_000;
+const DEPLOYMENT_CONFIRMATION_POLL_MS = 2_000;
+
+export type DeploymentResult<T extends BaseContract = BaseContract> = {
   contract: T;
   address: string;
   deploymentTx: string | null;
@@ -175,7 +187,7 @@ type NativeRouterHandle = VersionedFactoryBoundHandle & {
   wrappedNative(): Promise<string>;
 };
 
-async function deployAndReport<T extends BaseContract>(
+export async function deployAndReport<T extends BaseContract>(
   label: string,
   factory: ContractFactory,
   recoveryJournal: FundedRecoveryJournal,
@@ -247,7 +259,71 @@ async function deployAndReport<T extends BaseContract>(
   }
 }
 
-async function submitDeploymentTransaction(
+export async function waitForCanonicalDeploymentConfirmation(
+  label: string,
+  transactionHash: string,
+  expected: Readonly<{ chainId: number; signer: string }>,
+  provider: Provider,
+  options: Readonly<{
+    minimumConfirmations?: number;
+    timeoutMs?: number;
+    pollMs?: number;
+  }> = {},
+): Promise<Readonly<{ status: 0 | 1; blockNumber: number }>> {
+  const transaction = await provider.getTransaction(transactionHash);
+  if (!transaction) {
+    throw new UnknownBroadcastOutcomeError(
+      label,
+      transactionHash,
+      new Error("deployment transaction disappeared before canonical confirmation"),
+    );
+  }
+  const timeoutMs = options.timeoutMs ?? DEPLOYMENT_CONFIRMATION_TIMEOUT_MS;
+  const pollMs = options.pollMs ?? DEPLOYMENT_CONFIRMATION_POLL_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    !Number.isSafeInteger(pollMs) ||
+    pollMs < 0
+  ) throw new Error("deployment confirmation timing is invalid");
+  const deadline = Date.now() + timeoutMs;
+  const identity = {
+    chainId: expected.chainId,
+    signer: expected.signer,
+    nonce: transaction.nonce,
+    hash: transactionHash,
+  };
+
+  while (true) {
+    let inspection;
+    try {
+      inspection = await inspectFundedTransaction(provider, identity, {
+        minimumConfirmations:
+          options.minimumConfirmations ?? FUNDED_TRANSACTION_MINIMUM_CONFIRMATIONS,
+      });
+    } catch (error) {
+      throw new UnknownBroadcastOutcomeError(label, transactionHash, error);
+    }
+    if (inspection.state === "confirmed") {
+      return Object.freeze({
+        status: inspection.status as 0 | 1,
+        blockNumber: inspection.blockNumber,
+      });
+    }
+    if (Date.now() >= deadline) {
+      throw new UnknownBroadcastOutcomeError(
+        label,
+        transactionHash,
+        new Error(
+          `deployment transaction remained ${inspection.state} before confirmation timeout`,
+        ),
+      );
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
+export async function submitDeploymentTransaction(
   label: string,
   recoveryJournal: FundedRecoveryJournal,
   operation: () => Promise<ContractTransactionResponse>,
@@ -256,11 +332,49 @@ async function submitDeploymentTransaction(
     const evidence = await withFundedTransactionEvidence(
       label,
       recoveryJournal,
-      () => requireMinedSuccess(
-        label,
-        operation,
-        (hash) => ethers.provider.getTransactionReceipt(hash),
-      ),
+      async () => {
+        const mined = await requireMinedReceipt(
+          label,
+          operation,
+          (hash) => ethers.provider.getTransactionReceipt(hash),
+        );
+        const confirmation = await waitForCanonicalDeploymentConfirmation(
+          label,
+          mined.transactionHash,
+          {
+            chainId: recoveryJournal.identity.chainId,
+            signer: recoveryJournal.identity.owner,
+          },
+          ethers.provider,
+        );
+        const receipt = await ethers.provider.getTransactionReceipt(
+          mined.transactionHash,
+        );
+        if (
+          !receipt ||
+          receipt.hash.toLowerCase() !== mined.transactionHash.toLowerCase() ||
+          receipt.blockNumber !== confirmation.blockNumber ||
+          receipt.status !== confirmation.status
+        ) {
+          throw new UnknownBroadcastOutcomeError(
+            label,
+            mined.transactionHash,
+            new Error("canonical deployment receipt changed after confirmation"),
+          );
+        }
+        if (confirmation.status !== 1) {
+          throw new MinedTransactionStatusError(
+            label,
+            mined.transactionHash,
+            1,
+            confirmation.status,
+          );
+        }
+        return Object.freeze({
+          transactionHash: mined.transactionHash,
+          receipt,
+        });
+      },
     );
     recoveryJournal.recordTransaction(
       evidence.transactionHash,

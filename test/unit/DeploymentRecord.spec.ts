@@ -84,6 +84,24 @@ describe("deployment record persistence", function () {
     }
   });
 
+  it("supports isolated public replacement record namespaces", function () {
+    for (const slug of ["coti-testnet-public", "coti-mainnet-public"]) {
+      const output = `deployments/${slug}-${sourceCommit}.json`;
+      expect(() => resolveNewDeploymentRecordPath(
+        output,
+        sourceCommit,
+        process.cwd(),
+        slug,
+      )).not.to.throw();
+      expect(() => resolveNewDeploymentRecordPath(
+        `deployments/coti-testnet-${sourceCommit}.json`,
+        sourceCommit,
+        process.cwd(),
+        slug,
+      )).to.throw(`${slug}-<commit>`);
+    }
+  });
+
   it("durably replaces partial checkpoints with terminal evidence", async function () {
     const cwd = await mkdtemp(join(tmpdir(), "cipherdex-deployment-journal-"));
     const output = `deployments/coti-testnet-${sourceCommit}.json`;

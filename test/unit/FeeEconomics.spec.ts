@@ -349,6 +349,38 @@ describe("CipherDEX v1 fee economics", function () {
     expect(await token1.balanceOf(poolAddress)).to.equal(effective1 + 10n);
   });
 
+  it("keeps donated surplus separate from LP reserves and accrued protocol fees", async function () {
+    const { trader, outsider, vault, token0, pool } = await deployPublicFeeFixture();
+    const poolAddress = await pool.getAddress();
+    const amountIn = 10_000n;
+    await pool.connect(trader).swapExactInput(
+      amountIn,
+      await pool.quoteExactInput(amountIn, true),
+      true,
+      DEADLINE,
+    );
+    const claim = await pool.protocolFees0();
+    const reservesBefore = await pool.effectiveReserves();
+    const quoteBefore = await pool.quoteExactInput(1_000n, true);
+    const donation = 777n;
+    await token0.mint(outsider.address, donation);
+    await token0.connect(outsider).transfer(poolAddress, donation);
+
+    expect(await pool.protocolFees0()).to.equal(claim);
+    expect(await pool.effectiveReserves()).to.deep.equal(reservesBefore);
+    expect(await pool.surplusBalances()).to.deep.equal([donation, 0n]);
+    expect(await pool.quoteExactInput(1_000n, true)).to.equal(quoteBefore);
+
+    await pool.connect(outsider).sweepSurplus(true, false);
+    expect(await pool.protocolFees0()).to.equal(claim);
+    expect(await pool.effectiveReserves()).to.deep.equal(reservesBefore);
+    expect(await pool.surplusBalances()).to.deep.equal([0n, 0n]);
+    expect(await token0.balanceOf(await vault.getAddress())).to.equal(donation);
+
+    await pool.collectProtocolFees(true, false);
+    expect(await token0.balanceOf(await vault.getAddress())).to.equal(donation + claim);
+  });
+
   it("rounds the total fee up through net-input flooring and the protocol share down", async function () {
     const { trader, pool } = await deployPublicFeeFixture();
 

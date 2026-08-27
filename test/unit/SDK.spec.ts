@@ -152,6 +152,10 @@ describe("stable SDK surface", function () {
     expect(publicPool.getFunction("PRIVACY_MODE")).to.not.equal(null);
     expect(publicPool.getFunction("effectiveReserves")).to.not.equal(null);
     expect(publicPool.getFunction("collectProtocolFees")).to.not.equal(null);
+    expect(publicPool.getFunction("surplusBalances")).to.not.equal(null);
+    expect(publicPool.getFunction("sweepSurplus")).to.not.equal(null);
+    expect(publicPool.getFunction("sync")).to.equal(null);
+    expect(publicPool.getEvent("ReserveLossReconciled")).to.not.equal(null);
     expect(publicFactory.getFunction("createPool")).to.not.equal(null);
     expect(publicFactory.getFunction("PRIVACY_MODE")).to.not.equal(null);
     expect(publicQuoter.getFunction("quoteExactInput")).to.not.equal(null);

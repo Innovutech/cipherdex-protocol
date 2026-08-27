@@ -379,6 +379,86 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     expect(reserve1).to.equal(10_000n);
   });
 
+  it("keeps initialized donations out of reserves and sweeps them only to the fixed vault", async function () {
+    const [owner, outsider] = await ethers.getSigners();
+    const tokenFactory = await ethers.getContractFactory("MockERC20");
+    const tokenA = await tokenFactory.deploy("Token A", "TKA", 18);
+    const tokenB = await tokenFactory.deploy("Token B", "TKB", 18);
+    await Promise.all([tokenA.waitForDeployment(), tokenB.waitForDeployment()]);
+    const { vault, factory } = await deployPublicFactory();
+    const pool = await createPublicPool(
+      factory,
+      await tokenA.getAddress(),
+      await tokenB.getAddress(),
+      18,
+      18,
+      30,
+    );
+    const token0IsA = (await pool.token0()).toLowerCase() ===
+      (await tokenA.getAddress()).toLowerCase();
+    const token0 = token0IsA ? tokenA : tokenB;
+    const token1 = token0IsA ? tokenB : tokenA;
+    const initial = 10_000n;
+    const surplus0 = 123n;
+    const surplus1 = 456n;
+
+    await token0.mint(owner.address, initial);
+    await token1.mint(owner.address, initial);
+    await token0.approve(await pool.getAddress(), initial);
+    await token1.approve(await pool.getAddress(), initial);
+    await pool.addLiquidity(initial, initial, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+    const quote0 = await pool.quoteExactInput(1_000n, true);
+    const quote1 = await pool.quoteExactInput(1_000n, false);
+    const shares = await pool.totalShares();
+
+    await token0.mint(outsider.address, surplus0);
+    await token1.mint(outsider.address, surplus1);
+    await token0.connect(outsider).transfer(await pool.getAddress(), surplus0);
+    await token1.connect(outsider).transfer(await pool.getAddress(), surplus1);
+
+    expect(await pool.effectiveReserves()).to.deep.equal([initial, initial]);
+    expect(await pool.surplusBalances()).to.deep.equal([surplus0, surplus1]);
+    expect(await pool.quoteExactInput(1_000n, true)).to.equal(quote0);
+    expect(await pool.quoteExactInput(1_000n, false)).to.equal(quote1);
+    expect(await pool.totalShares()).to.equal(shares);
+    await expect(pool.sweepSurplus(false, false))
+      .to.be.revertedWithCustomError(pool, "NoSurplus");
+
+    const partialShares = shares / 2n;
+    await pool.removeLiquidity(partialShares, 0n, 0n, MAX_DEADLINE);
+    expect(await pool.surplusBalances()).to.deep.equal([surplus0, surplus1]);
+    await pool.removeLiquidity(
+      await pool.shares(owner.address),
+      0n,
+      0n,
+      MAX_DEADLINE,
+    );
+    expect(await pool.initialized()).to.equal(false);
+    expect(await pool.effectiveReserves()).to.deep.equal([0n, 0n]);
+    expect(await pool.surplusBalances()).to.deep.equal([surplus0, surplus1]);
+
+    const sweep = await pool.connect(outsider).sweepSurplus(true, true);
+    await expect(sweep).to.emit(pool, "UnmanagedBalanceSwept").withArgs(
+      await token0.getAddress(),
+      await vault.getAddress(),
+      surplus0,
+      surplus0,
+    );
+    await expect(sweep).to.emit(pool, "UnmanagedBalanceSwept").withArgs(
+      await token1.getAddress(),
+      await vault.getAddress(),
+      surplus1,
+      surplus1,
+    );
+
+    expect(await pool.effectiveReserves()).to.deep.equal([0n, 0n]);
+    expect(await pool.surplusBalances()).to.deep.equal([0n, 0n]);
+    expect(await token0.balanceOf(await vault.getAddress())).to.equal(surplus0);
+    expect(await token1.balanceOf(await vault.getAddress())).to.equal(surplus1);
+    await expect(pool.sweepSurplus(true, true))
+      .to.be.revertedWithCustomError(pool, "NoSurplus");
+  });
+
   it("initializes after sweeping sender-taxed unmanaged dust at measured vault credit", async function () {
     const [owner] = await ethers.getSigners();
     const taxed = await (
@@ -418,7 +498,67 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     expect(await vault.publicFees(await taxed.getAddress())).to.equal(50n);
   });
 
-  it("reconciles an externally burned protocol claim without locking the paired reserve", async function () {
+  it("absorbs a small external balance loss entirely from the protocol claim", async function () {
+    const [owner, trader] = await ethers.getSigners();
+    const burnable = await (
+      await ethers.getContractFactory("ExternallyBurnableERC20")
+    ).deploy("Burnable Token", "BURN", 18);
+    const paired = await (
+      await ethers.getContractFactory("MockERC20")
+    ).deploy("Paired Token", "PAIR", 18);
+    await Promise.all([burnable.waitForDeployment(), paired.waitForDeployment()]);
+    const { vault, factory } = await deployPublicFactory();
+    const pool = await createPublicPool(
+      factory,
+      await burnable.getAddress(),
+      await paired.getAddress(),
+      18,
+      18,
+      30,
+    );
+    const poolAddress = await pool.getAddress();
+    const burnableIsToken0 = (await pool.token0()).toLowerCase() ===
+      (await burnable.getAddress()).toLowerCase();
+    const token0 = burnableIsToken0 ? burnable : paired;
+    const token1 = burnableIsToken0 ? paired : burnable;
+
+    await token0.mint(owner.address, 10_000n);
+    await token1.mint(owner.address, 10_000n);
+    await burnable.mint(trader.address, 10_000n);
+    await token0.approve(poolAddress, 10_000n);
+    await token1.approve(poolAddress, 10_000n);
+    await burnable.connect(trader).approve(poolAddress, 10_000n);
+    await pool.addLiquidity(10_000n, 10_000n, 1n, 0n, ethers.MaxUint256, MAX_DEADLINE);
+    await pool.connect(trader).swapExactInput(
+      10_000n,
+      0n,
+      burnableIsToken0,
+      MAX_DEADLINE,
+    );
+
+    const claim = burnableIsToken0
+      ? await pool.protocolFees0()
+      : await pool.protocolFees1();
+    const reservesBefore = await pool.effectiveReserves();
+    expect(claim).to.be.greaterThan(1n);
+    await burnable.burnFrom(poolAddress, 1n);
+
+    const collection = await pool.collectProtocolFees(
+      burnableIsToken0,
+      !burnableIsToken0,
+    );
+    await expect(collection).to.emit(pool, "ProtocolFeeLossReconciled").withArgs(
+      await burnable.getAddress(),
+      claim,
+      claim - 1n,
+      1n,
+    );
+    await expect(collection).not.to.emit(pool, "ReserveLossReconciled");
+    expect(await pool.effectiveReserves()).to.deep.equal(reservesBefore);
+    expect(await vault.publicFees(await burnable.getAddress())).to.equal(claim - 1n);
+  });
+
+  it("charges external balance loss to protocol fees before LP reserves", async function () {
     const [owner, trader] = await ethers.getSigners();
     const burnable = await (
       await ethers.getContractFactory("ExternallyBurnableERC20")
@@ -451,27 +591,37 @@ describe("PublicCPMM adversarial and differential coverage", function () {
 
     const previousClaim = await pool.protocolFees0();
     expect(previousClaim).to.be.greaterThan(1n);
+    const previousReserve = (await pool.effectiveReserves())[0];
     const poolAddress = await pool.getAddress();
     const rawBalance = await burnable.balanceOf(poolAddress);
     const remainingClaim = previousClaim - 1n;
     await burnable.burnFrom(poolAddress, rawBalance - remainingClaim);
 
+    const burnableBefore = await burnable.balanceOf(owner.address);
     const pairedBefore = await paired.balanceOf(owner.address);
     const pairedReserve = (await pool.effectiveReserves())[1];
-    await expect(
-      pool.removeLiquidity(await pool.totalShares(), 0n, 0n, MAX_DEADLINE),
-    ).to.emit(pool, "ProtocolFeeLossReconciled").withArgs(
+    const removal = await pool.removeLiquidity(
+      await pool.totalShares(),
+      0n,
+      0n,
+      MAX_DEADLINE,
+    );
+    await expect(removal).to.emit(pool, "ProtocolFeeLossReconciled").withArgs(
+      await burnable.getAddress(), previousClaim, 0n, previousClaim,
+    );
+    await expect(removal).to.emit(pool, "ReserveLossReconciled").withArgs(
       await burnable.getAddress(),
-      previousClaim,
+      previousReserve,
       remainingClaim,
-      1n,
+      previousReserve - remainingClaim,
     );
 
+    expect(await burnable.balanceOf(owner.address)).to.equal(burnableBefore + remainingClaim);
     expect(await paired.balanceOf(owner.address)).to.equal(pairedBefore + pairedReserve);
     expect(await pool.totalShares()).to.equal(0n);
     expect(await pool.initialized()).to.equal(false);
-    expect(await pool.protocolFees0()).to.equal(remainingClaim);
-    expect(await burnable.balanceOf(poolAddress)).to.equal(remainingClaim);
+    expect(await pool.protocolFees0()).to.equal(0n);
+    expect(await burnable.balanceOf(poolAddress)).to.equal(0n);
   });
 
   it("lets LPs burn stranded shares after hostile tokens destroy both reserves", async function () {
@@ -590,7 +740,7 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     expect(await vault.publicFees(await taxed.getAddress())).to.equal(expectedReceived);
   });
 
-  it("collects a selected fee side without reading the unselected token", async function () {
+  it("collects selected fee and surplus sides without reading the unselected token", async function () {
     const [owner, trader] = await ethers.getSigners();
     const healthy = await (await ethers.getContractFactory("MockERC20")).deploy(
       "Healthy Token",
@@ -638,5 +788,17 @@ describe("PublicCPMM adversarial and differential coverage", function () {
     await expect(pool.collectProtocolFees(healthyIsToken0, !healthyIsToken0))
       .to.emit(pool, "ProtocolFeeCollected")
       .withArgs(await healthy.getAddress(), await vault.getAddress(), accrued, accrued);
+
+    const donation = 777n;
+    await healthy.mint(trader.address, donation);
+    await healthy.connect(trader).transfer(poolAddress, donation);
+    await expect(pool.sweepSurplus(healthyIsToken0, !healthyIsToken0))
+      .to.emit(pool, "UnmanagedBalanceSwept")
+      .withArgs(
+        await healthy.getAddress(),
+        await vault.getAddress(),
+        donation,
+        donation,
+      );
   });
 });

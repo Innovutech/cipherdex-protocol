@@ -137,17 +137,49 @@ describe("funded recovery journal", function () {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it("accepts only canonical COTI testnet and mainnet deployment bindings", function () {
+  it("accepts only canonical COTI full-stack and public deployment bindings", function () {
     for (const network of ["testnet", "mainnet"]) {
-      expect(validateFundedDeploymentBinding({
-        ...DEPLOYMENT,
-        recordPath: `deployments/coti-${network}-${COMMIT}.json`,
-      }).recordPath).to.equal(`deployments/coti-${network}-${COMMIT}.json`);
+      for (const scope of ["", "-public"]) {
+        expect(validateFundedDeploymentBinding({
+          ...DEPLOYMENT,
+          recordPath: `deployments/coti-${network}${scope}-${COMMIT}.json`,
+        }).recordPath).to.equal(`deployments/coti-${network}${scope}-${COMMIT}.json`);
+      }
     }
     expect(() => validateFundedDeploymentBinding({
       ...DEPLOYMENT,
       recordPath: `deployments/coti-staging-${COMMIT}.json`,
     })).to.throw("invalid provenance");
+  });
+
+  it("keeps public testnet and mainnet deployment journals in distinct files", function () {
+    const common = {
+      sourceCommit: COMMIT,
+      owner: OWNER,
+      directory,
+      recoveryKey: Buffer.from("ef".repeat(32), "hex"),
+    };
+    const testnet = FundedRecoveryJournal.open({
+      ...common,
+      runner: "public-deployment-testnet",
+      chainId: 7_082_400,
+      deployment: {
+        ...DEPLOYMENT,
+        recordPath: `deployments/coti-testnet-public-${COMMIT}.json`,
+        recordSha256: "0".repeat(64),
+      },
+    });
+    const mainnet = FundedRecoveryJournal.open({
+      ...common,
+      runner: "public-deployment-mainnet",
+      chainId: 2_632_500,
+      deployment: {
+        ...DEPLOYMENT,
+        recordPath: `deployments/coti-mainnet-public-${COMMIT}.json`,
+        recordSha256: "0".repeat(64),
+      },
+    });
+    expect(testnet.path).not.to.equal(mainnet.path);
   });
 
   it("derives a domain-bound recovery key without a signer private key", function () {

@@ -45,7 +45,9 @@ Both modes use the immutable CipherDEX v1 fee policy. The advertised fee is
 charged once from the swap input, one sixth of that fee accrues to the protocol,
 and the remainder grows LP value. There is no extra native-COTI swap payment.
 Protocol balances are excluded from effective reserves and collect only to a
-fixed fee vault. Confidential fees remain encrypted and are collected in
+fixed fee vault. Public pools also keep LP reserves as explicit state, leaving
+direct transfers and positive rebases as unpriced surplus collectible only to
+that vault. Confidential fees remain encrypted and are collected in
 pool time/count batches, then combined by token across canonical pools in fixed
 daily vault epochs. Full LP exits deposit sub-threshold terminal fee batches
 before clearing pool state. See

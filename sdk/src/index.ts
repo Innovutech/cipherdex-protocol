@@ -503,7 +503,9 @@ export const PUBLIC_CPMM_ABI = [
   "function removeLiquidity(uint256,uint256,uint256,uint64) returns (uint256,uint256)",
   "function removeLiquidityTo(address,uint256,uint256,uint256,uint64) returns (uint256,uint256)",
   "function collectProtocolFees(bool,bool) returns (uint256,uint256)",
+  "function sweepSurplus(bool,bool) returns (uint256,uint256)",
   "function effectiveReserves() view returns (uint256,uint256)",
+  "function surplusBalances() view returns (uint256,uint256)",
   "function lockShares(uint256,uint64,bool,uint64) returns (bytes32)",
   "function unlockShares(bytes32)",
   "function lockInfo(bytes32) view returns (address,uint64,bool,bool,uint256)",
@@ -516,6 +518,7 @@ export const PUBLIC_CPMM_ABI = [
   "event ProtocolFeeCollected(address indexed token,address indexed feeVault,uint256 debitedAmount,uint256 receivedAmount)",
   "event UnmanagedBalanceSwept(address indexed token,address indexed feeVault,uint256 debitedAmount,uint256 receivedAmount)",
   "event ProtocolFeeLossReconciled(address indexed token,uint256 previousClaim,uint256 remainingClaim,uint256 loss)",
+  "event ReserveLossReconciled(address indexed token,uint256 previousReserve,uint256 remainingReserve,uint256 loss)",
 ] as const;
 
 export const PUBLIC_CPMM_FACTORY_ABI = [

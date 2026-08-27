@@ -27,7 +27,7 @@ const requiredNonReentrant = new Map([
     "contracts/ConfidentialLaunchpadMigrator.sol",
     ["migrate", "migrateWithDisposition"],
   ],
-  ["contracts/PublicCPMM.sol", ["swapExactInput", "addLiquidity", "addLiquidityFor", "removeLiquidity", "removeLiquidityTo", "collectProtocolFees", "lockShares", "unlockShares"]],
+  ["contracts/PublicCPMM.sol", ["swapExactInput", "addLiquidity", "addLiquidityFor", "removeLiquidity", "removeLiquidityTo", "collectProtocolFees", "sweepSurplus", "lockShares", "unlockShares"]],
   [
     "contracts/CipherDEXFeeVault.sol",
     ["depositPublicFees", "depositConfidentialFees", "sweepPublicToken", "sweepConfidentialToken"],
@@ -82,6 +82,12 @@ const publicLiquidityRouterSource = maskSourceCommentsAndLiterals(
 );
 const publicNativeRouterSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicCPMMNativeRouter.sol", "utf8"),
+);
+const publicDeploymentRawSource = await readFile("scripts/deploy-public-stack.ts", "utf8");
+const publicDeploymentSource = maskSourceCommentsAndLiterals(publicDeploymentRawSource);
+const publicDeploymentAst = parseTypeScript(
+  publicDeploymentRawSource,
+  "scripts/deploy-public-stack.ts",
 );
 const wrappedNativeSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/WrappedNativeToken.sol", "utf8"),
@@ -357,6 +363,39 @@ for (const functionName of ["quoteExactInput", "swapExactInput"]) {
     "if (!initialized) revert PoolNotInitialized();",
   )) {
     throw new Error(`PublicCPMM ${functionName} can use unmanaged balances while uninitialized`);
+  }
+}
+
+if (/\bfunction\s+sync\s*\(/.test(publicSource)) {
+  throw new Error("PublicCPMM exposes an upward reserve synchronization path");
+}
+const publicEffectiveReservesBody = functionBody(publicSource, "_effectiveReserves");
+for (const fragment of ["reserve0State", "reserve1State", "Math.min("]) {
+  if (!publicEffectiveReservesBody.includes(fragment)) {
+    throw new Error(`PublicCPMM stored-reserve view omits ${fragment}`);
+  }
+}
+for (const fragment of ["balanceAboveReserve - claim", "_depositPublicOwnedBalance(", "_requireBacked("]) {
+  if (!publicSource.includes(fragment)) {
+    throw new Error(`PublicCPMM surplus boundary omits ${fragment}`);
+  }
+}
+const publicSwapBody = functionBody(publicSource, "swapExactInput");
+for (const fragment of ["_reconcileProtocolFeeLosses()", "reserve0State =", "reserve1State =", "_requireBacked(true)", "_requireBacked(false)"]) {
+  if (!publicSwapBody.includes(fragment)) {
+    throw new Error(`PublicCPMM swap reserve transition omits ${fragment}`);
+  }
+}
+for (const [functionName, requiredFragments] of [
+  ["_addLiquidity", ["cache.before0 = reserve0State", "cache.before1 = reserve1State", "reserve0State =", "reserve1State =", "_requireBacked(true)", "_requireBacked(false)"]],
+  ["_removeLiquidity", ["reserve0State = reserve0 - nominalAmount0", "reserve1State = reserve1 - nominalAmount1", "_requireBacked(true)", "_requireBacked(false)"]],
+  ["sweepSurplus", ["_reconcileAccountingLoss(true)", "_reconcileAccountingLoss(false)", "_sweepSurplus("]],
+]) {
+  const body = functionBody(publicSource, functionName);
+  for (const fragment of requiredFragments) {
+    if (!body.includes(fragment)) {
+      throw new Error(`PublicCPMM ${functionName} boundary omits ${fragment}`);
+    }
   }
 }
 
@@ -876,6 +915,9 @@ for (const script of [
   "deploy:testnet",
   "deploy:mainnet",
   "mainnet:preflight",
+  "deploy:public:testnet",
+  "deploy:public:mainnet",
+  "preflight:public:mainnet",
   "secure:funded-env",
 ]) {
   if (packageManifest.scripts?.[script] !== undefined) {
@@ -1280,6 +1322,47 @@ for (const fragment of [
 ]) {
   if (!deploymentSource.includes(fragment)) {
     throw new Error("Protocol deployment omits public native or LP-token binding verification");
+  }
+}
+
+for (const contractName of [
+  "CipherDEXFeeVault",
+  "PublicCPMMFactory",
+  "PublicCPMMQuoter",
+  "PublicCPMMRouter",
+  "PublicCPMMLiquidityRouter",
+  "PublicCPMMNativeRouter",
+]) {
+  if (!hasStringCall(publicDeploymentAst, "getContractFactory", contractName)) {
+    throw new Error(`Public replacement deployment omits ${contractName}`);
+  }
+}
+for (const forbiddenContract of [
+  "ConfidentialCPMMFactory",
+  "ConfidentialBestExecutionRouter",
+  "ConfidentialLaunchInitializationStrategy",
+]) {
+  if (hasStringCall(publicDeploymentAst, "getContractFactory", forbiddenContract)) {
+    throw new Error(`Public replacement deployment unexpectedly deploys ${forbiddenContract}`);
+  }
+}
+for (const fragment of [
+  "requireCleanSourceCommit()",
+  "CIPHERDEX_MAINNET_APPROVED_COMMIT",
+  "CIPHERDEX_DEPLOYMENT_RECOVERY_KEY",
+  "CIPHERDEX_EXISTING_WRAPPED_NATIVE",
+  "reconcileTransactions(ethers.provider)",
+  "feeVault.contract.setPublicFactory(",
+  "verifyDeployedRuntimeArtifactWithProvenance(",
+  "publicFactory.contract.lpTokenFactory()",
+  "nativeRouter.contract.publicRouter()",
+  "nativeRouter.contract.publicLiquidityRouter()",
+  "nativeRouter.contract.wrappedNative()",
+  "confidentialFactory !== ethers.ZeroAddress",
+  "await recordWriter.close()",
+]) {
+  if (!publicDeploymentSource.includes(fragment)) {
+    throw new Error(`Public replacement deployment omits boundary: ${fragment}`);
   }
 }
 
@@ -1756,6 +1839,50 @@ for (const required of [
   if (!deploymentRawSource.includes(required)) {
     throw new Error(`Testnet deployment bypasses funded signing boundary: ${required}`);
   }
+}
+for (const required of [
+  "waitForCanonicalDeploymentConfirmation(",
+  "FUNDED_TRANSACTION_MINIMUM_CONFIRMATIONS",
+  "inspectFundedTransaction(provider, identity",
+  "requireMinedReceipt(",
+]) {
+  if (!deploymentRawSource.includes(required)) {
+    throw new Error(`Deployment confirmation omits required control: ${required}`);
+  }
+}
+const deploymentSubmissionStart = deploymentRawSource.indexOf(
+  "export async function submitDeploymentTransaction(",
+);
+const deploymentSubmissionEnd = deploymentRawSource.indexOf(
+  "export async function requireCleanSourceCommit(",
+  deploymentSubmissionStart,
+);
+const deploymentSubmissionSource = deploymentRawSource.slice(
+  deploymentSubmissionStart,
+  deploymentSubmissionEnd,
+);
+const canonicalWaitIndex = deploymentSubmissionSource.indexOf(
+  "await waitForCanonicalDeploymentConfirmation(",
+);
+const canonicalStatusIndex = deploymentSubmissionSource.indexOf(
+  "if (confirmation.status !== 1)",
+);
+const terminalRecordIndex = deploymentSubmissionSource.indexOf(
+  'recoveryJournal.recordTransaction(\n      evidence.transactionHash,\n      "mined-success"',
+);
+if (
+  deploymentSubmissionStart < 0 ||
+  deploymentSubmissionEnd < 0 ||
+  canonicalWaitIndex < 0 ||
+  canonicalStatusIndex < 0 ||
+  terminalRecordIndex < 0 ||
+  canonicalWaitIndex >= canonicalStatusIndex ||
+  canonicalStatusIndex >= terminalRecordIndex ||
+  deploymentSubmissionSource.includes("requireMinedSuccess(")
+) {
+  throw new Error(
+    "Deployment transaction can terminalize before canonical-depth confirmation",
+  );
 }
 const feasibilityRunnerSource = await readFile(
   "scripts/testnet-best-execution-feasibility.ts",
@@ -2330,8 +2457,13 @@ for (const file of [
   if (/\.wait\s*\(|\.waitForDeployment\s*\(/.test(source)) {
     throw new Error(`${file}: funded broadcast bypasses mined-success reconciliation`);
   }
-  if (!source.includes("requireMinedSuccess")) {
-    throw new Error(`${file}: funded broadcast has no mined-success reconciliation helper`);
+  const hasReviewedMinedReconciliation = file === "scripts/deploy-protocol.ts"
+    ? source.includes("requireMinedReceipt") &&
+      source.includes("waitForCanonicalDeploymentConfirmation") &&
+      source.includes("confirmation.status")
+    : source.includes("requireMinedSuccess");
+  if (!hasReviewedMinedReconciliation) {
+    throw new Error(`${file}: funded broadcast has no reviewed mined-status reconciliation`);
   }
 }
 

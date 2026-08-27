@@ -48,6 +48,10 @@
   pool balance deltas rather than requiring the raw pool balance to equal the
   accounting deposit;
 - unmanaged public-token donations permanently blocking initialization;
+- direct public-token transfers or positive rebases changing an initialized
+  pool's price, proportional-liquidity ratio, LP shares or withdrawable reserves;
+- permissionless surplus collection redirecting funds anywhere except the fixed
+  protocol vault, or debiting stored LP reserves and accrued protocol fees;
 - public swap/router/withdrawal minimums being satisfied by a nominal transfer
   while a taxed recipient receives less;
 - untrusted confidential discovery metadata selecting a non-factory pool;

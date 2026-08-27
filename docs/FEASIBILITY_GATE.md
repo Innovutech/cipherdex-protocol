@@ -64,9 +64,11 @@ the effective reserve with the encrypted input less the encrypted protocol fee;
 the protocol share enters a separate encrypted per-token accumulator. Full LP
 exits cannot withdraw that accumulator.
 
-Public pools use ordinary ERC-20 balances with explicit per-token protocol-fee
-counters subtracted from effective reserves. Public and confidential pools share
-the immutable fee tiers and split documented in `FEE_ECONOMICS.md`.
+Public pools use explicit stored LP reserves and separate per-token protocol-fee
+counters. Ordinary ERC-20 balances back both ledgers, while any excess remains
+unpriced surplus collectible only to the immutable fee vault. Public and
+confidential pools share the immutable fee tiers and split documented in
+`FEE_ECONOMICS.md`.
 
 ## Hard privacy limits
 

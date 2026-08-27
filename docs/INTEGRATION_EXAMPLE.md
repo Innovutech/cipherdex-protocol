@@ -41,6 +41,13 @@ successful transaction, treat `parsePublicLiquidityRoutedResult` as
 authoritative for the actual pool, creation state, amounts used, minted shares
 and refunds. A local preview can become stale before inclusion.
 
+Use `effectiveReserves()` for public quotes and proportional-liquidity previews.
+Do not derive reserves from ERC-20 `balanceOf(pool)`: any balance above stored
+reserves plus protocol fees is unpriced surplus. `surplusBalances()` reports that
+excess, and `sweepSurplus(token0Side, token1Side)` can move selected surplus only
+to the pool's immutable fee vault. A direct transfer or positive rebase must not
+be presented as liquidity, TVL, or a price change.
+
 Each pool exposes `lpToken()`. Authenticate it against the public factory's
 `lpTokenFactory()` and the helper's exact `(pool, lpToken, pool)` issuance
 attestation before presenting it as a CipherDEX position. LP removal can use a

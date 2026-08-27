@@ -39,6 +39,10 @@ contract PublicCPMM is CipherDEXFeePolicy {
     uint256 public protocolFees1;
     uint256 public nextLockNonce;
 
+    // LP-owned reserves are explicit state. Raw balance excess is never priced.
+    uint256 private reserve0State;
+    uint256 private reserve1State;
+
     struct LockRecord {
         address owner;
         uint64 unlockTime;
@@ -84,6 +88,7 @@ contract PublicCPMM is CipherDEXFeePolicy {
     error InvalidPriceBounds();
     error ProtocolFeeAccountingMismatch();
     error NoProtocolFees();
+    error NoSurplus();
     error ResidualAllowance();
     error InvalidLiquidityRecipient();
 
@@ -130,6 +135,12 @@ contract PublicCPMM is CipherDEXFeePolicy {
         address indexed token,
         uint256 previousClaim,
         uint256 remainingClaim,
+        uint256 loss
+    );
+    event ReserveLossReconciled(
+        address indexed token,
+        uint256 previousReserve,
+        uint256 remainingReserve,
         uint256 loss
     );
 
@@ -227,11 +238,17 @@ contract PublicCPMM is CipherDEXFeePolicy {
         uint256 protocolFee = _protocolFeeFromTotal(received - netAmountIn);
         if (zeroForOne) {
             protocolFees0 += protocolFee;
+            reserve0State = reserveIn + received - protocolFee;
+            reserve1State = reserveOut - quotedAmountOut;
         } else {
             protocolFees1 += protocolFee;
+            reserve1State = reserveIn + received - protocolFee;
+            reserve0State = reserveOut - quotedAmountOut;
         }
         amountOut = _transferOut(outputToken, msg.sender, quotedAmountOut);
         if (amountOut < minAmountOut) revert SlippageExceeded();
+        _requireBacked(true);
+        _requireBacked(false);
         if (protocolFee != 0) emit ProtocolFeeAccrued(address(inputToken), protocolFee);
         emit SwapExecuted(msg.sender, zeroForOne, received, amountOut);
     }
@@ -300,19 +317,13 @@ contract PublicCPMM is CipherDEXFeePolicy {
         IERC20 second = IERC20(token1);
         AddLiquidityCache memory cache;
         cache.wasInitialized = initialized;
-        cache.rawBefore0 = first.balanceOf(address(this));
-        cache.rawBefore1 = second.balanceOf(address(this));
-        cache.before0 = _effectiveBalance(cache.rawBefore0, protocolFees0);
-        cache.before1 = _effectiveBalance(cache.rawBefore1, protocolFees1);
+        cache.before0 = reserve0State;
+        cache.before1 = reserve1State;
 
         if (!cache.wasInitialized) {
-            _sweepUnmanagedBalance(first, cache.before0);
-            _sweepUnmanagedBalance(second, cache.before1);
-            cache.rawBefore0 = first.balanceOf(address(this));
-            cache.rawBefore1 = second.balanceOf(address(this));
-            cache.before0 = _effectiveBalance(cache.rawBefore0, protocolFees0);
-            cache.before1 = _effectiveBalance(cache.rawBefore1, protocolFees1);
             if (cache.before0 != 0 || cache.before1 != 0) revert UnmanagedBalance();
+            _sweepSurplus(first, true);
+            _sweepSurplus(second, false);
         } else {
             uint256 existingShares = totalShares();
             if (cache.before0 == 0 || cache.before1 == 0 || existingShares == 0) {
@@ -337,6 +348,9 @@ contract PublicCPMM is CipherDEXFeePolicy {
             );
         }
 
+        cache.rawBefore0 = first.balanceOf(address(this));
+        cache.rawBefore1 = second.balanceOf(address(this));
+
         first.safeTransferFrom(msg.sender, address(this), amount0);
         second.safeTransferFrom(msg.sender, address(this), amount1);
         cache.rawAfter0 = first.balanceOf(address(this));
@@ -355,22 +369,28 @@ contract PublicCPMM is CipherDEXFeePolicy {
                 Math.mulDiv(cache.received1, scale1, 1)
             );
             if (mintedShares == 0) revert InvalidAmount();
+            reserve0State = cache.received0;
+            reserve1State = cache.received1;
             initialized = true;
         } else {
             if (cache.received0 != amount0 || cache.received1 != amount1) {
                 revert TransferAmountMismatch();
             }
+            reserve0State = cache.before0 + cache.received0;
+            reserve1State = cache.before1 + cache.received1;
         }
 
         uint256 resultingPriceX18 = _normalizedPriceX18(
-            _effectiveBalance(cache.rawAfter0, protocolFees0),
-            _effectiveBalance(cache.rawAfter1, protocolFees1)
+            reserve0State,
+            reserve1State
         );
         if (resultingPriceX18 < minPriceX18 || resultingPriceX18 > maxPriceX18) {
             revert SlippageExceeded();
         }
 
         if (mintedShares < minShares) revert SlippageExceeded();
+        _requireBacked(true);
+        _requireBacked(false);
         IPublicLPToken(lpToken).mintFromPool(recipient, mintedShares);
         emit LiquidityAdded(recipient, cache.received0, cache.received1, mintedShares);
     }
@@ -440,10 +460,14 @@ contract PublicCPMM is CipherDEXFeePolicy {
         }
 
         IPublicLPToken(lpToken).burnFromPool(msg.sender, shareInput);
+        reserve0State = reserve0 - nominalAmount0;
+        reserve1State = reserve1 - nominalAmount1;
         if (fullExit) initialized = false;
         amount0 = _transferOut(IERC20(token0), recipient, nominalAmount0);
         amount1 = _transferOut(IERC20(token1), recipient, nominalAmount1);
         if (amount0 < minAmount0 || amount1 < minAmount1) revert SlippageExceeded();
+        _requireBacked(true);
+        _requireBacked(false);
         emit LiquidityRemoved(msg.sender, amount0, amount1, shareInput);
     }
 
@@ -469,17 +493,49 @@ contract PublicCPMM is CipherDEXFeePolicy {
         if (amount0 != 0) {
             protocolFees0 = 0;
             received0 = _depositPublicOwnedBalance(IERC20(token0), amount0);
+            _requireBacked(true);
             emit ProtocolFeeCollected(token0, feeVault, amount0, received0);
         }
         if (amount1 != 0) {
             protocolFees1 = 0;
             received1 = _depositPublicOwnedBalance(IERC20(token1), amount1);
+            _requireBacked(false);
             emit ProtocolFeeCollected(token1, feeVault, amount1, received1);
         }
     }
 
+    /**
+     * @notice Moves unaccounted balances to the immutable fee vault.
+     * @dev Positive rebases and direct transfers never become CPMM reserves.
+     *      Collection is permissionless, but the destination is fixed and only
+     *      balances above stored reserves and protocol fees can be debited.
+     */
+    function sweepSurplus(bool sweepToken0, bool sweepToken1)
+        external
+        nonReentrant
+        returns (uint256 received0, uint256 received1)
+    {
+        if (!sweepToken0 && !sweepToken1) revert NoSurplus();
+        uint256 debited0;
+        uint256 debited1;
+        if (sweepToken0) {
+            _reconcileAccountingLoss(true);
+            (debited0, received0) = _sweepSurplus(IERC20(token0), true);
+        }
+        if (sweepToken1) {
+            _reconcileAccountingLoss(false);
+            (debited1, received1) = _sweepSurplus(IERC20(token1), false);
+        }
+        if (debited0 == 0 && debited1 == 0) revert NoSurplus();
+    }
+
     function effectiveReserves() external view returns (uint256 reserve0, uint256 reserve1) {
         return _effectiveReserves();
+    }
+
+    function surplusBalances() external view returns (uint256 surplus0, uint256 surplus1) {
+        surplus0 = _surplusBalance(true);
+        surplus1 = _surplusBalance(false);
     }
 
     function lockShares(
@@ -540,53 +596,94 @@ contract PublicCPMM is CipherDEXFeePolicy {
         view
         returns (uint256 reserve0, uint256 reserve1)
     {
-        reserve0 = _effectiveBalance(
-            IERC20(token0).balanceOf(address(this)),
-            protocolFees0
+        reserve0 = Math.min(
+            reserve0State,
+            IERC20(token0).balanceOf(address(this))
         );
-        reserve1 = _effectiveBalance(
-            IERC20(token1).balanceOf(address(this)),
-            protocolFees1
+        reserve1 = Math.min(
+            reserve1State,
+            IERC20(token1).balanceOf(address(this))
         );
-    }
-
-    function _effectiveBalance(uint256 rawBalance, uint256 accruedProtocolFee)
-        internal
-        pure
-        returns (uint256)
-    {
-        if (rawBalance < accruedProtocolFee) return 0;
-        return rawBalance - accruedProtocolFee;
     }
 
     function _reconcileProtocolFeeLosses() internal {
-        _reconcileProtocolFeeLoss(true);
-        _reconcileProtocolFeeLoss(false);
+        _reconcileAccountingLoss(true);
+        _reconcileAccountingLoss(false);
     }
 
     function _reconcileProtocolFeeLoss(bool token0Side) internal {
-        address token = token0Side ? token0 : token1;
-        uint256 previousClaim = token0Side ? protocolFees0 : protocolFees1;
-        uint256 rawBalance = IERC20(token).balanceOf(address(this));
-        if (previousClaim <= rawBalance) return;
-
-        if (token0Side) {
-            protocolFees0 = rawBalance;
-        } else {
-            protocolFees1 = rawBalance;
-        }
-        emit ProtocolFeeLossReconciled(
-            token,
-            previousClaim,
-            rawBalance,
-            previousClaim - rawBalance
-        );
+        _reconcileAccountingLoss(token0Side);
     }
 
-    function _sweepUnmanagedBalance(IERC20 token, uint256 amount) internal {
-        if (amount == 0) return;
-        uint256 received = _depositPublicOwnedBalance(token, amount);
-        emit UnmanagedBalanceSwept(address(token), feeVault, amount, received);
+    function _reconcileAccountingLoss(bool token0Side) internal {
+        address token = token0Side ? token0 : token1;
+        uint256 previousClaim = token0Side ? protocolFees0 : protocolFees1;
+        uint256 previousReserve = token0Side ? reserve0State : reserve1State;
+        uint256 rawBalance = IERC20(token).balanceOf(address(this));
+        uint256 remainingClaim = previousClaim;
+        uint256 remainingReserve = previousReserve;
+
+        if (rawBalance >= previousReserve) {
+            uint256 feeBacking = rawBalance - previousReserve;
+            if (feeBacking >= previousClaim) return;
+            remainingClaim = feeBacking;
+        } else {
+            remainingClaim = 0;
+            remainingReserve = rawBalance;
+        }
+
+        if (remainingClaim != previousClaim) {
+            if (token0Side) protocolFees0 = remainingClaim;
+            else protocolFees1 = remainingClaim;
+            emit ProtocolFeeLossReconciled(
+                token,
+                previousClaim,
+                remainingClaim,
+                previousClaim - remainingClaim
+            );
+        }
+        if (remainingReserve != previousReserve) {
+            if (token0Side) reserve0State = remainingReserve;
+            else reserve1State = remainingReserve;
+            emit ReserveLossReconciled(
+                token,
+                previousReserve,
+                remainingReserve,
+                previousReserve - remainingReserve
+            );
+        }
+    }
+
+    function _surplusBalance(bool token0Side) internal view returns (uint256) {
+        IERC20 token = IERC20(token0Side ? token0 : token1);
+        uint256 reserve = token0Side ? reserve0State : reserve1State;
+        uint256 claim = token0Side ? protocolFees0 : protocolFees1;
+        uint256 rawBalance = token.balanceOf(address(this));
+        if (rawBalance <= reserve) return 0;
+        uint256 balanceAboveReserve = rawBalance - reserve;
+        if (balanceAboveReserve <= claim) return 0;
+        return balanceAboveReserve - claim;
+    }
+
+    function _sweepSurplus(IERC20 token, bool token0Side)
+        internal
+        returns (uint256 debited, uint256 received)
+    {
+        debited = _surplusBalance(token0Side);
+        if (debited == 0) return (0, 0);
+        received = _depositPublicOwnedBalance(token, debited);
+        _requireBacked(token0Side);
+        emit UnmanagedBalanceSwept(address(token), feeVault, debited, received);
+    }
+
+    function _requireBacked(bool token0Side) internal view {
+        IERC20 token = IERC20(token0Side ? token0 : token1);
+        uint256 reserve = token0Side ? reserve0State : reserve1State;
+        uint256 claim = token0Side ? protocolFees0 : protocolFees1;
+        uint256 rawBalance = token.balanceOf(address(this));
+        if (rawBalance < reserve || rawBalance - reserve < claim) {
+            revert ProtocolFeeAccountingMismatch();
+        }
     }
 
     function _depositPublicOwnedBalance(IERC20 token, uint256 amount)

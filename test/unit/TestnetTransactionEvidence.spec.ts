@@ -7,6 +7,7 @@ import {
   publicTransactionHashSuffix,
   requireMinedFailure,
   requireMinedFailureSelector,
+  requireMinedReceipt,
   requireMinedSuccess,
   safeTestnetErrorSummary,
   transactionHashFromError,
@@ -141,6 +142,19 @@ describe("funded testnet transaction evidence", function () {
       actualStatus: 1,
     });
     expect((captured as Error).message).to.include(`transactionHash=${hash}`);
+  });
+
+  it("preserves either mined status for later canonical confirmation", async function () {
+    expect(await requireMinedReceipt(
+      "deployment",
+      async () => ({ hash, wait: async () => failedReceipt }),
+      async () => null,
+    )).to.deep.equal({ transactionHash: hash, receipt: failedReceipt });
+    expect(await requireMinedReceipt(
+      "deployment",
+      async () => ({ hash, wait: async () => successfulReceipt }),
+      async () => null,
+    )).to.deep.equal({ transactionHash: hash, receipt: successfulReceipt });
   });
 
   it("never treats an error-carried hash as evidence for the attempted operation", async function () {

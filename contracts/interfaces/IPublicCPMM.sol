@@ -27,7 +27,9 @@ interface IPublicCPMM {
     function removeLiquidity(uint256,uint256,uint256,uint64) external returns (uint256,uint256);
     function removeLiquidityTo(address,uint256,uint256,uint256,uint64) external returns (uint256,uint256);
     function collectProtocolFees(bool,bool) external returns (uint256,uint256);
+    function sweepSurplus(bool,bool) external returns (uint256,uint256);
     function effectiveReserves() external view returns (uint256,uint256);
+    function surplusBalances() external view returns (uint256,uint256);
     function lockShares(uint256,uint64,bool,uint64) external returns (bytes32);
     function unlockShares(bytes32) external;
     function lockInfo(bytes32) external view returns (address,uint64,bool,bool,uint256);
