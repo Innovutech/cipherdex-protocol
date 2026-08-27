@@ -1,0 +1,56 @@
+{
+  "schema": "cipherdex.compiler-input/v1",
+  "sourceCommit": "b99c41abc031754990d4efcaaf1baa6754b3bb1e",
+  "compilerInputHash": "0x669de2ec321cb32d96b7acc187160c8bb4ec76359bb38a1deab8f2dec8e331ab",
+  "solcVersion": "0.8.28",
+  "solcLongVersion": "0.8.28+commit.7893614a",
+  "userSourceNameMap": {
+    "contracts/PublicCPMMQuoter.sol": "project/contracts/PublicCPMMQuoter.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "paris",
+      "metadata": {
+        "bytecodeHash": "none"
+      },
+      "optimizer": {
+        "enabled": true,
+        "runs": 206
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": [],
+      "viaIR": false
+    },
+    "sources": {
+      "project/contracts/interfaces/IPublicCPMM.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\ninterface IPublicCPMM {\n    function PROTOCOL_VERSION() external view returns (uint256);\n    function token0() external view returns (address);\n    function token1() external view returns (address);\n    function token0Decimals() external view returns (uint8);\n    function token1Decimals() external view returns (uint8);\n    function scale0() external view returns (uint256);\n    function scale1() external view returns (uint256);\n    function feeBps() external view returns (uint256);\n    function feeVault() external view returns (address);\n    function lpTokenFactory() external view returns (address);\n    function lpToken() external view returns (address);\n    function PROTOCOL_FEE_SHARE_NUMERATOR() external view returns (uint256);\n    function PROTOCOL_FEE_SHARE_DENOMINATOR() external view returns (uint256);\n    function protocolFees0() external view returns (uint256);\n    function protocolFees1() external view returns (uint256);\n    function initialized() external view returns (bool);\n    function totalShares() external view returns (uint256);\n    function shares(address provider) external view returns (uint256);\n    function quoteExactInput(uint256 amountIn, bool zeroForOne) external view returns (uint256);\n    function swapExactInput(uint256,uint256,bool,uint64) external returns (uint256);\n    function addLiquidity(uint256,uint256,uint256,uint256,uint256,uint64) external returns (uint256);\n    function addLiquidityFor(address,uint256,uint256,uint256,uint256,uint256,uint64) external returns (uint256);\n    function removeLiquidity(uint256,uint256,uint256,uint64) external returns (uint256,uint256);\n    function removeLiquidityTo(address,uint256,uint256,uint256,uint64) external returns (uint256,uint256);\n    function collectProtocolFees(bool,bool) external returns (uint256,uint256);\n    function sweepSurplus(bool,bool) external returns (uint256,uint256);\n    function effectiveReserves() external view returns (uint256,uint256);\n    function surplusBalances() external view returns (uint256,uint256);\n    function lockShares(uint256,uint64,bool,uint64) external returns (bytes32);\n    function unlockShares(bytes32) external;\n    function lockInfo(bytes32) external view returns (address,uint64,bool,bool,uint256);\n}\n"
+      },
+      "project/contracts/interfaces/IPublicCPMMFactory.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\ninterface IPublicCPMMFactory {\n    event PoolCreated(\n        address indexed token0,\n        address indexed token1,\n        uint8 token0Decimals,\n        uint8 token1Decimals,\n        uint256 feeBps,\n        address lpToken,\n        address pool\n    );\n\n    function PROTOCOL_VERSION() external view returns (uint256);\n    function feeVault() external view returns (address);\n    function lpTokenFactory() external view returns (address);\n    function isApprovedFeeTier(uint256) external pure returns (bool);\n    function getPool(bytes32) external view returns (address);\n    function isPool(address) external view returns (bool);\n    function createPool(address,address,uint8,uint8,uint256) external returns (address);\n    function poolKey(address,address,uint8,uint8,uint256) external pure returns (bytes32);\n    function allPoolsLength() external view returns (uint256);\n    function allPools(uint256) external view returns (address);\n}\n"
+      },
+      "project/contracts/PublicCPMMQuoter.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\nimport \"./interfaces/IPublicCPMM.sol\";\nimport \"./interfaces/IPublicCPMMFactory.sol\";\n\n/**\n * @title PublicCPMMQuoter\n * @notice Factory-gated read-only quoting for ordinary public CPMM pools.\n *\n * This helper is intentionally public-only. Confidential quotes must be\n * requested from the pool by the trader because COTI encrypted inputs bind the\n * caller and target contract.\n */\ncontract PublicCPMMQuoter {\n    uint256 public constant PROTOCOL_VERSION = 1;\n\n    address public immutable factory;\n\n    error InvalidFactory();\n    error InvalidPool();\n\n    constructor(address factory_) {\n        if (factory_ == address(0)) revert InvalidFactory();\n        factory = factory_;\n    }\n\n    function quoteExactInput(\n        address pool,\n        uint256 amountIn,\n        bool zeroForOne\n    ) external view returns (uint256 amountOut) {\n        if (!IPublicCPMMFactory(factory).isPool(pool)) revert InvalidPool();\n        return IPublicCPMM(pool).quoteExactInput(amountIn, zeroForOne);\n    }\n}\n"
+      }
+    }
+  }
+}

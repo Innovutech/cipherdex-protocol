@@ -1,49 +1,61 @@
 # Verification Report
 
-Date: 2026-08-27
+Date: 2026-08-28
 
 ## Current COTI mainnet deployment
 
-The confidential stack and wrapped COTI remain bound to source commit
-`03ee787585961b06033bb22421d720abc2e687ec` and its reviewed record,
-`deployments/coti-mainnet-03ee787585961b06033bb22421d720abc2e687ec.json`:
+Source commit `b99c41abc031754990d4efcaaf1baa6754b3bb1e` was deployed as one
+unified COTI mainnet (`2632500`) stack through the authenticated external
+launcher. Its authoritative record is
+`deployments/coti-mainnet-b99c41abc031754990d4efcaaf1baa6754b3bb1e.json`.
+All 20 deployment and binding transactions are recorded as mined-success with
+no uncertain broadcasts. The single fee vault has both factory slots consumed;
+there is no remaining factory-configuration authority.
 
-- fee vault: `0x16439098e667C072E2B75Cd62C395Ec1d84762A1`
-- confidential factory: `0x00719f7112055DE41adD49Cf58B3F9cF89b97801`
-- confidential best-execution router: `0x80929FDD678C4E564c433d5Da1641129a4EBc42e`
-- wrapped COTI: `0xe90382343f895fDF0e0A28bCABa7c38f19Bb1FC3`
+- fee vault: `0x81B9B4CDAcE3E4024F8792CEfDbFD281Fa20681f`
+- immutable beneficiary: `0x3FEAa730727608Bb78a9B1b76fC7b85617317DAe`
+- confidential LP-token factory: `0x8FbA3756f791a9f31EcfeAb5bD1394fc34C4DD89`
+- confidential strategy registry: `0x736995b1B440aEa4BdCa62c6302484DBb08A0E33`
+- confidential pool deployer: `0x5866ee30942B9CE87d5a5A18F8FC11fe8Ef3076e`
+- confidential factory: `0xAF3Fb0A4f60C1b057C0c9cD8e563Df5F5b93ac03`
+- confidential launch strategy: `0xeF11D8a5Af5eBFBd85C37948C78fB3bCedcF5433`
+- launchpad migrator: `0x1BDdBF040fC06c42e0FBe1b52174611964A9909E`
+- confidential best-execution router: `0x658feF87C5ACDfe57a37b7951695F4ef22137Bcc`
+- public factory: `0x9c70596514De7C8DaF108f558E2d4a97E0C44E49`
+- public LP-token factory: `0xf2AA9D05E5FF15525361450C53bd952F37200090`
+- public quoter: `0x7f4226172D29D00Ff7c6aF0A6A15082864cA925C`
+- public swap router: `0x026e969cE27Ae65c7609cD976FA8B646b684DbbE`
+- public liquidity router: `0xea7129359a83538bC9Bba4f4Ec903A04F89B8a38`
+- wrapped COTI: `0xE180548963Fc30329e15BC104d753f82a8C18865`
+- public native router: `0x6165B5007a3CBFaE1c81EbAE09222CB5a85C225A`
 
-The active transparent CPMM stack was replaced from reviewed source commit
-`b0d0ce87ac7a2cb72545a6d9ae2335a6e91cd9be`. Its commit-bound record is
-`deployments/coti-mainnet-public-b0d0ce87ac7a2cb72545a6d9ae2335a6e91cd9be.json`:
+Post-deployment RPC checks proved both vault bindings, zero public and
+confidential pool counts, zero initial WCOTI supply, and the hardened WCOTI
+self-transfer rejection selector. WCOTI burns before native callbacks; focused
+tests prove valid nested withdrawal remains exactly backed and overdrawn
+reentry rolls back atomically.
 
-- public fee vault: `0x41C4Bdbc429c80216445A12887838BFF7B21A753`
-- public factory: `0xE2dba371A1E67CE40Ec4465bFe2e379e821B6A87`
-- public LP-token factory: `0x937E110296DD97eCc2AFBA51eC39703CC8422Df7`
-- public quoter: `0x4A0fd5a62C60614039AEb411Aac7F7883e3a96ED`
-- public swap router: `0xe1Aa758ee8FD64866f4e8C628D0E1e5a999b8Caf`
-- public liquidity router: `0x22eB2aad8232DadEdf2746dc662005f337d25699`
-- wrapped COTI: `0xe90382343f895fDF0e0A28bCABa7c38f19Bb1FC3`
-- public native router: `0x822dA08076FF36B724CA3cFdDD546a11D2602209`
+The records for source commits `03ee787585961b06033bb22421d720abc2e687ec`
+and `b0d0ce87ac7a2cb72545a6d9ae2335a6e91cd9be` are superseded. Their five
+public pools have zero shares/reserves, the temporary public factory has no
+pools, and the one preceding confidential pool is uninitialized, so no position
+or liquidity migration is required.
 
-The replacement record contains seven canonically confirmed deployment/binding
-transactions and no uncertain broadcasts. The authenticated launcher verified
-runtime code hashes and every immutable relationship before publication. No
-mainnet pool, liquidity position or swap was created for this deployment. The
-preceding public factory and routers remain immutable on-chain but are
-superseded as the supported integration surface.
-
-The public CPMM now prices and mints against stored reserves. Positive external
+The public CPMM prices and mints against stored reserves. Positive external
 balance deltas are fixed-vault surplus and cannot change pool price or LP share
 ratios; losses reconcile protocol claims before LP reserves. There is no upward
-reserve-sync method. The final Codex Security diff scan
-`03b1daaa-c069-4273-851e-d8b427078fd0` completed with zero findings after all
-deployment recovery/finality remediations.
+reserve-sync method. Focused Codex Security scan
+`d24c93db-210f-4e5b-9c9c-ef53c1a35e60` completed with zero findings.
+
+Exact Cotiscan dry-runs passed for all 13 direct deployments. Their authenticated
+Standard JSON inputs are retained under
+`deployments/compiler-inputs/b99c41abc031754990d4efcaaf1baa6754b3bb1e/`.
+No source has yet been submitted to Cotiscan.
 
 This records deployment and on-chain binding evidence only. It is not a claim
 of explorer source-code verification or external audit.
 
-## Focused public testnet evidence
+## Historical focused public testnet evidence
 
 The same source commit was deployed to COTI testnet (`7082400`) through
 `deployments/coti-testnet-public-b0d0ce87ac7a2cb72545a6d9ae2335a6e91cd9be.json`.
@@ -111,13 +123,14 @@ external-audit claim.
 - npm: required `11.13.x`
 - Solidity: pinned local `solc@0.8.28`
 - EVM target: Paris
-- target chain: COTI testnet (`7082400`)
+- target chain: COTI mainnet (`2632500`); focused COTI testnet evidence is
+  retained only as historical validation
 - dependency policy: locked install, reviewed lifecycle scripts, no forced audit
   fixes or advisory suppression
 
 No dependency was added for this refactor.
 
-## Current local evidence
+## Historical local evidence
 
 - production dependency audit: passed with zero advisories at every severity
 - production dependency graph: passed with no missing required dependency
