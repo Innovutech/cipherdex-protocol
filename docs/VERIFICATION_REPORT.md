@@ -1,30 +1,57 @@
 # Verification Report
 
-Date: 2026-08-25
+Date: 2026-08-27
 
 ## Current COTI mainnet deployment
 
-Source commit `03ee787585961b06033bb22421d720abc2e687ec` was deployed to
-COTI mainnet (`2632500`) through the authenticated external launcher. The
-commit-bound public record is
-`deployments/coti-mainnet-03ee787585961b06033bb22421d720abc2e687ec.json`.
-It completed with 20 recorded transactions and no uncertain broadcasts. The
-deployment runner verified runtime code hashes and all post-deployment immutable
-bindings before promoting the record.
+The confidential stack and wrapped COTI remain bound to source commit
+`03ee787585961b06033bb22421d720abc2e687ec` and its reviewed record,
+`deployments/coti-mainnet-03ee787585961b06033bb22421d720abc2e687ec.json`:
 
 - fee vault: `0x16439098e667C072E2B75Cd62C395Ec1d84762A1`
 - confidential factory: `0x00719f7112055DE41adD49Cf58B3F9cF89b97801`
 - confidential best-execution router: `0x80929FDD678C4E564c433d5Da1641129a4EBc42e`
-- public factory: `0x294f0FA03D5eEC0457Aba77B95613546FCB22452`
-- public LP-token factory: `0x00C925107DDcD72895f05b1e8B41A016143dE3b3`
-- public quoter: `0x1Ee4c3B5D10a631691C3A1457D50027c8AAb0396`
-- public swap router: `0x7DF1d7fdA490d1971B863B856d4B11fa0143E200`
-- public liquidity router: `0xbEEF7ab094bDd103638581362ef8c96815D82f8C`
 - wrapped COTI: `0xe90382343f895fDF0e0A28bCABa7c38f19Bb1FC3`
-- public native router: `0xf6c48af72e376674980741A4CebF52a1A47B86CF`
+
+The active transparent CPMM stack was replaced from reviewed source commit
+`b0d0ce87ac7a2cb72545a6d9ae2335a6e91cd9be`. Its commit-bound record is
+`deployments/coti-mainnet-public-b0d0ce87ac7a2cb72545a6d9ae2335a6e91cd9be.json`:
+
+- public fee vault: `0x41C4Bdbc429c80216445A12887838BFF7B21A753`
+- public factory: `0xE2dba371A1E67CE40Ec4465bFe2e379e821B6A87`
+- public LP-token factory: `0x937E110296DD97eCc2AFBA51eC39703CC8422Df7`
+- public quoter: `0x4A0fd5a62C60614039AEb411Aac7F7883e3a96ED`
+- public swap router: `0xe1Aa758ee8FD64866f4e8C628D0E1e5a999b8Caf`
+- public liquidity router: `0x22eB2aad8232DadEdf2746dc662005f337d25699`
+- wrapped COTI: `0xe90382343f895fDF0e0A28bCABa7c38f19Bb1FC3`
+- public native router: `0x822dA08076FF36B724CA3cFdDD546a11D2602209`
+
+The replacement record contains seven canonically confirmed deployment/binding
+transactions and no uncertain broadcasts. The authenticated launcher verified
+runtime code hashes and every immutable relationship before publication. No
+mainnet pool, liquidity position or swap was created for this deployment. The
+preceding public factory and routers remain immutable on-chain but are
+superseded as the supported integration surface.
+
+The public CPMM now prices and mints against stored reserves. Positive external
+balance deltas are fixed-vault surplus and cannot change pool price or LP share
+ratios; losses reconcile protocol claims before LP reserves. There is no upward
+reserve-sync method. The final Codex Security diff scan
+`03b1daaa-c069-4273-851e-d8b427078fd0` completed with zero findings after all
+deployment recovery/finality remediations.
 
 This records deployment and on-chain binding evidence only. It is not a claim
 of explorer source-code verification or external audit.
+
+## Focused public testnet evidence
+
+The same source commit was deployed to COTI testnet (`7082400`) through
+`deployments/coti-testnet-public-b0d0ce87ac7a2cb72545a6d9ae2335a6e91cd9be.json`.
+The record contains 24 mined-success transactions. Its focused mixed-decimal
+WCOTI/6-decimal-token smoke passed pool creation and seeding, donation isolation,
+fixed-vault surplus sweeping, proportional liquidity/refunds, both native swap
+directions, both protocol-fee sides, fee collection and full zero-residue
+cleanup. This is disposable test evidence, not a supported testnet release.
 
 ## Historical testnet status
 

@@ -35,7 +35,9 @@ mutable generated file. After review:
 2. stage only that report and the completed record with
    `git add docs/VERIFICATION_REPORT.md` and
    `git add -f deployments/coti-testnet-<commit>.json` for testnet or
-   `git add -f deployments/coti-mainnet-<commit>.json` for mainnet;
+   `git add -f deployments/coti-mainnet-<commit>.json` for mainnet. Public-only
+   replacement records use the corresponding narrow
+   `coti-<network>-public-<commit>.json` namespace;
 3. create a separate evidence commit after the source commit used for
    deployment; and
 4. run funded verification only from a clean checkout of that evidence commit.
