@@ -61,6 +61,7 @@ export type ConfidentialTransactionStep = Readonly<{
   id: string;
   position: number;
   total: number;
+  confidential: true;
   purpose: ConfidentialTransactionPurpose;
   label: string;
   dependsOn: readonly string[];
@@ -148,6 +149,7 @@ function buildOperationPlan(input: Readonly<{
       id: step.id,
       position: index + 1,
       total: input.transactions.length,
+      confidential: true as const,
       purpose: step.purpose,
       label: step.label,
       dependsOn,

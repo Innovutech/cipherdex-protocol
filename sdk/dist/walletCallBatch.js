@@ -2,6 +2,7 @@ export const WALLET_CALLS_VERSION = "2.0.0";
 export const WALLET_CALL_CAPABILITIES_METHOD = "wallet_getCapabilities";
 export const WALLET_CALL_BATCH_METHOD = "wallet_sendCalls";
 export const WALLET_CALL_STATUS_METHOD = "wallet_getCallsStatus";
+export const CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY = "org.ciphertrade.callGasLimit";
 export const MAX_CIPHERDEX_WALLET_CALLS = 8;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = /^0x0{40}$/i;
@@ -10,6 +11,7 @@ const HASH = /^0x[0-9a-fA-F]{64}$/;
 const QUANTITY = /^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/;
 const STEP_ID = /^[a-z][a-z0-9-]{0,63}$/;
 const MAX_CALL_DATA_BYTES = 128 * 1_024;
+const UINT256_LIMIT = 1n << 256n;
 function dataRecord(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         return undefined;
@@ -59,7 +61,7 @@ function assertBatchId(value) {
         throw new TypeError("Invalid wallet call batch ID");
     }
 }
-function capabilityForChain(capabilities, chainId) {
+function capabilityForChain(capabilities, chainId, capabilityName) {
     const root = dataRecord(capabilities);
     if (!root)
         return undefined;
@@ -72,13 +74,13 @@ function capabilityForChain(capabilities, chainId) {
         }
     });
     const chain = chainKey ? dataRecord(root[chainKey]) : undefined;
-    if (chain && Object.prototype.hasOwnProperty.call(chain, "atomic")) {
-        return { value: chain.atomic, source: "chain" };
+    if (chain && Object.prototype.hasOwnProperty.call(chain, capabilityName)) {
+        return { value: chain[capabilityName], source: "chain" };
     }
     const globalKey = Object.keys(root).find((key) => key.toLowerCase() === "0x0");
     const global = globalKey ? dataRecord(root[globalKey]) : undefined;
-    if (global && Object.prototype.hasOwnProperty.call(global, "atomic")) {
-        return { value: global.atomic, source: "global" };
+    if (global && Object.prototype.hasOwnProperty.call(global, capabilityName)) {
+        return { value: global[capabilityName], source: "global" };
     }
     return undefined;
 }
@@ -88,12 +90,18 @@ function capabilityForChain(capabilities, chainId) {
  */
 export function getWalletCallBatchSupport(capabilities, chainId) {
     const normalized = normalizedChainId(chainId);
-    const candidate = capabilityForChain(capabilities, normalized);
+    const candidate = capabilityForChain(capabilities, normalized, "atomic");
+    const gasLimitCandidate = capabilityForChain(capabilities, normalized, CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY);
+    const gasLimitCapability = dataRecord(gasLimitCandidate?.value);
+    const callGasLimitSupported = gasLimitCapability?.supported === true;
+    const callGasLimitSource = gasLimitCandidate?.source ?? "none";
     if (!candidate) {
         return Object.freeze({
             batchingSupported: false,
             atomicStatus: "unknown",
             source: "none",
+            callGasLimitSupported,
+            callGasLimitSource,
         });
     }
     const atomic = dataRecord(candidate.value);
@@ -105,12 +113,16 @@ export function getWalletCallBatchSupport(capabilities, chainId) {
             batchingSupported: false,
             atomicStatus: "unknown",
             source: candidate.source,
+            callGasLimitSupported,
+            callGasLimitSource,
         });
     }
     return Object.freeze({
         batchingSupported: true,
         atomicStatus: status,
         source: candidate.source,
+        callGasLimitSupported,
+        callGasLimitSource,
     });
 }
 export function buildWalletCapabilitiesRequest(from, chainId) {
@@ -138,7 +150,8 @@ function preparedCalls(steps, calls) {
             step.purpose.length > 64 ||
             typeof step.label !== "string" ||
             step.label.length === 0 ||
-            step.label.length > 256) {
+            step.label.length > 256 ||
+            (step.confidential !== undefined && typeof step.confidential !== "boolean")) {
             throw new TypeError("Wallet calls do not match the reviewed operation steps");
         }
         stepIds.add(step.id);
@@ -150,6 +163,11 @@ function preparedCalls(steps, calls) {
         if (typeof value !== "bigint" || value < 0n || value >= (1n << 256n)) {
             throw new TypeError("Invalid wallet call value");
         }
+        const gasLimit = call.gasLimit;
+        if (gasLimit !== undefined &&
+            (typeof gasLimit !== "bigint" || gasLimit <= 0n || gasLimit >= UINT256_LIMIT)) {
+            throw new TypeError("Invalid wallet call gas limit");
+        }
         return Object.freeze({
             stepId: step.id,
             purpose: step.purpose,
@@ -157,14 +175,29 @@ function preparedCalls(steps, calls) {
             to: call.to,
             data: call.data.toLowerCase(),
             value,
+            ...(gasLimit === undefined ? {} : { gasLimit }),
+            ...(step.confidential === true ? { confidential: true } : {}),
         });
     }));
+}
+function canonicalQuantity(value) {
+    return `0x${value.toString(16)}`;
+}
+function callGasLimitCapabilities(gasLimit) {
+    return Object.freeze({
+        [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: Object.freeze({
+            gasLimit: canonicalQuantity(gasLimit),
+        }),
+    });
 }
 function sendCallsRequest(input) {
     const calls = Object.freeze(input.calls.map((call) => Object.freeze({
         to: call.to,
         data: call.data,
-        ...(call.value === 0n ? {} : { value: `0x${call.value.toString(16)}` }),
+        ...(call.value === 0n ? {} : { value: canonicalQuantity(call.value) }),
+        ...(input.includeCallGasLimits && call.gasLimit !== undefined
+            ? { capabilities: callGasLimitCapabilities(call.gasLimit) }
+            : {}),
     })));
     const params = Object.freeze({
         version: WALLET_CALLS_VERSION,
@@ -226,7 +259,20 @@ export function prepareWalletCallExecution(input) {
             containsApproval,
         });
     }
-    const atomicRequired = preference !== "allow-non-atomic" && canProvideAtomicity;
+    const hasConfidentialGasLimit = calls.some((call) => call.confidential === true && call.gasLimit !== undefined);
+    const atomicRequired = canProvideAtomicity &&
+        (preference !== "allow-non-atomic" || hasConfidentialGasLimit);
+    if (!atomicRequired &&
+        hasConfidentialGasLimit &&
+        !support.callGasLimitSupported) {
+        return Object.freeze({
+            kind: "sequential",
+            reason: "call-gas-limit-capability-unavailable",
+            support,
+            calls,
+            containsApproval,
+        });
+    }
     return Object.freeze({
         kind: "wallet_sendCalls",
         support,
@@ -237,6 +283,7 @@ export function prepareWalletCallExecution(input) {
             from: input.from,
             calls,
             atomicRequired,
+            includeCallGasLimits: !atomicRequired && hasConfidentialGasLimit && support.callGasLimitSupported,
             ...(input.id ? { id: input.id } : {}),
         }),
     });

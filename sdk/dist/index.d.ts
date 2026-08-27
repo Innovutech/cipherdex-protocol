@@ -3,6 +3,7 @@ export * from "./operationPlan.js";
 export * from "./walletCallBatch.js";
 export * from "./nativeAsset.js";
 export * from "./liquidity.js";
+export * from "./executionError.js";
 import { type LiquiditySide } from "./liquidity.js";
 /**
  * Stable, privacy-minimal client surface for CipherDEX.

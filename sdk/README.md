@@ -28,6 +28,27 @@ use a prepared batch only when supported, and retain sequential execution as the
 fallback. Partial non-atomic batches involving approvals are marked for explicit
 allowance review. The SDK never signs, sends, polls or persists wallet requests.
 
+Confidential operation transaction steps are explicitly marked and prepared
+wallet calls preserve an optional `gasLimit`. When the wallet reports atomic
+batching as `supported` or `ready`, the SDK retains standard EIP-5792 atomic
+execution without adding per-call gas metadata; the wallet owns the combined
+execution gas. For non-atomic confidential batches with explicit limits, the SDK
+uses `wallet_sendCalls` only when the active chain, or global `0x0`, advertises
+`org.ciphertrade.callGasLimit: { supported: true }`. Each applicable call then
+carries `{ gasLimit: "0x..." }` inside that call-level capability. Otherwise the
+plan remains sequential with the original bigint limits intact. Ordinary
+batching without confidential gas limits is unchanged, and the SDK never emits
+the nonstandard EIP-5792 `gas` field.
+
+`classifyCipherDexExecutionError` recognizes the protocol's exact
+`TransferAmountMismatch()` selector through bounded, getter-free nested error
+inspection and returns a stable `token-transfer-amount-mismatch` issue with
+operation context. `preflightCipherDexTransaction` wraps a provider-specific
+gas estimator: known transfer-semantics failures become a structured gate,
+while unrelated RPC or execution failures remain exceptions. Applications own
+localized wording and token capability policy; the SDK does not hardcode token
+addresses or assume a tax-token classification remains permanent.
+
 `buildConfidentialCandidateBitmap` derives the active bitmap from the standard
 class plus the factory's finalized registered strategy count.
 `partitionConfidentialQuoteCandidateBitmap` deterministically groups that bitmap

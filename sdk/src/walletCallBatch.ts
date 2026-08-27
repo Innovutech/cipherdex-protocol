@@ -2,6 +2,8 @@ export const WALLET_CALLS_VERSION = "2.0.0" as const;
 export const WALLET_CALL_CAPABILITIES_METHOD = "wallet_getCapabilities" as const;
 export const WALLET_CALL_BATCH_METHOD = "wallet_sendCalls" as const;
 export const WALLET_CALL_STATUS_METHOD = "wallet_getCallsStatus" as const;
+export const CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY =
+  "org.ciphertrade.callGasLimit" as const;
 export const MAX_CIPHERDEX_WALLET_CALLS = 8 as const;
 
 export type WalletAtomicCapabilityStatus =
@@ -13,6 +15,8 @@ export type WalletCallBatchSupport = Readonly<{
   batchingSupported: boolean;
   atomicStatus: WalletAtomicCapabilityStatus | "unknown";
   source: "chain" | "global" | "none";
+  callGasLimitSupported: boolean;
+  callGasLimitSource: "chain" | "global" | "none";
 }>;
 
 export type WalletCallBatchPreference =
@@ -24,6 +28,7 @@ export type WalletCallStep = Readonly<{
   id: string;
   purpose: string;
   label: string;
+  confidential?: boolean;
 }>;
 
 export type WalletCallInput = Readonly<{
@@ -31,6 +36,7 @@ export type WalletCallInput = Readonly<{
   to: string;
   data: string;
   value?: bigint;
+  gasLimit?: bigint;
 }>;
 
 export type PreparedWalletCall = Readonly<{
@@ -40,6 +46,8 @@ export type PreparedWalletCall = Readonly<{
   to: string;
   data: string;
   value: bigint;
+  gasLimit?: bigint;
+  confidential?: true;
 }>;
 
 export type WalletSendCallsParams = Readonly<{
@@ -52,6 +60,11 @@ export type WalletSendCallsParams = Readonly<{
     to: string;
     data: string;
     value?: string;
+    capabilities?: Readonly<{
+      [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: Readonly<{
+        gasLimit: string;
+      }>;
+    }>;
   }>[];
 }>;
 
@@ -75,7 +88,10 @@ export type WalletCallExecutionPlan =
   }>
   | Readonly<{
     kind: "sequential";
-    reason: "single-call" | "wallet-batching-unavailable";
+    reason:
+      | "single-call"
+      | "wallet-batching-unavailable"
+      | "call-gas-limit-capability-unavailable";
     support: WalletCallBatchSupport;
     calls: readonly PreparedWalletCall[];
     containsApproval: boolean;
@@ -128,6 +144,7 @@ const HASH = /^0x[0-9a-fA-F]{64}$/;
 const QUANTITY = /^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/;
 const STEP_ID = /^[a-z][a-z0-9-]{0,63}$/;
 const MAX_CALL_DATA_BYTES = 128 * 1_024;
+const UINT256_LIMIT = 1n << 256n;
 
 function dataRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -178,6 +195,7 @@ function assertBatchId(value: string): void {
 function capabilityForChain(
   capabilities: unknown,
   chainId: string,
+  capabilityName: string,
 ): Readonly<{ value: unknown; source: "chain" | "global" }> | undefined {
   const root = dataRecord(capabilities);
   if (!root) return undefined;
@@ -189,13 +207,13 @@ function capabilityForChain(
     }
   });
   const chain = chainKey ? dataRecord(root[chainKey]) : undefined;
-  if (chain && Object.prototype.hasOwnProperty.call(chain, "atomic")) {
-    return { value: chain.atomic, source: "chain" };
+  if (chain && Object.prototype.hasOwnProperty.call(chain, capabilityName)) {
+    return { value: chain[capabilityName], source: "chain" };
   }
   const globalKey = Object.keys(root).find((key) => key.toLowerCase() === "0x0");
   const global = globalKey ? dataRecord(root[globalKey]) : undefined;
-  if (global && Object.prototype.hasOwnProperty.call(global, "atomic")) {
-    return { value: global.atomic, source: "global" };
+  if (global && Object.prototype.hasOwnProperty.call(global, capabilityName)) {
+    return { value: global[capabilityName], source: "global" };
   }
   return undefined;
 }
@@ -209,12 +227,22 @@ export function getWalletCallBatchSupport(
   chainId: bigint | number | string,
 ): WalletCallBatchSupport {
   const normalized = normalizedChainId(chainId);
-  const candidate = capabilityForChain(capabilities, normalized);
+  const candidate = capabilityForChain(capabilities, normalized, "atomic");
+  const gasLimitCandidate = capabilityForChain(
+    capabilities,
+    normalized,
+    CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY,
+  );
+  const gasLimitCapability = dataRecord(gasLimitCandidate?.value);
+  const callGasLimitSupported = gasLimitCapability?.supported === true;
+  const callGasLimitSource = gasLimitCandidate?.source ?? "none";
   if (!candidate) {
     return Object.freeze({
       batchingSupported: false,
       atomicStatus: "unknown" as const,
       source: "none" as const,
+      callGasLimitSupported,
+      callGasLimitSource,
     });
   }
   const atomic = dataRecord(candidate.value);
@@ -228,12 +256,16 @@ export function getWalletCallBatchSupport(
       batchingSupported: false,
       atomicStatus: "unknown" as const,
       source: candidate.source,
+      callGasLimitSupported,
+      callGasLimitSource,
     });
   }
   return Object.freeze({
     batchingSupported: true,
     atomicStatus: status,
     source: candidate.source,
+    callGasLimitSupported,
+    callGasLimitSource,
   });
 }
 
@@ -272,7 +304,8 @@ function preparedCalls(
       step.purpose.length > 64 ||
       typeof step.label !== "string" ||
       step.label.length === 0 ||
-      step.label.length > 256
+      step.label.length > 256 ||
+      (step.confidential !== undefined && typeof step.confidential !== "boolean")
     ) {
       throw new TypeError("Wallet calls do not match the reviewed operation steps");
     }
@@ -286,6 +319,13 @@ function preparedCalls(
     if (typeof value !== "bigint" || value < 0n || value >= (1n << 256n)) {
       throw new TypeError("Invalid wallet call value");
     }
+    const gasLimit = call.gasLimit;
+    if (
+      gasLimit !== undefined &&
+      (typeof gasLimit !== "bigint" || gasLimit <= 0n || gasLimit >= UINT256_LIMIT)
+    ) {
+      throw new TypeError("Invalid wallet call gas limit");
+    }
     return Object.freeze({
       stepId: step.id,
       purpose: step.purpose,
@@ -293,8 +333,24 @@ function preparedCalls(
       to: call.to,
       data: call.data.toLowerCase(),
       value,
+      ...(gasLimit === undefined ? {} : { gasLimit }),
+      ...(step.confidential === true ? { confidential: true as const } : {}),
     });
   }));
+}
+
+function canonicalQuantity(value: bigint): string {
+  return `0x${value.toString(16)}`;
+}
+
+function callGasLimitCapabilities(gasLimit: bigint): Readonly<{
+  [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: Readonly<{ gasLimit: string }>;
+}> {
+  return Object.freeze({
+    [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: Object.freeze({
+      gasLimit: canonicalQuantity(gasLimit),
+    }),
+  });
 }
 
 function sendCallsRequest(input: Readonly<{
@@ -302,12 +358,18 @@ function sendCallsRequest(input: Readonly<{
   from: string;
   calls: readonly PreparedWalletCall[];
   atomicRequired: boolean;
+  includeCallGasLimits: boolean;
   id?: string;
 }>): WalletSendCallsRequest {
   const calls = Object.freeze(input.calls.map((call) => Object.freeze({
     to: call.to,
     data: call.data,
-    ...(call.value === 0n ? {} : { value: `0x${call.value.toString(16)}` }),
+    ...(call.value === 0n ? {} : { value: canonicalQuantity(call.value) }),
+    ...(
+      input.includeCallGasLimits && call.gasLimit !== undefined
+        ? { capabilities: callGasLimitCapabilities(call.gasLimit) }
+        : {}
+    ),
   })));
   const params = Object.freeze({
     version: WALLET_CALLS_VERSION,
@@ -381,8 +443,24 @@ export function prepareWalletCallExecution(input: Readonly<{
       containsApproval,
     });
   }
-  const atomicRequired =
-    preference !== "allow-non-atomic" && canProvideAtomicity;
+  const hasConfidentialGasLimit = calls.some((call) =>
+    call.confidential === true && call.gasLimit !== undefined
+  );
+  const atomicRequired = canProvideAtomicity &&
+    (preference !== "allow-non-atomic" || hasConfidentialGasLimit);
+  if (
+    !atomicRequired &&
+    hasConfidentialGasLimit &&
+    !support.callGasLimitSupported
+  ) {
+    return Object.freeze({
+      kind: "sequential" as const,
+      reason: "call-gas-limit-capability-unavailable" as const,
+      support,
+      calls,
+      containsApproval,
+    });
+  }
   return Object.freeze({
     kind: "wallet_sendCalls" as const,
     support,
@@ -393,6 +471,8 @@ export function prepareWalletCallExecution(input: Readonly<{
       from: input.from,
       calls,
       atomicRequired,
+      includeCallGasLimits:
+        !atomicRequired && hasConfidentialGasLimit && support.callGasLimitSupported,
       ...(input.id ? { id: input.id } : {}),
     }),
   });

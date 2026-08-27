@@ -3,6 +3,7 @@ export * from "./operationPlan.js";
 export * from "./walletCallBatch.js";
 export * from "./nativeAsset.js";
 export * from "./liquidity.js";
+export * from "./executionError.js";
 import { isEvmNativeAssetAddress } from "./nativeAsset.js";
 import { liquiditySideToContractBoolean, } from "./liquidity.js";
 /**

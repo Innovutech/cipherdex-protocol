@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import {
+  CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY,
   WALLET_CALLS_VERSION,
   buildConfidentialAddLiquidityOperationPlan,
   buildConfidentialAddLiquidityQuoteOperationPlan,
@@ -28,8 +29,18 @@ const BLOCK_HASH = `0x${"55".repeat(32)}`;
 const TX1 = `0x${"66".repeat(32)}`;
 const TX2 = `0x${"77".repeat(32)}`;
 
-function capabilities(status: "supported" | "ready" | "unsupported") {
-  return { [CHAIN_HEX]: { atomic: { status } } };
+function capabilities(
+  status: "supported" | "ready" | "unsupported",
+  callGasLimitSupported = false,
+) {
+  return {
+    [CHAIN_HEX]: {
+      atomic: { status },
+      ...(callGasLimitSupported
+        ? { [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: { supported: true } }
+        : {}),
+    },
+  };
 }
 
 function receipt(status: "0x0" | "0x1", transactionHash: string) {
@@ -58,6 +69,7 @@ describe("SDK confidential operation planning", function () {
       "approve-input-token",
       "execute-swap",
     ]);
+    expect(plan.transactions.every((step) => step.confidential)).to.equal(true);
     expect(plan.prompts).to.deep.equal({
       encryptedSignatures: 3,
       sequentialTransactionConfirmations: 2,
@@ -200,6 +212,8 @@ describe("SDK optional wallet call batching", function () {
       "prepareWalletCallExecution",
       "normalizeWalletCallsStatus",
       "buildPublicTokenApprovalPlan",
+      "classifyCipherDexExecutionError",
+      "preflightCipherDexTransaction",
     ]) {
       expect(published[name], `${name} export`).to.be.a("function");
     }
@@ -213,6 +227,8 @@ describe("SDK optional wallet call batching", function () {
       batchingSupported: true,
       atomicStatus: "supported",
       source: "chain",
+      callGasLimitSupported: false,
+      callGasLimitSource: "none",
     });
     expect(getWalletCallBatchSupport({
       "0x0": { atomic: { status: "ready" } },
@@ -220,6 +236,21 @@ describe("SDK optional wallet call batching", function () {
       batchingSupported: true,
       atomicStatus: "ready",
       source: "global",
+      callGasLimitSupported: false,
+      callGasLimitSource: "none",
+    });
+
+    expect(getWalletCallBatchSupport({
+      [CHAIN_HEX]: { atomic: { status: "unsupported" } },
+      "0x0": {
+        [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: { supported: true },
+      },
+    }, CHAIN_ID)).to.deep.equal({
+      batchingSupported: true,
+      atomicStatus: "unsupported",
+      source: "chain",
+      callGasLimitSupported: true,
+      callGasLimitSource: "global",
     });
 
     let getterInvoked = false;
@@ -249,8 +280,19 @@ describe("SDK optional wallet call batching", function () {
       from: ACCOUNT,
       steps: operation.transactions,
       calls: [
-        { stepId: "approve-input-token", to: TOKEN, data: "0x1234" },
-        { stepId: "execute-swap", to: POOL, data: "0xabcd", value: 2n },
+        {
+          stepId: "approve-input-token",
+          to: TOKEN,
+          data: "0x1234",
+          gasLimit: 500_000n,
+        },
+        {
+          stepId: "execute-swap",
+          to: POOL,
+          data: "0xabcd",
+          value: 2n,
+          gasLimit: 90_000_000n,
+        },
       ],
       capabilities: capabilities("supported"),
       id: BATCH_ID,
@@ -273,7 +315,123 @@ describe("SDK optional wallet call batching", function () {
         ],
       }],
     });
+    expect(execution.calls.map((call) => call.gasLimit)).to.deep.equal([
+      500_000n,
+      90_000_000n,
+    ]);
+    expect(execution.request.params[0].calls[0]).not.to.have.property("capabilities");
+    expect(execution.request.params[0].calls[1]).not.to.have.property("capabilities");
     expect(Object.isFrozen(execution.request.params[0].calls)).to.equal(true);
+  });
+
+  it("uses negotiated call gas limits only for non-atomic confidential batching", function () {
+    const operation = buildConfidentialSwapOperationPlan();
+    const calls = [
+      {
+        stepId: "approve-input-token",
+        to: TOKEN,
+        data: "0x1234",
+        gasLimit: 500_000n,
+      },
+      {
+        stepId: "execute-swap",
+        to: POOL,
+        data: "0xabcd",
+        gasLimit: 30_000_000n,
+      },
+    ] as const;
+    const execution = prepareWalletCallExecution({
+      chainId: CHAIN_ID,
+      from: ACCOUNT,
+      steps: operation.transactions,
+      calls,
+      capabilities: capabilities("unsupported", true),
+    });
+
+    expect(execution.kind).to.equal("wallet_sendCalls");
+    if (execution.kind !== "wallet_sendCalls") throw new Error("unexpected plan");
+    expect(execution.request.params[0].atomicRequired).to.equal(false);
+    expect(execution.request.params[0].calls).to.deep.equal([
+      {
+        to: TOKEN,
+        data: "0x1234",
+        capabilities: {
+          [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: { gasLimit: "0x7a120" },
+        },
+      },
+      {
+        to: POOL,
+        data: "0xabcd",
+        capabilities: {
+          [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: { gasLimit: "0x1c9c380" },
+        },
+      },
+    ]);
+    expect(execution.request.params[0].calls[0]).not.to.have.property("gas");
+  });
+
+  it("retains explicit confidential limits for sequential fallback", function () {
+    const operation = buildConfidentialSwapOperationPlan();
+    const execution = prepareWalletCallExecution({
+      chainId: CHAIN_ID,
+      from: ACCOUNT,
+      steps: operation.transactions,
+      calls: [
+        {
+          stepId: "approve-input-token",
+          to: TOKEN,
+          data: "0x1234",
+          gasLimit: 500_000n,
+        },
+        {
+          stepId: "execute-swap",
+          to: POOL,
+          data: "0xabcd",
+          gasLimit: 30_000_000n,
+        },
+      ],
+      capabilities: capabilities("unsupported"),
+    });
+
+    expect(execution).to.deep.include({
+      kind: "sequential",
+      reason: "call-gas-limit-capability-unavailable",
+    });
+    expect(execution.calls.map((call) => call.gasLimit)).to.deep.equal([
+      500_000n,
+      30_000_000n,
+    ]);
+  });
+
+  it("keeps atomic-ready confidential batching interoperable without the custom capability", function () {
+    const operation = buildConfidentialSwapOperationPlan();
+    const execution = prepareWalletCallExecution({
+      chainId: CHAIN_ID,
+      from: ACCOUNT,
+      steps: operation.transactions,
+      calls: [
+        {
+          stepId: "approve-input-token",
+          to: TOKEN,
+          data: "0x1234",
+          gasLimit: 500_000n,
+        },
+        {
+          stepId: "execute-swap",
+          to: POOL,
+          data: "0xabcd",
+          gasLimit: 30_000_000n,
+        },
+      ],
+      capabilities: capabilities("ready"),
+      preference: "allow-non-atomic",
+    });
+
+    expect(execution.kind).to.equal("wallet_sendCalls");
+    if (execution.kind !== "wallet_sendCalls") throw new Error("unexpected plan");
+    expect(execution.request.params[0].atomicRequired).to.equal(true);
+    expect(execution.request.params[0].calls.every((call) => !call.capabilities))
+      .to.equal(true);
   });
 
   it("selects non-atomic batching, sequential fallback, or unavailable safely", function () {
@@ -362,6 +520,13 @@ describe("SDK optional wallet call batching", function () {
       ],
       preference: "sometimes" as unknown as "prefer-atomic",
     })).to.throw("Invalid wallet call batch preference");
+    expect(() => prepareWalletCallExecution({
+      ...base,
+      calls: [
+        { stepId: "approve-input-token", to: TOKEN, data: "0x1234", gasLimit: 0n },
+        { stepId: "execute-swap", to: POOL, data: "0xabcd" },
+      ],
+    })).to.throw("Invalid wallet call gas limit");
   });
 
   it("parses submission IDs and creates status requests", function () {

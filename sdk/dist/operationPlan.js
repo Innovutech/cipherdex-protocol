@@ -56,6 +56,7 @@ function buildOperationPlan(input) {
             id: step.id,
             position: index + 1,
             total: input.transactions.length,
+            confidential: true,
             purpose: step.purpose,
             label: step.label,
             dependsOn,

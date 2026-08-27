@@ -42,6 +42,7 @@ export type ConfidentialTransactionStep = Readonly<{
     id: string;
     position: number;
     total: number;
+    confidential: true;
     purpose: ConfidentialTransactionPurpose;
     label: string;
     dependsOn: readonly string[];

@@ -2,24 +2,29 @@ export declare const WALLET_CALLS_VERSION: "2.0.0";
 export declare const WALLET_CALL_CAPABILITIES_METHOD: "wallet_getCapabilities";
 export declare const WALLET_CALL_BATCH_METHOD: "wallet_sendCalls";
 export declare const WALLET_CALL_STATUS_METHOD: "wallet_getCallsStatus";
+export declare const CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY: "org.ciphertrade.callGasLimit";
 export declare const MAX_CIPHERDEX_WALLET_CALLS: 8;
 export type WalletAtomicCapabilityStatus = "supported" | "ready" | "unsupported";
 export type WalletCallBatchSupport = Readonly<{
     batchingSupported: boolean;
     atomicStatus: WalletAtomicCapabilityStatus | "unknown";
     source: "chain" | "global" | "none";
+    callGasLimitSupported: boolean;
+    callGasLimitSource: "chain" | "global" | "none";
 }>;
 export type WalletCallBatchPreference = "prefer-atomic" | "allow-non-atomic" | "require-atomic";
 export type WalletCallStep = Readonly<{
     id: string;
     purpose: string;
     label: string;
+    confidential?: boolean;
 }>;
 export type WalletCallInput = Readonly<{
     stepId: string;
     to: string;
     data: string;
     value?: bigint;
+    gasLimit?: bigint;
 }>;
 export type PreparedWalletCall = Readonly<{
     stepId: string;
@@ -28,6 +33,8 @@ export type PreparedWalletCall = Readonly<{
     to: string;
     data: string;
     value: bigint;
+    gasLimit?: bigint;
+    confidential?: true;
 }>;
 export type WalletSendCallsParams = Readonly<{
     version: typeof WALLET_CALLS_VERSION;
@@ -39,6 +46,11 @@ export type WalletSendCallsParams = Readonly<{
         to: string;
         data: string;
         value?: string;
+        capabilities?: Readonly<{
+            [CIPHERTRADE_CALL_GAS_LIMIT_CAPABILITY]: Readonly<{
+                gasLimit: string;
+            }>;
+        }>;
     }>[];
 }>;
 export type WalletSendCallsRequest = Readonly<{
@@ -57,7 +69,7 @@ export type WalletCallExecutionPlan = Readonly<{
     request: WalletSendCallsRequest;
 }> | Readonly<{
     kind: "sequential";
-    reason: "single-call" | "wallet-batching-unavailable";
+    reason: "single-call" | "wallet-batching-unavailable" | "call-gas-limit-capability-unavailable";
     support: WalletCallBatchSupport;
     calls: readonly PreparedWalletCall[];
     containsApproval: boolean;
