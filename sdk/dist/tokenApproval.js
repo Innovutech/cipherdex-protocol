@@ -48,37 +48,70 @@ function approvalCall(token, spender, amount) {
         args: Object.freeze([spender, amount]),
     });
 }
-/**
- * Builds ordered public ERC-20 approval calls for a reviewed spend.
- *
- * Exact approval is the default and also reduces a pre-existing larger
- * allowance. Changing any nonzero allowance uses an approve(0) reset before the
- * target approval for compatibility with tokens that reject nonzero-to-nonzero
- * allowance changes. Callers must execute every returned call in order and
- * re-read allowance before submitting the protected operation.
- */
-export function buildPublicTokenApprovalPlan(input) {
+function resolveTokenApprovalPlan(input) {
     assertAddress(input.token, "token");
     assertAddress(input.spender, "spender");
     assertUint256(input.currentAllowance, "current token allowance", true);
     const mode = input.mode ?? DEFAULT_TOKEN_APPROVAL_MODE;
-    const targetAllowance = resolveTokenApprovalAmount(input.requiredAmount, mode);
-    const requiresZeroReset = input.currentAllowance !== 0n && input.currentAllowance !== targetAllowance;
-    const calls = [];
-    if (requiresZeroReset) {
-        calls.push(approvalCall(input.token, input.spender, 0n));
-    }
-    if (input.currentAllowance !== targetAllowance) {
-        calls.push(approvalCall(input.token, input.spender, targetAllowance));
-    }
+    const requestedTarget = resolveTokenApprovalAmount(input.requiredAmount, mode);
+    const approvalRequired = input.currentAllowance < input.requiredAmount;
+    const targetAllowance = approvalRequired
+        ? requestedTarget
+        : input.currentAllowance;
+    const requiresZeroReset = approvalRequired && input.currentAllowance !== 0n;
+    const plaintextAmounts = approvalRequired
+        ? requiresZeroReset
+            ? [0n, targetAllowance]
+            : [targetAllowance]
+        : [];
     return Object.freeze({
         mode,
+        targetAllowance,
+        requiresZeroReset,
+        plaintextAmounts: Object.freeze(plaintextAmounts),
+    });
+}
+/**
+ * Builds ordered public ERC-20 approval calls for a reviewed spend.
+ *
+ * Any allowance that already covers the reviewed spend is reused. Exact and
+ * unlimited modes select the new allowance only when the current allowance is
+ * insufficient. Changing an insufficient nonzero allowance uses an approve(0)
+ * reset before the target approval for compatibility with tokens that reject
+ * nonzero-to-nonzero allowance changes. Callers must execute every returned call
+ * in order and re-read allowance before submitting the protected operation.
+ */
+export function buildPublicTokenApprovalPlan(input) {
+    const resolved = resolveTokenApprovalPlan(input);
+    const calls = resolved.plaintextAmounts.map((amount) => approvalCall(input.token, input.spender, amount));
+    return Object.freeze({
+        mode: resolved.mode,
         token: input.token,
         spender: input.spender,
         requiredAmount: input.requiredAmount,
         currentAllowance: input.currentAllowance,
-        targetAllowance,
-        requiresZeroReset,
+        targetAllowance: resolved.targetAllowance,
+        requiresZeroReset: resolved.requiresZeroReset,
         calls: Object.freeze(calls),
+    });
+}
+/**
+ * Builds ordered plaintext approval amounts for a COTI private token.
+ *
+ * The caller must encrypt each returned amount for the private token's
+ * `approve(address,itUint256)` operation and execute the resulting calls in
+ * order. This SDK deliberately never accepts AES keys or constructs ciphertexts.
+ */
+export function buildPrivateTokenApprovalPlan(input) {
+    const resolved = resolveTokenApprovalPlan(input);
+    return Object.freeze({
+        mode: resolved.mode,
+        token: input.token,
+        spender: input.spender,
+        requiredAmount: input.requiredAmount,
+        currentAllowance: input.currentAllowance,
+        targetAllowance: resolved.targetAllowance,
+        requiresZeroReset: resolved.requiresZeroReset,
+        plaintextAmounts: resolved.plaintextAmounts,
     });
 }

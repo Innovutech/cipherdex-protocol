@@ -91,13 +91,13 @@ receiver burns. `PublicCPMMNativeRouter` atomically wraps or unwraps
 native COTI around swaps and liquidity operations while public pools remain
 ERC-20-only. The standard `0xEeee...` native sentinel exists only at the SDK/UI
 boundary and is never stored as a pool token.
-The dependency-free SDK defaults public token spending to exact allowances and
-offers an explicit `unlimited` mode. Its approval-plan builder takes the observed
-current allowance, reduces larger residual allowances when exact mode is chosen,
-and emits a zero-reset step before nonzero-to-nonzero changes for token
-compatibility. Confidential integrations can use the same amount-policy resolver
-before encrypting the selected allowance with the official COTI SDK; CipherDEX
-does not handle wallet AES keys.
+The dependency-free SDK defaults token spending to exact allowances and offers an
+explicit `unlimited` mode. Public and private approval planners reuse every
+existing allowance that already covers the required spend. If approval is
+required, the selected mode determines the new target and an insufficient
+nonzero allowance emits a zero-reset step before the replacement. The private
+planner returns ordered plaintext amounts for encryption with the official COTI
+SDK; CipherDEX does not handle wallet AES keys or ciphertexts.
 Confidential pools retain direct execution and additionally expose a
 factory-bound `ConfidentialBestExecutionRouter`. Users encrypt inputs for that
 router and exact function selector. A paid quote may reuse the validated MPC

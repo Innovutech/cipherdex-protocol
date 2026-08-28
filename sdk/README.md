@@ -20,11 +20,16 @@ gas evidence. Larger quote sets require live-runtime measurement before release.
 Per-pool transactions remain direct protocol operations rather than being
 mislabeled as a fallback.
 
-The SDK also exports exact-by-default token approval planning, canonical
-confidential-operation signature/transaction steps, and optional EIP-5792 v2
-wallet-call preparation. Capability parsing, batching and status normalization
-are dependency-free and provider-agnostic: clients query their connected wallet,
-use a prepared batch only when supported, and retain sequential execution as the
+The SDK also exports exact-by-default public and private token approval planning,
+canonical confidential-operation signature/transaction steps, and optional
+EIP-5792 v2 wallet-call preparation. Every sufficient existing allowance is
+reused in either approval mode. When approval is required, exact/unlimited selects
+the new target and an insufficient nonzero allowance produces an ordered zero
+reset first. The private planner returns plaintext amounts for the application to
+encrypt with the official COTI SDK; CipherDEX never handles AES keys or
+ciphertexts. Capability parsing, batching and status normalization are
+dependency-free and provider-agnostic: clients query their connected wallet, use
+a prepared batch only when supported, and retain sequential execution as the
 fallback. Partial non-atomic batches involving approvals are marked for explicit
 allowance review. The SDK never signs, sends, polls or persists wallet requests.
 

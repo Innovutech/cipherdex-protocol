@@ -21,6 +21,23 @@ export type PublicTokenApprovalPlan = Readonly<{
     requiresZeroReset: boolean;
     calls: readonly PublicTokenApprovalCall[];
 }>;
+export type PrivateTokenApprovalPlan = Readonly<{
+    mode: TokenApprovalMode;
+    token: string;
+    spender: string;
+    requiredAmount: bigint;
+    currentAllowance: bigint;
+    targetAllowance: bigint;
+    requiresZeroReset: boolean;
+    plaintextAmounts: readonly bigint[];
+}>;
+export type TokenApprovalPlanInput = Readonly<{
+    token: string;
+    spender: string;
+    requiredAmount: bigint;
+    currentAllowance: bigint;
+    mode?: TokenApprovalMode;
+}>;
 /**
  * Resolves the plaintext allowance target selected by the user. Confidential
  * integrations may encrypt this value with the official COTI SDK; this helper
@@ -30,16 +47,19 @@ export declare function resolveTokenApprovalAmount(requiredAmount: bigint, mode?
 /**
  * Builds ordered public ERC-20 approval calls for a reviewed spend.
  *
- * Exact approval is the default and also reduces a pre-existing larger
- * allowance. Changing any nonzero allowance uses an approve(0) reset before the
- * target approval for compatibility with tokens that reject nonzero-to-nonzero
- * allowance changes. Callers must execute every returned call in order and
- * re-read allowance before submitting the protected operation.
+ * Any allowance that already covers the reviewed spend is reused. Exact and
+ * unlimited modes select the new allowance only when the current allowance is
+ * insufficient. Changing an insufficient nonzero allowance uses an approve(0)
+ * reset before the target approval for compatibility with tokens that reject
+ * nonzero-to-nonzero allowance changes. Callers must execute every returned call
+ * in order and re-read allowance before submitting the protected operation.
  */
-export declare function buildPublicTokenApprovalPlan(input: Readonly<{
-    token: string;
-    spender: string;
-    requiredAmount: bigint;
-    currentAllowance: bigint;
-    mode?: TokenApprovalMode;
-}>): PublicTokenApprovalPlan;
+export declare function buildPublicTokenApprovalPlan(input: TokenApprovalPlanInput): PublicTokenApprovalPlan;
+/**
+ * Builds ordered plaintext approval amounts for a COTI private token.
+ *
+ * The caller must encrypt each returned amount for the private token's
+ * `approve(address,itUint256)` operation and execute the resulting calls in
+ * order. This SDK deliberately never accepts AES keys or constructs ciphertexts.
+ */
+export declare function buildPrivateTokenApprovalPlan(input: TokenApprovalPlanInput): PrivateTokenApprovalPlan;

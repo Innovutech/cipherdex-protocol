@@ -5,6 +5,7 @@ import {
   MAX_TOKEN_APPROVAL,
   PUBLIC_ERC20_APPROVAL_ABI,
   TOKEN_APPROVAL_MODE,
+  buildPrivateTokenApprovalPlan,
   buildPublicTokenApprovalPlan,
   resolveTokenApprovalAmount,
 } from "../../sdk/src/index";
@@ -57,31 +58,35 @@ describe("SDK token approval policy", function () {
     );
   });
 
-  it("does not submit a redundant approval at the selected target", function () {
+  it("reuses every sufficient allowance regardless of approval mode", function () {
     const exact = buildPublicTokenApprovalPlan({
       token: TOKEN,
       spender: SPENDER,
       requiredAmount: 125n,
-      currentAllowance: 125n,
+      currentAllowance: 250n,
     });
     const unlimited = buildPublicTokenApprovalPlan({
       token: TOKEN,
       spender: SPENDER,
       requiredAmount: 125n,
-      currentAllowance: MAX_TOKEN_APPROVAL,
+      currentAllowance: 125n,
       mode: "unlimited",
     });
 
     expect(exact.calls).to.deep.equal([]);
+    expect(exact.targetAllowance).to.equal(250n);
+    expect(exact.requiresZeroReset).to.equal(false);
     expect(unlimited.calls).to.deep.equal([]);
+    expect(unlimited.targetAllowance).to.equal(125n);
+    expect(unlimited.requiresZeroReset).to.equal(false);
   });
 
-  it("removes a residual unlimited allowance before applying exact approval", function () {
+  it("resets an insufficient nonzero allowance before exact approval", function () {
     const plan = buildPublicTokenApprovalPlan({
       token: TOKEN,
       spender: SPENDER,
       requiredAmount: 125n,
-      currentAllowance: MAX_TOKEN_APPROVAL,
+      currentAllowance: 10n,
     });
 
     expect(plan.requiresZeroReset).to.equal(true);
@@ -105,6 +110,55 @@ describe("SDK token approval policy", function () {
       0n,
       MAX_TOKEN_APPROVAL,
     ]);
+  });
+
+  it("builds ordered plaintext private approval amounts for encryption", function () {
+    const zeroAllowance = buildPrivateTokenApprovalPlan({
+      token: TOKEN,
+      spender: SPENDER,
+      requiredAmount: 125n,
+      currentAllowance: 0n,
+    });
+    const nonzeroAllowance = buildPrivateTokenApprovalPlan({
+      token: TOKEN,
+      spender: SPENDER,
+      requiredAmount: 125n,
+      currentAllowance: 10n,
+      mode: "unlimited",
+    });
+
+    expect(zeroAllowance.plaintextAmounts).to.deep.equal([125n]);
+    expect(zeroAllowance.requiresZeroReset).to.equal(false);
+    expect(nonzeroAllowance.plaintextAmounts).to.deep.equal([
+      0n,
+      MAX_TOKEN_APPROVAL,
+    ]);
+    expect(nonzeroAllowance.requiresZeroReset).to.equal(true);
+    expect(Object.isFrozen(nonzeroAllowance)).to.equal(true);
+    expect(Object.isFrozen(nonzeroAllowance.plaintextAmounts)).to.equal(true);
+  });
+
+  it("reuses sufficient private allowances without requesting encryption", function () {
+    const exact = buildPrivateTokenApprovalPlan({
+      token: TOKEN,
+      spender: SPENDER,
+      requiredAmount: 125n,
+      currentAllowance: MAX_TOKEN_APPROVAL,
+    });
+    const unlimited = buildPrivateTokenApprovalPlan({
+      token: TOKEN,
+      spender: SPENDER,
+      requiredAmount: 125n,
+      currentAllowance: 250n,
+      mode: "unlimited",
+    });
+
+    expect(exact.plaintextAmounts).to.deep.equal([]);
+    expect(exact.targetAllowance).to.equal(MAX_TOKEN_APPROVAL);
+    expect(exact.requiresZeroReset).to.equal(false);
+    expect(unlimited.plaintextAmounts).to.deep.equal([]);
+    expect(unlimited.targetAllowance).to.equal(250n);
+    expect(unlimited.requiresZeroReset).to.equal(false);
   });
 
   it("rejects malformed policy inputs", function () {
