@@ -124,12 +124,13 @@ identity and immutable configuration only.
 See `docs/INTEGRATION_EXAMPLE.md` for discovery, current routing gates, public
 execution and launchpad indexing boundaries.
 
-Authoritative COTI testnet addresses, deployment transactions, runtime
-codehashes, compiler settings and exact source commit are published only in a
-reviewed immutable `deployments/coti-testnet-<commit>.json` record. Integrations should pin and validate
-that manifest's factory, fee vault and protocol version rather than copying
-address constants into multiple SDK modules. The manifest is testnet-only and is
-not a mainnet registry.
+Authoritative production addresses, deployment transactions, runtime codehashes,
+compiler settings and exact source commit are published in the reviewed
+`deployments/coti-mainnet-b99c41abc031754990d4efcaaf1baa6754b3bb1e.json`
+record. Integrations must pin and validate that manifest's factories, routers,
+fee vault and protocol versions rather than copying address constants into
+multiple SDK modules. Historical `coti-testnet-<commit>.json` manifests remain
+test evidence only and are not production registries.
 
 Private amounts, reserves, balances and LP positions are not represented in the
 discovery schema. The confidential pool instead exposes paid, owner-targeted

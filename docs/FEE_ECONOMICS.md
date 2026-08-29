@@ -129,9 +129,10 @@ Private token balances stay
 under encrypted per-token/per-epoch vault accounting until a matured aggregate
 sweep transfers them to the beneficiary.
 
-The vault must be a dedicated CipherDEX deployment. The beneficiary should be a
-reviewed multisig or governed treasury before any production deployment. A v1
-testnet EOA is an operational convenience, not a mainnet recommendation.
+The vault must be a dedicated CipherDEX deployment. The current mainnet
+beneficiary is immutable and recorded in the authoritative deployment manifest;
+it has no authority over pool reserves or protocol configuration. A reviewed
+multisig or governed treasury remains the recommendation for a future deployment.
 
 ## LP-share alternative
 

@@ -21,8 +21,9 @@ import "./CipherDEXFeePolicy.sol";
  * pass/fail values remain confidential; pool identity, token addresses, direction,
  * and participant addresses remain observable.
  *
- * This contract is a testnet feasibility implementation. It is not a mainnet
- * deployment and has not received an external audit.
+ * This implementation is part of the active commit-bound COTI mainnet stack.
+ * It is intentionally minimal and hardened around the documented MPC and token
+ * trust boundaries. It has not received an independent external audit.
  */
 contract ConfidentialCPMM is CipherDEXFeePolicy {
     uint256 public constant PROTOCOL_VERSION = 1;

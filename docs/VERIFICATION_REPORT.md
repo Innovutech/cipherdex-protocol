@@ -1,12 +1,12 @@
 # Verification Report
 
-Date: 2026-08-28
+Date: 2026-08-30
 
 ## Current COTI mainnet deployment
 
-Source commit `b99c41abc031754990d4efcaaf1baa6754b3bb1e` was deployed as one
-unified COTI mainnet (`2632500`) stack through the authenticated external
-launcher. Its authoritative record is
+Source commit `b99c41abc031754990d4efcaaf1baa6754b3bb1e` is the active production
+deployment and was deployed as one unified COTI mainnet (`2632500`) stack
+through the authenticated external launcher. Its authoritative record is
 `deployments/coti-mainnet-b99c41abc031754990d4efcaaf1baa6754b3bb1e.json`.
 All 20 deployment and binding transactions are recorded as mined-success with
 no uncertain broadcasts. The single fee vault has both factory slots consumed;
@@ -50,10 +50,15 @@ reserve-sync method. Focused Codex Security scan
 Exact Cotiscan dry-runs passed for all 13 direct deployments. Their authenticated
 Standard JSON inputs are retained under
 `deployments/compiler-inputs/b99c41abc031754990d4efcaaf1baa6754b3bb1e/`.
-No source has yet been submitted to Cotiscan.
+All 13 direct deployments and both constructor-created children, the launchpad
+migrator and public LP-token factory, are source-verified on Cotiscan using those
+retained inputs and recorded constructor arguments. Cotiscan classifies builds
+using `metadata.bytecodeHash: "none"` as partial matches; the repository verifier
+additionally established exact manifest, compiler-input, constructor and runtime
+matches for every direct deployment.
 
-This records deployment and on-chain binding evidence only. It is not a claim
-of explorer source-code verification or external audit.
+This records deployment, on-chain binding and explorer source-verification
+evidence. It is not a claim of an independent external audit.
 
 ## Historical focused public testnet evidence
 
@@ -95,10 +100,10 @@ mature fee collection and launchpad migration all passed, and their sanitized
 source-bound records were assembled into one passing suite record. Every
 disposable private and public resource was recovered with zero residue. The
 independent evidence verifier then passed from exact evidence commit
-`3f89343976cd609b6f86eaa2952a0bf9f268376c`, sealing this deployment as the
-current supported testnet integration surface.
+`3f89343976cd609b6f86eaa2952a0bf9f268376c`, sealing that deployment as the
+then-supported testnet integration surface.
 
-The current source additionally removes the confidential factory's external-token
+That historical source additionally removed the confidential factory's external-token
 runtime-codehash admission list. Standard and launch-protected pool creation now
 share one structural compatibility rule: deployed code, the official COTI
 `IPrivateERC20` ERC-165 identifier, supported decimals and exact supplied/on-chain
@@ -110,12 +115,13 @@ ABI are unchanged; the separately published SDK package moves to 4.0.0 because
 its verification-adapter method is intentionally renamed from approval to
 compatibility semantics. Existing testnet factories still implement their
 immutable historical admission policy and are disposable; no migration or
-current-source deployment claim is made here.
+active-mainnet deployment claim is made from that evidence.
 
 Historical testnet addresses, transaction hashes and gas observations from
-superseded pool identities are diagnostic only and are not evidence for this
-source. This is a testnet implementation, not a mainnet-readiness or
-external-audit claim.
+superseded pool identities are diagnostic only and are not evidence for the
+active mainnet deployment. Those records predate and do not supersede the
+current production deployment; by themselves, they were never a
+mainnet-readiness or external-audit claim.
 
 ## Environment
 

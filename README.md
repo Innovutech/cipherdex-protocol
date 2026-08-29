@@ -1,14 +1,19 @@
 # CipherDEX Protocol
 
-Independent COTI-native AMM protocol work for the CipherDEX ecosystem.
+Minimal, hardened COTI-native AMM protocol deployed on COTI mainnet for the
+CipherDEX ecosystem.
 
 This repository is separate from CipherTrade and CipherTools. It implements
 public/public ordinary ERC-20 pools and an amount-confidential constant-product
-pool over COTI `PrivateERC20` assets. The source includes a commit-bound COTI
-mainnet deployment path that can sign either on a Ledger or with an explicitly
-configured deployment private key. Source code alone is not evidence of a mainnet deployment; only a reviewed,
-committed deployment record is authoritative. The contracts have not received an
-external audit, and the deployment tooling reports that fact without enforcing it
+pool over COTI `PrivateERC20` assets. The active production mainnet deployment is
+bound to source commit `b99c41abc031754990d4efcaaf1baa6754b3bb1e` and recorded
+in `deployments/coti-mainnet-b99c41abc031754990d4efcaaf1baa6754b3bb1e.json`.
+The deployment path can sign either on a Ledger or with an explicitly configured
+deployment private key. Source code alone is not deployment evidence; only a
+reviewed, committed deployment record is authoritative. The contracts are
+intentionally minimal and hardened, but they have not received an independent
+external audit. Internal verification and security review are not represented as
+one, and the deployment tooling keeps that status explicit without enforcing it
 as a technical gate.
 
 ## Current boundary

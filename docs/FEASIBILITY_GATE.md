@@ -96,12 +96,13 @@ as a synchronous CPMM leg without a separate pending-state, timeout, refund and
 recovery protocol. PoD support remains outside this v1 rather than being treated
 as an implicit `PrivateERC20` fallback.
 
-## Remaining production checks
+## Ongoing production assurance
 
-The testnet behavior is demonstrated, not externally audited. An independent
-audit remains recommended and its absence must stay visible in release records,
-but it is not an executable mainnet deployment gate. The operator has explicitly
-accepted proceeding without that gate. Before deployment:
+This testnet evidence was established before the current production mainnet
+deployment. An independent audit remains recommended and its absence must stay
+visible in release records, but it is not an executable deployment gate. The
+operator explicitly accepted proceeding without that gate. For future protocol
+revisions or redeployments:
 
 1. Run sustained stateful/fuzz campaigns beyond the deterministic local suite,
    including paid router quote gas/liveness at four through nine candidates.
@@ -112,7 +113,8 @@ accepted proceeding without that gate. Before deployment:
    release candidate when operational custody of intentionally locked test
    liquidity is explicitly approved; their contract paths are covered locally,
    while the normal funded evidence runner remains creator-held and recoverable.
-4. Use a reviewed multisig/governance beneficiary instead of a testnet EOA.
-5. Revalidate compiler, RPC and MPC behavior against the target mainnet release.
+4. Evaluate a reviewed multisig/governance beneficiary instead of an EOA.
+5. Revalidate compiler, RPC and MPC behavior against each target mainnet
+   release.
 
 No external audit is claimed.

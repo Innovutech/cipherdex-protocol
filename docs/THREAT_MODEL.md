@@ -154,8 +154,8 @@ all token callbacks, gas griefing, pool initialization, LP rounding, event
 linkability, precompile behavior under `eth_call`, and testnet-to-mainnet
 compiler/deployment differences. No external audit is claimed.
 
-All unreleased protocol components and the discovery schema report version 1.
-Development changes do not create compatibility generations. Integrations must
+All active deployed protocol components and the discovery schema report version
+1. Development changes do not create compatibility generations. Integrations must
 bind execution to the configured
 factory, exact runtime codehashes, finalized strategy registry, one-time router
 binding and each strategy's one-time migrator binding, fee vault, protocol

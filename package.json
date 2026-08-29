@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "COTI-native confidential AMM protocol proof of concept.",
+  "description": "Minimal, hardened COTI-native public and confidential AMM protocol deployed on mainnet.",
   "engines": {
     "node": "24.16.x",
     "npm": "11.13.x"

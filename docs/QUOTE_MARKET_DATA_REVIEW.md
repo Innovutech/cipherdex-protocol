@@ -30,7 +30,9 @@ artifact before enabling it and use deterministic fresh-ciphertext quote groups
 if the chain cannot fit the selected set in one transaction.
 
 No public reserve, TVL, spot-price, TWAP, depth ladder or quote state is added.
-This is a testnet feasibility boundary, not a mainnet-readiness claim.
+This disclosure boundary is retained by the active mainnet design. Its funded
+MPC behavior was established on testnet and is supporting evidence, not an
+independent external audit.
 
 ## Isolated runtime evidence
 

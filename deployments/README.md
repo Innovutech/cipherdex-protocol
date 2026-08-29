@@ -2,6 +2,10 @@
 
 This directory is reserved for public, reviewed deployment records.
 
+The active production COTI mainnet deployment is recorded in
+`coti-mainnet-b99c41abc031754990d4efcaaf1baa6754b3bb1e.json`. Historical testnet
+records are retained as validation evidence and are not production registries.
+
 Do not commit private keys, AES keys, encrypted inputs, signatures, local
 environment files, or unverified addresses here. Testnet and optional Ledger or
 private-key mainnet deployment scripts live under `scripts/` and print public addresses,

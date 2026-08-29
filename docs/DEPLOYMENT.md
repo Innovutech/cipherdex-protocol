@@ -2,6 +2,10 @@
 
 ## COTI mainnet deployment
 
+The active production deployment is bound to source commit
+`b99c41abc031754990d4efcaaf1baa6754b3bb1e` and recorded in
+`deployments/coti-mainnet-b99c41abc031754990d4efcaaf1baa6754b3bb1e.json`.
+
 The mainnet deployment path reuses the same factories, bindings, runtime-codehash
 checks, receipt reconciliation and commit-bound record writer as testnet. Hardhat
 does not configure a mainnet account. The authenticated runner requires exactly
@@ -12,9 +16,11 @@ gas limit and fee envelope, persist the deterministic signed transaction before
 broadcast, and block blind retries after an uncertain submission. The deployer
 receives no lasting protocol role.
 
-An external audit is recommended but is not an executable deployment gate. The
-deployment record explicitly retains the current review status so it cannot be
-mistaken for an audited release.
+The deployed design is intentionally minimal and hardened through commit-bound
+deployment, runtime-codehash checks, focused testing and adversarial review. An
+independent external audit remains recommended but is not an executable
+deployment gate. The deployment record explicitly retains the current review
+status so it cannot be mistaken for an externally audited release.
 
 1. Review and commit the exact source to deploy. Do not deploy a dirty worktree.
    Record the full 40-character commit.
@@ -351,8 +357,8 @@ The deploy script prints only public contract configuration. It does not onboard
 accounts, handle AES keys, create a pool, or manufacture encrypted inputs. Use the
 official COTI SDK and the documented scenario/launchpad harness for those operations.
 
-All unreleased protocol components and the discovery schema report version 1.
-Development changes do not create compatibility generations. Integration
+All active deployed protocol components and the discovery schema report version
+1. Development changes do not create compatibility generations. Integration
 allowlists must pin the
 deployed factory, fee vault, pool deployer/codehash, finalized strategy registry,
 registered strategy/codehash, migrator, configured router, all versions and the
