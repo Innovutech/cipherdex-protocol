@@ -34,6 +34,10 @@ const requiredNonReentrant = new Map([
   ],
   ["contracts/PublicCPMMRouter.sol", ["swapExactInput"]],
   [
+    "contracts/PublicCPMMLimitOrderBook.sol",
+    ["createOrder", "fillOrder", "cancelOrder"],
+  ],
+  [
     "contracts/PublicCPMMLiquidityRouter.sol",
     [
       "createOrAddLiquidity",

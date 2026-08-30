@@ -68,6 +68,7 @@ export default defineConfig({
       "contracts/PublicLPTokenFactory.sol": compilerSettings(200, false),
       "contracts/PublicCPMMQuoter.sol": compilerSettings(206, false),
       "contracts/PublicCPMMRouter.sol": compilerSettings(207, false),
+      "contracts/PublicCPMMLimitOrderBook.sol": compilerSettings(200),
       "contracts/PublicCPMMLiquidityRouter.sol": compilerSettings(208),
       "contracts/WrappedNativeToken.sol": compilerSettings(200, false),
       "contracts/PublicCPMMNativeRouter.sol": compilerSettings(209),

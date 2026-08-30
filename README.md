@@ -96,6 +96,27 @@ receiver burns. `PublicCPMMNativeRouter` atomically wraps or unwraps
 native COTI around swaps and liquidity operations while public pools remain
 ERC-20-only. The standard `0xEeee...` native sentinel exists only at the SDK/UI
 boundary and is never stored as a pool token.
+
+`PublicCPMMLimitOrderBook` is an optional public-only escrow periphery for
+existing canonical `PublicCPMM` pools. A maker escrows an exact ERC-20 input,
+sets a minimum output, recipient and expiry, and may attach a native COTI
+execution bounty. Orders are full-fill only. Any address may call `fillOrder`
+when the pool can satisfy the minimum; successful execution pays the optional
+bounty to that caller. The maker may cancel an open order before or after expiry
+and receives the escrow and remaining bounty back. `canFillOrder` is a
+keeper-friendly view helper, not an authorization boundary. Chainlink, Gelato,
+thirdweb, OpenZeppelin Relayer, self-hosted bots and ordinary users may all
+call the same permissionless fill function, but none is required by the
+contract. The module has no owner, keeper whitelist, relayer trust, rescue path,
+partial-fill path, signed off-chain orders, or confidential-token support.
+Its source presence does not make it part of the active mainnet deployment; only
+a reviewed deployment record can establish that status.
+
+Limit orders require exact-transfer ERC-20 behavior. Fee-on-transfer, rebasing,
+callback-mutating and otherwise nonstandard tokens are unsupported and may make
+order creation, filling, or cancellation revert. UIs should apply the same
+token-risk policy used for direct public CPMM interactions.
+
 The dependency-free SDK defaults token spending to exact allowances and offers an
 explicit `unlimited` mode. Public and private approval planners reuse every
 existing allowance that already covers the required spend. If approval is
@@ -162,6 +183,41 @@ npm ci --ignore-scripts
 npm run verify
 npm run gas:measure
 ```
+
+### Public limit-order deployment
+
+Deploy only the limit-order periphery after compiling the reviewed branch:
+
+```text
+npm run compile
+npm run deploy:public-limit-orders
+```
+
+The deployment process reads exactly these environment variables:
+
+```text
+PUBLIC_CPMM_FACTORY_ADDRESS=<canonical deployed public factory>
+DEPLOYER_PRIVATE_KEY=<funded deployment key>
+COTI_RPC_URL=<COTI testnet or mainnet RPC URL>
+```
+
+Keep the private key in the same owner-only external environment boundary used
+by other funded operations; never add it to this repository. The script accepts
+only COTI testnet (`7082400`) or mainnet (`2632500`), deploys no pool or other
+protocol component, validates the immutable factory binding, and prints the
+network, deployer, deployed address, transaction hash and constructor arguments.
+
+Before a mainnet deployment:
+
+1. Pin and review the exact source commit and compile from a clean locked install.
+2. Use the canonical public factory from the active reviewed mainnet manifest.
+3. Confirm chain `2632500`, the deployer balance and the intended RPC endpoint.
+4. Record the address, deployment transaction and constructor argument in a
+   reviewed deployment record.
+5. Match deployed runtime code to the committed artifact and submit the retained
+   compiler input for explorer verification.
+6. Enable UI/indexer discovery only after the deployment record and external
+   audit status have been reviewed explicitly.
 
 Funded configuration must be stored in a regular file outside this repository
 inside a dedicated owner-only directory. Repository-local `.env` files and
