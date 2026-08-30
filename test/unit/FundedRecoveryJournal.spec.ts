@@ -291,13 +291,19 @@ describe("funded recovery journal", function () {
 
   it("rejects a funded build after any reviewed runtime artifact changes", function () {
     const root = join(directory, "reviewed-build");
-    mkdirSync(root);
+    mkdirSync(root, { mode: 0o700 });
     restrictPrivateDirectory(root);
     for (const path of ["node_modules", "artifacts", "typechain-types"]) {
-      mkdirSync(join(root, path), { recursive: true });
-      writeFileSync(join(root, path, "entry"), path, "utf8");
+      mkdirSync(join(root, path), { recursive: true, mode: 0o700 });
+      writeFileSync(join(root, path, "entry"), path, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
     }
-    writeFileSync(join(root, "package-lock.json"), "{}", "utf8");
+    writeFileSync(join(root, "package-lock.json"), "{}", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     const previous = process.env.CIPHERDEX_BUILD_RECEIPT_ROOT;
     process.env.CIPHERDEX_BUILD_RECEIPT_ROOT = join(directory, "build-receipts");
     try {
@@ -316,13 +322,19 @@ describe("funded recovery journal", function () {
   it("uses the explicit reviewed-build receipt root for launcher handoff", function () {
     const root = join(directory, "reviewed-build-explicit");
     const receiptRoot = join(directory, "explicit-build-receipts");
-    mkdirSync(root);
+    mkdirSync(root, { mode: 0o700 });
     restrictPrivateDirectory(root);
     for (const path of ["node_modules", "artifacts", "typechain-types"]) {
-      mkdirSync(join(root, path), { recursive: true });
-      writeFileSync(join(root, path, "entry"), path, "utf8");
+      mkdirSync(join(root, path), { recursive: true, mode: 0o700 });
+      writeFileSync(join(root, path, "entry"), path, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
     }
-    writeFileSync(join(root, "package-lock.json"), "{}", "utf8");
+    writeFileSync(join(root, "package-lock.json"), "{}", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     const previous = process.env.CIPHERDEX_BUILD_RECEIPT_ROOT;
     process.env.CIPHERDEX_BUILD_RECEIPT_ROOT = join(directory, "wrong-build-receipts");
     try {
@@ -340,14 +352,18 @@ describe("funded recovery journal", function () {
   it("rejects reviewed build links that escape the measured dependency tree", function () {
     const root = join(directory, "reviewed-build-linked");
     const external = join(directory, "external-package");
-    mkdirSync(root);
+    mkdirSync(root, { mode: 0o700 });
     restrictPrivateDirectory(root);
     for (const path of ["node_modules", "artifacts", "typechain-types", "external-package"]) {
       mkdirSync(join(directory, path === "external-package" ? path : `reviewed-build-linked/${path}`), {
         recursive: true,
+        mode: 0o700,
       });
     }
-    writeFileSync(join(root, "package-lock.json"), "{}", "utf8");
+    writeFileSync(join(root, "package-lock.json"), "{}", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     writeFileSync(join(external, "entry"), "outside", "utf8");
     symlinkSync(
       external,
@@ -366,17 +382,24 @@ describe("funded recovery journal", function () {
 
   it("binds a reviewed receipt to the complete private runtime without recording a path", function () {
     const root = join(directory, "reviewed-source");
-    mkdirSync(root);
+    mkdirSync(root, { mode: 0o700 });
     restrictPrivateDirectory(root);
     for (const path of ["node_modules", "artifacts", "typechain-types", ".git/info"]) {
-      mkdirSync(join(root, path), { recursive: true });
+      mkdirSync(join(root, path), { recursive: true, mode: 0o700 });
     }
-    writeFileSync(join(root, "package-lock.json"), "{}", "utf8");
-    writeFileSync(join(root, "source.ts"), "export const reviewed = true;\n", "utf8");
-    writeFileSync(join(root, "node_modules", "entry"), "dependency", "utf8");
-    writeFileSync(join(root, "artifacts", "entry"), "artifact", "utf8");
-    writeFileSync(join(root, "typechain-types", "entry"), "typechain", "utf8");
-    writeFileSync(join(root, ".git", "HEAD"), `ref: refs/heads/main\n`, "utf8");
+    for (const [path, contents] of [
+      ["package-lock.json", "{}"],
+      ["source.ts", "export const reviewed = true;\n"],
+      ["node_modules/entry", "dependency"],
+      ["artifacts/entry", "artifact"],
+      ["typechain-types/entry", "typechain"],
+      [".git/HEAD", "ref: refs/heads/main\n"],
+    ]) {
+      writeFileSync(join(root, path), contents, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+    }
 
     const previousReceiptRoot = process.env.CIPHERDEX_BUILD_RECEIPT_ROOT;
     process.env.CIPHERDEX_BUILD_RECEIPT_ROOT = join(directory, "snapshot-receipts");
