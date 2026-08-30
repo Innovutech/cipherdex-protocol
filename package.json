@@ -28,7 +28,7 @@
     "audit:production": "npm audit --omit=dev --audit-level=low --json",
     "audit:operational": "npm audit --audit-level=low --json",
     "verify:cotiscan": "node scripts/cotiscan-verify.mjs",
-    "verify": "npm run audit:production && npm run audit:operational && npm run audit:graph && npm run test:source-boundary && npm run test:cotiscan-verification && npm run test:privacy-boundary && npm run test:security-boundary && npm run typecheck && npm run compile && npm run test:sdk-dist && npm test"
+    "verify": "npm run audit:production && npm run audit:operational && npm run audit:graph && npm run test:source-boundary && npm run test:privacy-boundary && npm run test:cotiscan-verification && npm run test:security-boundary && npm run typecheck && npm run compile && npm run test:sdk-dist && npm test"
   },
   "dependencies": {
     "@coti-io/coti-contracts": "1.3.5",
