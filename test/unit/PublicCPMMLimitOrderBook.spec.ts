@@ -147,6 +147,8 @@ describe("PublicCPMMLimitOrderBook", function () {
       .to.equal(fixture.amountIn);
     expect(await ethers.provider.getBalance(await fixture.orderBook.getAddress()))
       .to.equal(bounty);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(bounty);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
 
     const reverseAmount = fixture.unit1;
     const reverseMinimum = await fixture.pool.quoteExactInput(reverseAmount, false);
@@ -342,6 +344,8 @@ describe("PublicCPMMLimitOrderBook", function () {
     expect((await fixture.orderBook.getOrder(orderId)).executionBounty).to.equal(bounty);
     expect(await ethers.provider.getBalance(await fixture.orderBook.getAddress()))
       .to.equal(bounty);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(bounty);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
     expect(await fixture.token0.allowance(
       await fixture.orderBook.getAddress(),
       fixture.poolAddress,
@@ -388,6 +392,127 @@ describe("PublicCPMMLimitOrderBook", function () {
         [-bounty, bounty],
       );
     expect((await fixture.orderBook.getOrder(orderId)).executionBounty).to.equal(0n);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
+  });
+
+  it("cancels for a rejecting contract maker and preserves a claimable bounty", async function () {
+    const fixture = await deployFixture();
+    const bounty = ethers.parseEther("0.01");
+    const actor = await (
+      await ethers.getContractFactory("RejectingNativeLimitOrderActor")
+    ).deploy({ value: bounty });
+    await actor.waitForDeployment();
+    const actorAddress = await actor.getAddress();
+    const orderBookAddress = await fixture.orderBook.getAddress();
+    await fixture.token0.mint(actorAddress, fixture.amountIn);
+    const latest = await ethers.provider.getBlock("latest");
+    if (!latest) throw new Error("latest block unavailable");
+    const expiry = BigInt(latest.timestamp + 10);
+    const orderId = await fixture.orderBook.nextOrderId();
+
+    await actor.createOrder(
+      orderBookAddress,
+      await fixture.token0.getAddress(),
+      fixture.poolAddress,
+      true,
+      fixture.amountIn,
+      fixture.expectedAmountOut,
+      fixture.recipient.address,
+      expiry,
+      bounty,
+    );
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(expiry + 1n)]);
+    await ethers.provider.send("evm_mine", []);
+
+    await expect(actor.cancelOrder(orderBookAddress, orderId))
+      .to.emit(fixture.orderBook, "NativeBountyCredited")
+      .withArgs(orderId, actorAddress, bounty);
+
+    expect((await fixture.orderBook.getOrder(orderId)).status).to.equal(2n);
+    expect(await fixture.token0.balanceOf(actorAddress)).to.equal(fixture.amountIn);
+    expect(await fixture.orderBook.totalEscrowed(await fixture.token0.getAddress()))
+      .to.equal(0n);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(bounty);
+    expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(bounty);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(bounty);
+
+    await expect(
+      fixture.orderBook.connect(fixture.outsider).claimNativeBounty(
+        fixture.outsider.address,
+      ),
+    ).to.be.revertedWithCustomError(
+      fixture.orderBook,
+      "NoClaimableNativeBounty",
+    );
+    await expect(actor.claimNativeBounty(orderBookAddress, ethers.ZeroAddress))
+      .to.be.revertedWithCustomError(fixture.orderBook, "InvalidBountyRecipient");
+    await expect(actor.claimNativeBounty(orderBookAddress, orderBookAddress))
+      .to.be.revertedWithCustomError(fixture.orderBook, "InvalidBountyRecipient");
+    await expect(actor.claimNativeBounty(orderBookAddress, actorAddress)).to.be.revert(
+      ethers,
+    );
+    expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(bounty);
+
+    const recipientBefore = await ethers.provider.getBalance(fixture.outsider.address);
+    await actor.claimNativeBounty(orderBookAddress, fixture.outsider.address);
+    expect(await ethers.provider.getBalance(fixture.outsider.address))
+      .to.equal(recipientBefore + bounty);
+    expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(0n);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(0n);
+    await expect(actor.claimNativeBounty(orderBookAddress, fixture.outsider.address))
+      .to.be.revertedWithCustomError(
+        fixture.orderBook,
+        "NoClaimableNativeBounty",
+      );
+  });
+
+  it("keeps open-order bounties backed while a deferred credit is claimed", async function () {
+    const fixture = await deployFixture();
+    const bounty = ethers.parseEther("0.01");
+    const openOrderId = await placeOrder(fixture, { bounty });
+    const actor = await (
+      await ethers.getContractFactory("RejectingNativeLimitOrderActor")
+    ).deploy({ value: bounty });
+    await actor.waitForDeployment();
+    const actorAddress = await actor.getAddress();
+    const orderBookAddress = await fixture.orderBook.getAddress();
+    await fixture.token0.mint(actorAddress, fixture.amountIn);
+    const latest = await ethers.provider.getBlock("latest");
+    if (!latest) throw new Error("latest block unavailable");
+    const expiry = BigInt(latest.timestamp + 10);
+    const actorOrderId = await fixture.orderBook.nextOrderId();
+
+    await actor.createOrder(
+      orderBookAddress,
+      await fixture.token0.getAddress(),
+      fixture.poolAddress,
+      true,
+      fixture.amountIn,
+      fixture.expectedAmountOut,
+      fixture.recipient.address,
+      expiry,
+      bounty,
+    );
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(expiry + 1n)]);
+    await ethers.provider.send("evm_mine", []);
+    await actor.cancelOrder(orderBookAddress, actorOrderId);
+
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(bounty);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(bounty);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(2n * bounty);
+
+    await actor.claimNativeBounty(orderBookAddress, fixture.outsider.address);
+    expect((await fixture.orderBook.getOrder(openOrderId)).status).to.equal(0n);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(bounty);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(bounty);
+
+    await fixture.orderBook.connect(fixture.maker).cancelOrder(openOrderId);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(0n);
   });
 
   it("blocks expired fills while preserving maker cancellation", async function () {
@@ -418,6 +543,39 @@ describe("PublicCPMMLimitOrderBook", function () {
         [-bounty, bounty],
       );
     expect((await fixture.orderBook.getOrder(orderId)).executionBounty).to.equal(0n);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
+  });
+
+  it("fills through a rejecting contract caller and credits its bounty", async function () {
+    const fixture = await deployFixture();
+    const bounty = ethers.parseEther("0.01");
+    const orderId = await placeOrder(fixture, { bounty });
+    const actor = await (
+      await ethers.getContractFactory("RejectingNativeLimitOrderActor")
+    ).deploy();
+    await actor.waitForDeployment();
+    const actorAddress = await actor.getAddress();
+    const orderBookAddress = await fixture.orderBook.getAddress();
+    const outputBefore = await fixture.token1.balanceOf(fixture.recipient.address);
+
+    await expect(actor.fillOrder(orderBookAddress, orderId))
+      .to.emit(fixture.orderBook, "NativeBountyCredited")
+      .withArgs(orderId, actorAddress, bounty);
+
+    expect((await fixture.orderBook.getOrder(orderId)).status).to.equal(1n);
+    expect(await fixture.token1.balanceOf(fixture.recipient.address))
+      .to.equal(outputBefore + fixture.expectedAmountOut);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(bounty);
+    expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(bounty);
+
+    const recipientBefore = await ethers.provider.getBalance(fixture.outsider.address);
+    await actor.claimNativeBounty(orderBookAddress, fixture.outsider.address);
+    expect(await ethers.provider.getBalance(fixture.outsider.address))
+      .to.equal(recipientBefore + bounty);
+    expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(0n);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
   });
 
   it("clears the exact pool allowance after a successful fill", async function () {

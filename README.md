@@ -103,12 +103,17 @@ sets a minimum output, recipient and expiry, and may attach a native COTI
 execution bounty. Orders are full-fill only. Any address may call `fillOrder`
 when the pool can satisfy the minimum; successful execution pays the optional
 bounty to that caller. The maker may cancel an open order before or after expiry
-and receives the escrow and remaining bounty back. `canFillOrder` is a
-keeper-friendly view helper, not an authorization boundary. Chainlink, Gelato,
-thirdweb, OpenZeppelin Relayer, self-hosted bots and ordinary users may all
-call the same permissionless fill function, but none is required by the
-contract. The module has no owner, keeper whitelist, relayer trust, rescue path,
-partial-fill path, signed off-chain orders, or confidential-token support.
+and receives the token escrow back independently of native delivery. Bounty
+payments use a bounded immediate push for normal wallet UX; a rejecting receiver
+gets an exact beneficiary-owned credit instead of rolling back the fill or
+cancellation. `claimNativeBounty` lets that beneficiary pull its aggregate credit
+to a chosen payable address. Open and claimable bounty totals remain explicit
+native liabilities, while forced native COTI is never assigned to an order.
+`canFillOrder` is a keeper-friendly view helper, not an authorization boundary.
+Chainlink, Gelato, thirdweb, OpenZeppelin Relayer, self-hosted bots and ordinary
+users may all call the same permissionless fill function, but none is required
+by the contract. The module has no owner, keeper whitelist, relayer trust, rescue
+path, partial-fill path, signed off-chain orders, or confidential-token support.
 Its source presence does not make it part of the active mainnet deployment; only
 a reviewed deployment record can establish that status.
 
@@ -183,6 +188,11 @@ npm ci --ignore-scripts
 npm run verify
 npm run gas:measure
 ```
+
+`.github/workflows/protocol-ci.yml` runs the locked install and complete
+`npm run verify` gate on pushes and pull requests. It has read-only repository
+permissions and never deploys contracts. COTI deployment remains an explicit,
+reviewed operator action using the scripts and checklists below.
 
 ### Public limit-order deployment
 

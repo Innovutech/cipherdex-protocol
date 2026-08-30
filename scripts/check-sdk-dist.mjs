@@ -61,9 +61,11 @@ try {
     throw new Error("SDK distribution file set is stale; run npm run build:sdk");
   }
   for (const file of generatedFiles) {
-    const expected = readFileSync(join(expectedDirectory, file));
-    const generated = readFileSync(join(temporaryDirectory, file));
-    if (!expected.equals(generated)) {
+    const expected = readFileSync(join(expectedDirectory, file), "utf8")
+      .replaceAll("\r\n", "\n");
+    const generated = readFileSync(join(temporaryDirectory, file), "utf8")
+      .replaceAll("\r\n", "\n");
+    if (expected !== generated) {
       throw new Error(`SDK distribution is stale: ${file}; run npm run build:sdk`);
     }
   }

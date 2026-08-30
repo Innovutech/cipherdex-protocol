@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile as readRawFile } from "node:fs/promises";
 import ts from "typescript";
 
 import {
@@ -6,6 +6,11 @@ import {
   uniqueFunctionBody,
   uniqueFunctionDeclaration,
 } from "./source-boundary-lint.mjs";
+
+async function readFile(path, encoding) {
+  const value = await readRawFile(path, encoding);
+  return typeof value === "string" ? value.replaceAll("\r\n", "\n") : value;
+}
 
 const requiredNonReentrant = new Map([
   [
@@ -35,7 +40,7 @@ const requiredNonReentrant = new Map([
   ["contracts/PublicCPMMRouter.sol", ["swapExactInput"]],
   [
     "contracts/PublicCPMMLimitOrderBook.sol",
-    ["createOrder", "fillOrder", "cancelOrder"],
+    ["createOrder", "fillOrder", "cancelOrder", "claimNativeBounty"],
   ],
   [
     "contracts/PublicCPMMLiquidityRouter.sol",

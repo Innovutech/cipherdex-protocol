@@ -22,6 +22,7 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
 
     uint256 public constant PROTOCOL_VERSION = 1;
     uint8 public constant PRIVACY_MODE = 0;
+    uint256 public constant NATIVE_BOUNTY_PUSH_GAS_LIMIT = 30_000;
 
     enum OrderStatus {
         Open,
@@ -46,9 +47,12 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
 
     address public immutable factory;
     uint256 public nextOrderId = 1;
+    uint256 public totalOpenExecutionBounties;
+    uint256 public totalClaimableNativeBounties;
 
     mapping(uint256 => Order) private orders;
     mapping(address => uint256) public totalEscrowed;
+    mapping(address => uint256) public claimableNativeBounties;
 
     error InvalidFactory();
     error InvalidPool();
@@ -64,6 +68,9 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
     error SlippageExceeded();
     error ResidualAllowance();
     error EscrowNotBacked();
+    error InvalidBountyRecipient();
+    error NoClaimableNativeBounty();
+    error NativeBountyAccountingMismatch();
 
     event OrderCreated(
         uint256 indexed orderId,
@@ -94,6 +101,18 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
         address indexed maker,
         uint256 amountIn,
         uint256 executionBounty
+    );
+
+    event NativeBountyCredited(
+        uint256 indexed orderId,
+        address indexed beneficiary,
+        uint256 amount
+    );
+
+    event NativeBountyClaimed(
+        address indexed beneficiary,
+        address indexed recipient,
+        uint256 amount
     );
 
     constructor(address factory_) {
@@ -140,6 +159,7 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
             status: OrderStatus.Open
         });
         totalEscrowed[tokenIn] += amountIn;
+        totalOpenExecutionBounties += msg.value;
 
         IERC20 input = IERC20(tokenIn);
         uint256 balanceBefore = input.balanceOf(address(this));
@@ -214,6 +234,7 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
         order.status = OrderStatus.Filled;
         order.executionBounty = 0;
         totalEscrowed[tokenIn] -= amountIn;
+        totalOpenExecutionBounties -= executionBounty;
 
         uint256 inputBalanceBefore = input.balanceOf(address(this));
         uint256 outputBalanceBefore = output.balanceOf(address(this));
@@ -236,13 +257,12 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
             outputBalanceAfter - outputBalanceBefore != poolAmountOut
         ) revert TransferAmountMismatch();
         _requireEscrowBacked(input);
+        _requireNativeBountiesBacked();
 
         amountOut = _transferOutput(output, recipient, poolAmountOut, minAmountOut);
         _requireEscrowBacked(output);
 
-        if (executionBounty != 0) {
-            payable(msg.sender).sendValue(executionBounty);
-        }
+        _payOrCreditNativeBounty(orderId, msg.sender, executionBounty);
 
         emit OrderFilled(
             orderId,
@@ -268,6 +288,7 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
         order.status = OrderStatus.Cancelled;
         order.executionBounty = 0;
         totalEscrowed[tokenIn] -= amountIn;
+        totalOpenExecutionBounties -= executionBounty;
 
         uint256 balanceBefore = input.balanceOf(address(this));
         input.safeTransfer(msg.sender, amountIn);
@@ -277,11 +298,28 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
         }
         _requireEscrowBacked(input);
 
-        if (executionBounty != 0) {
-            payable(msg.sender).sendValue(executionBounty);
-        }
+        _payOrCreditNativeBounty(orderId, msg.sender, executionBounty);
 
         emit OrderCancelled(orderId, msg.sender, amountIn, executionBounty);
+    }
+
+    function claimNativeBounty(address payable recipient)
+        external
+        nonReentrant
+        returns (uint256 amount)
+    {
+        if (recipient == address(0) || recipient == address(this)) {
+            revert InvalidBountyRecipient();
+        }
+        amount = claimableNativeBounties[msg.sender];
+        if (amount == 0) revert NoClaimableNativeBounty();
+
+        claimableNativeBounties[msg.sender] = 0;
+        totalClaimableNativeBounties -= amount;
+        recipient.sendValue(amount);
+        _requireNativeBountiesBacked();
+
+        emit NativeBountyClaimed(msg.sender, recipient, amount);
     }
 
     function getOrder(uint256 orderId) external view returns (Order memory) {
@@ -297,6 +335,32 @@ contract PublicCPMMLimitOrderBook is ReentrancyGuard {
     function _requireEscrowBacked(IERC20 token) internal view {
         if (token.balanceOf(address(this)) < totalEscrowed[address(token)]) {
             revert EscrowNotBacked();
+        }
+    }
+
+    function _payOrCreditNativeBounty(
+        uint256 orderId,
+        address beneficiary,
+        uint256 amount
+    ) internal {
+        if (amount != 0) {
+            (bool paid,) = payable(beneficiary).call{
+                value: amount,
+                gas: NATIVE_BOUNTY_PUSH_GAS_LIMIT
+            }("");
+            if (!paid) {
+                claimableNativeBounties[beneficiary] += amount;
+                totalClaimableNativeBounties += amount;
+                emit NativeBountyCredited(orderId, beneficiary, amount);
+            }
+        }
+        _requireNativeBountiesBacked();
+    }
+
+    function _requireNativeBountiesBacked() internal view {
+        uint256 liabilities = totalOpenExecutionBounties + totalClaimableNativeBounties;
+        if (address(this).balance < liabilities) {
+            revert NativeBountyAccountingMismatch();
         }
     }
 
