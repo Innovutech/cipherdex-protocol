@@ -46,8 +46,9 @@
   execution across the three canonical public fee tiers. Callers choose allowed
   tiers, never pool addresses.
 - `contracts/PublicCPMMLimitOrderBook.sol`: pair-level exact-transfer escrow
-  orders with maker amendments, optional bounded partial fills, proportional
-  native execution bounties and immutable surplus recovery.
+  orders with maker amendments, optional bounded partial fills, internal native
+  COTI wrapping/unwrapping, proportional execution bounties, claimable native
+  proceeds and immutable surplus recovery.
 - `contracts/PublicCPMMLiquidityRouter.sol`: factory-gated atomic create-or-add
   and remove-liquidity periphery. It mints pool-bound ERC-20 shares directly to
   the recipient, refunds unused proportional token maxima, and supports
@@ -256,10 +257,13 @@ fill cannot weaken maker price protection. Native bounties use proportional
 floor division and the final fill receives the remainder, preserving exact
 liability conservation. Only the maker can amend mutable terms, add bounty or
 cancel; expiry disables filling but does not transfer control to an outsider.
-Terminal structs are deleted while status and events remain. Direct token and
-forced-native surplus are not assigned to orders: anyone may trigger a sweep,
-but the destination is one immutable beneficiary and escrow/bounty liabilities
-are excluded.
+Settlement mode is immutable. Native input is wrapped into WCOTI only inside the
+order book and remaining escrow is unwrapped on cancellation. Native output is
+routed to the order book, measured, unwrapped and delivered or credited to the
+recipient. Token-mode orders reject WCOTI. Terminal structs are deleted while
+status and events remain. Direct token and forced-native surplus are not assigned
+to orders: anyone may trigger a sweep, but the destination is one immutable
+beneficiary and escrow, bounty and claimable-proceeds liabilities are excluded.
 
 Confidential direct pool execution remains available. For best execution, COTI
 authenticated `itUint256` inputs bind the user to the router and exact quote or

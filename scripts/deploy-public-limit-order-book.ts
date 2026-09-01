@@ -52,6 +52,10 @@ async function main(): Promise<void> {
   const rpcUrl = requiredEnvironment("COTI_RPC_URL");
   const privateKey = requiredEnvironment("DEPLOYER_PRIVATE_KEY");
   const canonicalFactory = requiredAddress("PUBLIC_CPMM_FACTORY_ADDRESS");
+  const bestExecutionRouter = requiredAddress(
+    "PUBLIC_BEST_EXECUTION_ROUTER_ADDRESS",
+  );
+  const wrappedNative = requiredAddress("PUBLIC_WRAPPED_NATIVE_ADDRESS");
   const surplusBeneficiary = requiredAddress(
     "PUBLIC_LIMIT_ORDER_SURPLUS_BENEFICIARY",
   );
@@ -64,36 +68,36 @@ async function main(): Promise<void> {
       `public limit-order deployment supports only COTI testnet/mainnet; got chain ${network.chainId}`,
     );
   }
-  if ((await provider.getCode(canonicalFactory)) === "0x") {
-    throw new Error("PUBLIC_CPMM_FACTORY_ADDRESS has no deployed code");
+  for (const [name, address] of [
+    ["PUBLIC_CPMM_FACTORY_ADDRESS", canonicalFactory],
+    ["PUBLIC_BEST_EXECUTION_ROUTER_ADDRESS", bestExecutionRouter],
+    ["PUBLIC_WRAPPED_NATIVE_ADDRESS", wrappedNative],
+  ] as const) {
+    if ((await provider.getCode(address)) === "0x") {
+      throw new Error(`${name} has no deployed code`);
+    }
   }
 
   const deployer = new Wallet(privateKey, provider);
-  const routerDeployment = await deploy(
-    "PublicBestExecutionRouter",
-    [canonicalFactory],
-    deployer,
-  );
-  const routerAddress = await routerDeployment.contract.getAddress();
   const orderBookDeployment = await deploy(
     "PublicCPMMLimitOrderBook",
-    [canonicalFactory, routerAddress, surplusBeneficiary],
+    [canonicalFactory, bestExecutionRouter, wrappedNative, surplusBeneficiary],
     deployer,
   );
   const orderBookAddress = await orderBookDeployment.contract.getAddress();
 
-  const boundRouterFactory = await routerDeployment.contract
-    .getFunction("factory").staticCall();
   const boundOrderBookFactory = await orderBookDeployment.contract
     .getFunction("factory").staticCall();
   const boundOrderBookRouter = await orderBookDeployment.contract
     .getFunction("bestExecutionRouter").staticCall();
+  const boundWrappedNative = await orderBookDeployment.contract
+    .getFunction("wrappedNative").staticCall();
   const boundSurplusBeneficiary = await orderBookDeployment.contract
     .getFunction("surplusBeneficiary").staticCall();
   if (
-    getAddress(String(boundRouterFactory)) !== canonicalFactory ||
     getAddress(String(boundOrderBookFactory)) !== canonicalFactory ||
-    getAddress(String(boundOrderBookRouter)) !== routerAddress ||
+    getAddress(String(boundOrderBookRouter)) !== bestExecutionRouter ||
+    getAddress(String(boundWrappedNative)) !== wrappedNative ||
     getAddress(String(boundSurplusBeneficiary)) !== surplusBeneficiary
   ) throw new Error("deployed public limit-order binding mismatch");
 
@@ -101,14 +105,14 @@ async function main(): Promise<void> {
   console.log(`chainId=${network.chainId}`);
   console.log(`deployer=${await deployer.getAddress()}`);
   console.log(`publicCPMMFactory=${canonicalFactory}`);
-  console.log(`publicBestExecutionRouter=${routerAddress}`);
-  console.log(`publicBestExecutionRouterDeploymentTx=${routerDeployment.transaction.hash}`);
-  console.log(`publicBestExecutionRouterConstructorArgs=${JSON.stringify([canonicalFactory])}`);
+  console.log(`publicBestExecutionRouter=${bestExecutionRouter}`);
+  console.log(`wrappedNative=${wrappedNative}`);
   console.log(`publicCPMMLimitOrderBook=${orderBookAddress}`);
   console.log(`publicCPMMLimitOrderBookDeploymentTx=${orderBookDeployment.transaction.hash}`);
   console.log(`publicCPMMLimitOrderBookConstructorArgs=${JSON.stringify([
     canonicalFactory,
-    routerAddress,
+    bestExecutionRouter,
+    wrappedNative,
     surplusBeneficiary,
   ])}`);
 }

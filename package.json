@@ -25,6 +25,7 @@
     "build": "npm run typecheck && npm run compile && npm run build:sdk",
     "gas:measure": "hardhat run scripts/measure-deployment-gas.ts",
     "deploy:public-limit-orders": "hardhat run scripts/deploy-public-limit-order-book.ts",
+    "deploy:public-limit-order-book": "hardhat run scripts/deploy-public-limit-order-book.ts",
     "audit:production": "npm audit --omit=dev --audit-level=low --json",
     "audit:operational": "npm audit --audit-level=low --json",
     "verify:cotiscan": "node scripts/cotiscan-verify.mjs",

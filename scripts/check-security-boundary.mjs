@@ -49,6 +49,7 @@ const requiredNonReentrant = new Map([
       "fillOrder",
       "cancelOrder",
       "claimNativeBounty",
+      "claimNativeProceeds",
       "sweepTokenSurplus",
       "sweepNativeSurplus",
     ],
@@ -579,6 +580,8 @@ for (const fragment of [
   "delete orders[orderId]",
   "input.forceApprove(bestExecutionRouter, amountInToFill)",
   "input.forceApprove(bestExecutionRouter, 0)",
+  "IWrappedNativeToken(wrappedNative).withdraw(amountOut)",
+  "_payOrCreditNativeProceeds(orderId, recipient, amountOut)",
   "_payOrCreditNativeBounty(orderId, msg.sender, bounty)",
 ]) {
   if (!publicOrderFillBody.includes(fragment)) {
@@ -593,6 +596,19 @@ const publicOrderNativeSweepBody = functionBody(
   publicLimitOrderBookSource,
   "sweepNativeSurplus",
 );
+const publicOrderCancelBody = functionBody(
+  publicLimitOrderBookSource,
+  "cancelOrder",
+);
+for (const fragment of [
+  "totalEscrowed[tokenIn] -= amountIn",
+  "IWrappedNativeToken(wrappedNative).withdraw(amountIn)",
+  "_payOrCreditNativeProceeds(orderId, msg.sender, amountIn)",
+]) {
+  if (!publicOrderCancelBody.includes(fragment)) {
+    throw new Error("Public native-input cancellation can strand or misaccount escrow");
+  }
+}
 for (const fragment of [
   "balance <= liability",
   "balance - liability",
@@ -603,7 +619,9 @@ for (const fragment of [
   }
 }
 for (const fragment of [
-  "totalOpenExecutionBounties + totalClaimableNativeBounties",
+  "totalOpenExecutionBounties +",
+  "totalClaimableNativeBounties +",
+  "totalClaimableNativeProceeds",
   "address(this).balance - liabilities",
   "surplusBeneficiary.sendValue(amount)",
 ]) {

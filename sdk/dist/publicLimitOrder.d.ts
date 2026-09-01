@@ -4,10 +4,16 @@ export declare const PUBLIC_ROUTE_CANDIDATE: Readonly<{
     readonly HIGH_100_BPS: 4;
     readonly ALL: 7;
 }>;
-export declare const PUBLIC_LIMIT_ORDER_CREATED_TOPIC: "0x1ab8aeda179c2038ab835a8f7689b6016641946b9b9a3f129a893ab02a3bc78b";
+export declare const PUBLIC_LIMIT_ORDER_CREATED_TOPIC: "0xb54b6759bc638a44ecc0c4ae0fc28a63db98c74f3b53505bf76776cce27d868d";
 export declare const PUBLIC_LIMIT_ORDER_AMENDED_TOPIC: "0xc8f1bf6a229ab9ac9ade2efc79c6f64ae0cc4eff57455c69f45a4f56f06e0106";
-export declare const PUBLIC_LIMIT_ORDER_FILLED_TOPIC: "0x4eccc8a2abb5a0810b0765d135c8829316e4cd9bd2c00dc7362e4be54e54f0fc";
-export declare const PUBLIC_LIMIT_ORDER_CANCELLED_TOPIC: "0x8cd7e382eb42bcc84841dacd15adda3bdd77aefce75edd49238bd47995b1f968";
+export declare const PUBLIC_LIMIT_ORDER_FILLED_TOPIC: "0x8b3001790d58ea1454f7416c054d85615e21a0fcceeac2a45fbdcf96cc0c7def";
+export declare const PUBLIC_LIMIT_ORDER_CANCELLED_TOPIC: "0xeb72ace299a35d4e17b4e9a192803c5d21779feacb2e8de865e8a1efede01dbc";
+export declare const PUBLIC_LIMIT_ORDER_SETTLEMENT: Readonly<{
+    readonly TOKEN: 0;
+    readonly NATIVE_INPUT: 1;
+    readonly NATIVE_OUTPUT: 2;
+}>;
+export type PublicLimitOrderSettlement = "token" | "native-input" | "native-output";
 export type PublicLimitOrderCreateParams = Readonly<{
     tokenIn: string;
     tokenOut: string;
@@ -27,15 +33,22 @@ export type PublicLimitOrderAmendment = Readonly<{
     allowPartialFills: boolean;
     minimumFillAmount: bigint;
 }>;
+export type PublicLimitOrderContractCreateParams = Readonly<PublicLimitOrderCreateParams & {
+    settlementMode: number;
+}>;
+export type PublicLimitOrderCreateOptions = Readonly<{
+    wrappedNative: string;
+    executionBounty?: bigint;
+}>;
 export type PublicLimitOrderCreateCall = Readonly<{
     functionName: "createOrder";
-    args: readonly [PublicLimitOrderCreateParams];
+    args: readonly [PublicLimitOrderContractCreateParams];
     value: bigint;
 }>;
 export type PublicLimitOrderPermitCall = Readonly<{
     functionName: "createOrderWithPermit";
     args: readonly [
-        PublicLimitOrderCreateParams,
+        PublicLimitOrderContractCreateParams,
         bigint,
         number,
         string,
@@ -51,14 +64,14 @@ export type PublicLimitOrderFillCall = Readonly<{
     functionName: "fillOrder";
     args: readonly [bigint, bigint];
 }>;
-export declare function buildPublicLimitOrderCreateCall(params: PublicLimitOrderCreateParams, executionBounty?: bigint): PublicLimitOrderCreateCall;
+export declare function buildPublicLimitOrderCreateCall(params: PublicLimitOrderCreateParams, options: PublicLimitOrderCreateOptions): PublicLimitOrderCreateCall;
 export declare function buildPublicLimitOrderPermitCall(params: PublicLimitOrderCreateParams, permit: Readonly<{
     deadline: bigint;
     v: number;
     r: string;
     s: string;
-}>, executionBounty?: bigint): PublicLimitOrderPermitCall;
-export declare function buildPublicLimitOrderAmendCall(orderId: bigint, amendment: PublicLimitOrderAmendment, remainingAmountIn: bigint): PublicLimitOrderAmendCall;
+}>, options: PublicLimitOrderCreateOptions): PublicLimitOrderPermitCall;
+export declare function buildPublicLimitOrderAmendCall(orderId: bigint, amendment: PublicLimitOrderAmendment, remainingAmountIn: bigint, wrappedNative: string): PublicLimitOrderAmendCall;
 export declare function buildPublicLimitOrderFillCall(orderId: bigint, amountInToFill: bigint): PublicLimitOrderFillCall;
 /** Mirrors the order book's full-precision ceiling price calculation. */
 export declare function publicLimitOrderMinimumOutput(input: Readonly<{
@@ -96,6 +109,7 @@ export type PublicLimitOrderCreatedResult = Readonly<{
     allowPartialFills: boolean;
     minimumFillAmount: bigint;
     executionBounty: bigint;
+    settlement: PublicLimitOrderSettlement;
 }>;
 export declare function parsePublicLimitOrderCreatedResult(expectation: Readonly<{
     transactionHash: string;
@@ -134,6 +148,7 @@ export type PublicLimitOrderFilledResult = Readonly<{
     minimumAmountOut: bigint;
     remainingAmountIn: bigint;
     executionBounty: bigint;
+    settlement: PublicLimitOrderSettlement;
 }>;
 export declare function parsePublicLimitOrderFilledResult(expectation: Readonly<{
     transactionHash: string;
@@ -147,6 +162,7 @@ export type PublicLimitOrderCancelledResult = Readonly<{
     maker: string;
     returnedAmountIn: bigint;
     returnedExecutionBounty: bigint;
+    settlement: PublicLimitOrderSettlement;
 }>;
 export declare function parsePublicLimitOrderCancelledResult(expectation: Readonly<{
     transactionHash: string;

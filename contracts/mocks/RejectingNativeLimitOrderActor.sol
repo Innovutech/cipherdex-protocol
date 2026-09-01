@@ -14,6 +14,7 @@ interface IPublicCPMMLimitOrderActions {
         uint8 candidateBitmap;
         bool allowPartialFills;
         uint256 minimumFillAmount;
+        uint8 settlementMode;
     }
 
     function createOrder(CreateOrderParams calldata params)
@@ -26,6 +27,7 @@ interface IPublicCPMMLimitOrderActions {
         returns (uint256 amountOut);
     function cancelOrder(uint256 orderId) external;
     function claimNativeBounty(address payable recipient) external returns (uint256 amount);
+    function claimNativeProceeds(address payable recipient) external returns (uint256 amount);
 }
 
 contract RejectingNativeLimitOrderActor {
@@ -57,7 +59,8 @@ contract RejectingNativeLimitOrderActor {
                 expiry: expiry,
                 candidateBitmap: candidateBitmap,
                 allowPartialFills: allowPartialFills,
-                minimumFillAmount: minimumFillAmount
+                minimumFillAmount: minimumFillAmount,
+                settlementMode: 0
             })
         );
     }
@@ -74,5 +77,9 @@ contract RejectingNativeLimitOrderActor {
 
     function claimNativeBounty(address orderBook, address payable recipient) external {
         IPublicCPMMLimitOrderActions(orderBook).claimNativeBounty(recipient);
+    }
+
+    function claimNativeProceeds(address orderBook, address payable recipient) external {
+        IPublicCPMMLimitOrderActions(orderBook).claimNativeProceeds(recipient);
     }
 }

@@ -104,9 +104,9 @@ uninitialized pools and atomically settles through the single pool returning the
 largest output. It does not split or multi-hop a swap.
 
 `PublicCPMMLimitOrderBook` is an optional public-only escrow periphery bound to
-that router and the same factory. A maker escrows an exact ERC-20 input pair,
-sets a raw-unit minimum price, recipient, expiry and allowed fee tiers, and may
-attach a native COTI execution bounty. Orders may be full-fill only or explicitly
+that router and the same factory. A maker escrows an exact public input, sets a
+raw-unit minimum price, recipient, expiry and allowed fee tiers, and may attach
+a native COTI execution bounty. Orders may be full-fill only or explicitly
 permit partial fills above a maker-selected minimum. Each partial fill receives
 ceiling-rounded price protection and a proportional floor-rounded bounty; the
 final fill receives every remainder. The maker may amend price, recipient,
@@ -115,6 +115,15 @@ increase but not reduce its bounty, or cancel before or after expiry. Input
 amounts and token pairs are immutable; changing either requires cancellation and
 a new order. EIP-2612 creation is optional and allowance-backed creation remains
 available for all supported tokens.
+
+Native COTI is a first-class order asset at the SDK/UI boundary. The order book
+wraps native input into its immutable WCOTI internally, unwraps remaining native
+input on cancellation, and unwraps each native-output fill before delivery.
+Ordinary token-mode orders reject WCOTI, so users never need to acquire, approve
+or receive the implementation token. If a contract recipient rejects native
+delivery, proceeds become an exact beneficiary-owned credit claimable to another
+payable address. Claimable proceeds and execution bounties are separate native
+liabilities and neither can be swept as surplus.
 
 Bounty payments use a bounded immediate push for normal wallet UX; a rejecting
 receiver gets an exact beneficiary-owned credit instead of rolling back the
@@ -221,6 +230,8 @@ The deployment process reads exactly these environment variables:
 
 ```text
 PUBLIC_CPMM_FACTORY_ADDRESS=<canonical deployed public factory>
+PUBLIC_BEST_EXECUTION_ROUTER_ADDRESS=<existing reviewed best-execution router>
+PUBLIC_WRAPPED_NATIVE_ADDRESS=<existing reviewed WCOTI>
 PUBLIC_LIMIT_ORDER_SURPLUS_BENEFICIARY=<immutable surplus recipient>
 DEPLOYER_PRIVATE_KEY=<funded deployment key>
 COTI_RPC_URL=<COTI testnet or mainnet RPC URL>
@@ -228,10 +239,10 @@ COTI_RPC_URL=<COTI testnet or mainnet RPC URL>
 
 Keep the private key in the same owner-only external environment boundary used
 by other funded operations; never add it to this repository. The script accepts
-only COTI testnet (`7082400`) or mainnet (`2632500`), deploys only the public
-best-execution router and its bound order book, validates all immutable factory,
-router and beneficiary bindings, and prints both addresses, transactions and
-constructor arguments. Existing factories, pools, vaults and WCOTI are unchanged.
+only COTI testnet (`7082400`) or mainnet (`2632500`), deploys only the replacement
+order book, validates its immutable factory, existing router, WCOTI and
+beneficiary bindings, and prints its address, transaction and constructor
+arguments. Existing factories, pools, vaults, routers and WCOTI are unchanged.
 
 Before a mainnet deployment:
 

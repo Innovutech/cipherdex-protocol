@@ -59,6 +59,13 @@ addresses or assume a tax-token classification remains permanent.
 `PUBLIC_ROUTE_CANDIDATE` maps the approved `5`, `30`, and `100` bps pools to a
 typed three-bit policy. The create, permit-create, amend and fill builders
 validate and freeze wallet-call arguments without signing or submitting them.
+Create builders accept the standard native-asset sentinel plus the reviewed
+WCOTI address. They map native input/output to an immutable settlement mode,
+replace the sentinel with WCOTI only in contract calldata, include native input
+in transaction value, and reject direct WCOTI token-mode orders. Native-input
+orders require no approval or permit; native-output orders approve only the
+ordinary input token. Receipt parsers return the authenticated settlement mode
+so applications can render COTI rather than WCOTI.
 `publicLimitOrderMinimumOutput` and `publicLimitOrderBountyForFill` mirror the
 contract's ceiling price and proportional/final-remainder bounty calculations.
 Strict receipt-evidence parsers reject failed, mismatched or ambiguous logs

@@ -123,8 +123,13 @@
 - public routed orders provide no MEV protection, pool-state reservation,
   off-chain signature/rebroadcast model, multi-hop routing or split execution.
   `canFillOrder` is advisory; state can move before inclusion. Editing the token
-  pair or escrow amount requires cancellation and a new order. Exact-transfer
-  ERC-20 behavior is required throughout creation, fill and cancellation;
+  pair, escrow amount or native settlement mode requires cancellation and a new
+  order. Exact-transfer ERC-20 behavior is required for non-native escrow.
+  Native COTI is wrapped only inside the order book; WCOTI is rejected from
+  token-mode creation. Failed native output or cancellation delivery creates a
+  beneficiary-owned proceeds liability, so availability depends on the
+  beneficiary eventually claiming to a payable recipient, but fills and refunds
+  cannot be redirected or swept by an outsider;
 - pool-state movement between a position/removal preview and settlement. Position
   results are informational; removal must recompute current values and enforce
   fresh encrypted minima and a deadline;
