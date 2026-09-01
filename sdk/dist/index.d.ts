@@ -6,6 +6,7 @@ export * from "./liquidity.js";
 export * from "./executionError.js";
 export * from "./publicLimitOrder.js";
 export * from "./publicBestExecution.js";
+export * from "./observableConfidential.js";
 import { type LiquiditySide } from "./liquidity.js";
 /**
  * Stable, privacy-minimal client surface for CipherDEX.
@@ -45,7 +46,8 @@ export declare const CONFIDENTIAL_QUOTE_TRANSPORT: {
 export declare const PRIVACY_MODE: {
     readonly TRANSPARENT: 0;
     readonly AMOUNT_CONFIDENTIAL_PRIVATE_LP: 1;
-    readonly UNSUPPORTED_FULLY_CONFIDENTIAL: 2;
+    readonly OBSERVABLE_PRICE_AMOUNT_CONFIDENTIAL_PRIVATE_LP: 2;
+    readonly UNSUPPORTED_FULLY_CONFIDENTIAL: 255;
 };
 export declare const LP_DISPOSITION: {
     readonly CREATOR_HELD: 0;
@@ -384,12 +386,12 @@ export type ConfidentialPoolDiscovery = {
     feeBps: number;
     feeVault: string;
     feePolicy: CipherDEXV1FeePolicy;
-    privacyMode: typeof PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP;
+    privacyMode: typeof PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP | typeof PRIVACY_MODE.OBSERVABLE_PRICE_AMOUNT_CONFIDENTIAL_PRIVATE_LP;
     initializationStrategy: string;
     strategyClass: number;
     poolClass: "standard" | "launch-protected";
     initialized: boolean;
-    poolKind: "private-erc20-cpmm-v1";
+    poolKind: "private-erc20-cpmm-v1" | "observable-private-erc20-cpmm-v1";
     quoteTransport: typeof CONFIDENTIAL_QUOTE_TRANSPORT.TRANSACTION_EVENT;
 };
 declare const VERIFIED_CONFIDENTIAL_POOL_DISCOVERY: unique symbol;

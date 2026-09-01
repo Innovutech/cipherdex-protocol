@@ -85,7 +85,11 @@ describe("deployment record persistence", function () {
   });
 
   it("supports isolated public replacement record namespaces", function () {
-    for (const slug of ["coti-testnet-public", "coti-mainnet-public"]) {
+    for (const slug of [
+      "coti-testnet-public",
+      "coti-mainnet-public",
+      "coti-mainnet-observable-confidential",
+    ]) {
       const output = `deployments/${slug}-${sourceCommit}.json`;
       expect(() => resolveNewDeploymentRecordPath(
         output,

@@ -2,9 +2,12 @@ import { expect } from "chai";
 
 import {
   PRICE_SCALE,
+  adaptiveObservationBucket,
+  boundedObservationPrice,
   cpmmSwapExactInput,
   inferAggregateInputRange,
   normalizedPriceX18,
+  observationQuantum,
   quantizePriceFloor,
   shouldCloseObservation,
 } from "../../scripts/observable-price-model";
@@ -21,6 +24,25 @@ describe("observable confidential price model", function () {
   it("quantizes inside a deterministic floor bucket", function () {
     expect(quantizePriceFloor(1_987_654_321_000_000_000n, 10n ** 16n))
       .to.equal(1_980_000_000_000_000_000n);
+  });
+
+  it("uses overflow-safe adaptive 50-bps quantization", function () {
+    expect(observationQuantum(2n * PRICE_SCALE)).to.equal(10n ** 16n);
+    expect(observationQuantum(1n)).to.equal(1n);
+    const maximum = (1n << 256n) - 1n;
+    expect(observationQuantum(maximum)).to.be.lessThan(maximum);
+  });
+
+  it("bounds extreme price movement before quantization", function () {
+    const reference = 2n * PRICE_SCALE;
+    expect(boundedObservationPrice(10n * PRICE_SCALE, reference))
+      .to.equal(4n * PRICE_SCALE);
+    expect(boundedObservationPrice(PRICE_SCALE / 10n, reference))
+      .to.equal(PRICE_SCALE);
+    expect(adaptiveObservationBucket(10n * PRICE_SCALE, reference)).to.deep.equal({
+      bucketX18: 4n * PRICE_SCALE,
+      quantumX18: 10n ** 16n,
+    });
   });
 
   it("matches the confidential CPMM retained-reserve rounding", function () {

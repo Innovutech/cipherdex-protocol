@@ -40,6 +40,49 @@ export function quantizePriceFloor(priceX18: bigint, quantumX18: bigint): bigint
   return (priceX18 / quantumX18) * quantumX18;
 }
 
+export function observationQuantum(
+  referencePriceX18: bigint,
+  bucketBps = 50n,
+): bigint {
+  requirePositive(referencePriceX18, "referencePriceX18");
+  requirePositive(bucketBps, "bucketBps");
+  if (bucketBps >= FEE_DENOMINATOR) {
+    throw new Error("bucketBps must be below 10000");
+  }
+  const quotient = referencePriceX18 / FEE_DENOMINATOR;
+  const remainder = referencePriceX18 % FEE_DENOMINATOR;
+  const quantum = quotient * bucketBps +
+    (remainder * bucketBps) / FEE_DENOMINATOR;
+  return quantum === 0n ? 1n : quantum;
+}
+
+export function boundedObservationPrice(
+  exactPriceX18: bigint,
+  referencePriceX18: bigint,
+): bigint {
+  requirePositive(exactPriceX18, "exactPriceX18");
+  requirePositive(referencePriceX18, "referencePriceX18");
+  const half = referencePriceX18 / 2n;
+  const lower = half === 0n ? 1n : half;
+  const upper = referencePriceX18 * 2n;
+  if (exactPriceX18 < lower) return lower;
+  if (exactPriceX18 > upper) return upper;
+  return exactPriceX18;
+}
+
+export function adaptiveObservationBucket(
+  exactPriceX18: bigint,
+  referencePriceX18: bigint,
+  bucketBps = 50n,
+): Readonly<{ bucketX18: bigint; quantumX18: bigint }> {
+  const quantumX18 = observationQuantum(referencePriceX18, bucketBps);
+  const bounded = boundedObservationPrice(exactPriceX18, referencePriceX18);
+  return Object.freeze({
+    bucketX18: quantizePriceFloor(bounded, quantumX18),
+    quantumX18,
+  });
+}
+
 export function cpmmSwapExactInput(
   reserves: Reserves,
   amountIn: bigint,

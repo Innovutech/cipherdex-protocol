@@ -169,7 +169,8 @@ describe("stable SDK surface", function () {
     expect(feeVault.getFunction("nextConfidentialSweepAt")).to.not.equal(null);
     expect(PRIVACY_MODE.TRANSPARENT).to.equal(0);
     expect(PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP).to.equal(1);
-    expect(PRIVACY_MODE.UNSUPPORTED_FULLY_CONFIDENTIAL).to.equal(2);
+    expect(PRIVACY_MODE.OBSERVABLE_PRICE_AMOUNT_CONFIDENTIAL_PRIVATE_LP).to.equal(2);
+    expect(PRIVACY_MODE.UNSUPPORTED_FULLY_CONFIDENTIAL).to.equal(255);
     expect(LAUNCHPAD_MIGRATION_EIP712_TYPES).to.have.length(13);
   });
 

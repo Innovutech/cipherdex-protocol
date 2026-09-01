@@ -21,6 +21,16 @@ const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const files = await solidityFiles(contractsDirectory);
 const productionSources = new Map();
 const PRIVATE_AMOUNT_PATTERN = /amount|reserve|share|value|input|output|price|tvl/i;
+const REVIEWED_OBSERVABLE_DISCLOSURE_EVENTS = new Set([
+  "eventPublicPriceObservation(uint64indexedsequence,uint256priceBucketX18,uint64observedAt,uint64publishedAt,uint32activityCount,uint256quantumX18,boolinitial);",
+  "eventPoolCreated(addressindexedtoken0,addressindexedtoken1,uint8token0Decimals,uint8token1Decimals,uint256feeBps,addressinitializationStrategy,addresspool);",
+  "eventLaunchPrepared(bytes32indexedlaunchId,bytes32indexedpoolKey,addressindexedpool,addresscreator,uint256initialPriceReferenceX18,uint64migrationDeadline,bytes32authorizationHash);",
+]);
+function isReviewedObservableDisclosureEvent(file, event) {
+  const normalizedPath = file.replaceAll("\\", "/");
+  if (!normalizedPath.includes("ObservableConfidential")) return false;
+  return REVIEWED_OBSERVABLE_DISCLOSURE_EVENTS.has(event.replace(/\s+/g, ""));
+}
 for (const file of files) {
   const rawSource = await readFile(file, "utf8");
   if (!file.replaceAll("\\", "/").includes("/contracts/mocks/")) {
@@ -51,16 +61,27 @@ for (const file of files) {
         /\bctUint(?:8|16|32|64|128|256)\s+(?:indexed\s+)?[A-Za-z_]\w*/g,
         "",
       );
-      return PRIVATE_AMOUNT_PATTERN.test(withoutCiphertextParameters);
+      return (
+        PRIVATE_AMOUNT_PATTERN.test(withoutCiphertextParameters) &&
+        !isReviewedObservableDisclosureEvent(file, event)
+      );
     })
   ) {
     throw new Error(`Private amount-like data was added to a public event declaration: ${file}`);
   }
 
   const unsafeEmit = [...source.matchAll(/\bemit\s+([A-Za-z_]\w*)\s*\([^;]*\);/gs)]
-    .some(([statement, eventName]) =>
-      PRIVATE_AMOUNT_PATTERN.test(statement) && !ciphertextEventNames.has(eventName)
-    );
+    .some(([statement, eventName]) => {
+      const normalizedPath = file.replaceAll("\\", "/");
+      const reviewedObservableEmit =
+        normalizedPath.includes("ObservableConfidential") &&
+        ["PublicPriceObservation", "PoolCreated", "LaunchPrepared"].includes(eventName);
+      return (
+        PRIVATE_AMOUNT_PATTERN.test(statement) &&
+        !ciphertextEventNames.has(eventName) &&
+        !reviewedObservableEmit
+      );
+    });
   if (confidentialSurface && unsafeEmit) {
     throw new Error(`Private amount-like data was added to an emitted event: ${file}`);
   }
@@ -180,8 +201,10 @@ if (mpcCompilationCount === 0) {
 const plaintextCount = [...assignments.entries()]
   .filter(([key]) => key.endsWith(":plaintext-count"))
   .reduce((total, [, count]) => total + Number(count), 0);
-if (plaintextCount !== 1) {
-  throw new Error(`Expected exactly one reviewed plaintext route-index decryption, found ${plaintextCount}`);
+if (plaintextCount !== 4) {
+  throw new Error(
+    `Expected two reviewed route-index and two observable-price decryptions, found ${plaintextCount}`,
+  );
 }
 
 console.log(`Privacy boundary checks passed for ${files.length} Solidity files using fresh compiler ASTs.`);

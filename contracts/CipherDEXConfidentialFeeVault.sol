@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@coti-io/coti-contracts/contracts/token/PrivateERC20/IPrivateERC20.sol";
+import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+
+import "./interfaces/IObservableConfidentialCPMMFactory.sol";
+
+interface IObservableConfidentialFeeSource {
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+    function feeVault() external view returns (address);
+    function protocolFeeSwapCount0() external view returns (uint32);
+    function protocolFeeSwapCount1() external view returns (uint32);
+}
+
+/**
+ * @title CipherDEXConfidentialFeeVault
+ * @notice Factory-bound private-token fee custody for observable confidential pools.
+ * @dev There is deliberately no public-factory slot, owner rescue, or mutable beneficiary.
+ */
+contract CipherDEXConfidentialFeeVault {
+    uint8 public constant PRIVACY_MODE = 2;
+    uint64 public constant MIN_CONFIDENTIAL_SWEEP_DELAY = 24 hours;
+    uint64 public constant CONFIDENTIAL_EPOCH_SECONDS = 24 hours;
+    uint64 public constant MIN_CONFIDENTIAL_AGGREGATED_SWAPS = 8;
+    uint256 public constant MAX_CONFIDENTIAL_SWEEP_EPOCHS = 32;
+
+    address public immutable beneficiary;
+    uint64 public immutable deployedAt;
+    address public immutable confidentialFactoryConfigurator;
+    address public confidentialFactory;
+
+    mapping(address => mapping(uint64 => ctUint256)) private confidentialFeesByEpoch;
+    mapping(address => mapping(uint64 => uint64)) public confidentialSwapCountByEpoch;
+    mapping(address => uint64[]) private confidentialEpochs;
+    mapping(address => uint256) public nextConfidentialEpochIndex;
+    uint256 private reentrancyState = 1;
+
+    error InvalidBeneficiary();
+    error BeneficiaryOnly();
+    error InvalidToken();
+    error InvalidTokenMode();
+    error ConfidentialSweepNotReady();
+    error ConfidentialFactoryOnly();
+    error ConfidentialFactoryAlreadyConfigured();
+    error InvalidConfidentialFactory();
+    error InvalidConfidentialFeeSource();
+    error InvalidAggregatedSwapCount();
+    error PrivateTransferAmountMismatch();
+    error ArithmeticOverflow();
+    error ArithmeticUnderflow();
+    error Reentrancy();
+
+    event ConfidentialFeesSwept(
+        address indexed token,
+        address indexed beneficiary,
+        uint64 aggregatedSwapCount
+    );
+    event ConfidentialFactoryConfigured(address indexed factory);
+    event ConfidentialFeesDeposited(
+        address indexed token,
+        address indexed pool,
+        uint64 indexed epoch,
+        uint32 aggregatedSwapCount
+    );
+
+    modifier nonReentrant() {
+        if (reentrancyState != 1) revert Reentrancy();
+        reentrancyState = 2;
+        _;
+        reentrancyState = 1;
+    }
+
+    modifier onlyBeneficiary() {
+        if (msg.sender != beneficiary) revert BeneficiaryOnly();
+        _;
+    }
+
+    constructor(address beneficiary_) {
+        if (beneficiary_ == address(0)) revert InvalidBeneficiary();
+        beneficiary = beneficiary_;
+        deployedAt = uint64(block.timestamp);
+        confidentialFactoryConfigurator = msg.sender;
+    }
+
+    function setConfidentialFactory(address factory) external {
+        if (msg.sender != confidentialFactoryConfigurator) {
+            revert ConfidentialFactoryOnly();
+        }
+        if (confidentialFactory != address(0)) {
+            revert ConfidentialFactoryAlreadyConfigured();
+        }
+        if (
+            factory.code.length == 0 ||
+            IObservableConfidentialCPMMFactory(factory).PRIVACY_MODE() != PRIVACY_MODE ||
+            IObservableConfidentialCPMMFactory(factory).feeVault() != address(this)
+        ) revert InvalidConfidentialFactory();
+        confidentialFactory = factory;
+        emit ConfidentialFactoryConfigured(factory);
+    }
+
+    function depositConfidentialFees(
+        address token,
+        gtUint256 amount,
+        uint32 aggregatedSwapCount
+    ) external nonReentrant {
+        address factory = confidentialFactory;
+        if (
+            factory == address(0) ||
+            !IObservableConfidentialCPMMFactory(factory).isPool(msg.sender)
+        ) revert ConfidentialFactoryOnly();
+
+        IObservableConfidentialFeeSource source =
+            IObservableConfidentialFeeSource(msg.sender);
+        if (source.feeVault() != address(this)) {
+            revert InvalidConfidentialFeeSource();
+        }
+
+        uint32 sourceCount;
+        if (token == source.token0()) {
+            sourceCount = source.protocolFeeSwapCount0();
+        } else if (token == source.token1()) {
+            sourceCount = source.protocolFeeSwapCount1();
+        } else {
+            revert InvalidConfidentialFeeSource();
+        }
+        if (aggregatedSwapCount == 0 || sourceCount != aggregatedSwapCount) {
+            revert InvalidAggregatedSwapCount();
+        }
+
+        gtUint256 balanceBefore = IPrivateERC20(token).balanceOf();
+        IPrivateERC20(token).transferFromGT(msg.sender, address(this), amount);
+        gtUint256 balanceAfter = IPrivateERC20(token).balanceOf();
+        gtUint256 expectedBalanceAfter = _addChecked(balanceBefore, amount);
+        if (!MpcCore.decrypt(MpcCore.eq(balanceAfter, expectedBalanceAfter))) {
+            revert PrivateTransferAmountMismatch();
+        }
+
+        uint64 epoch = uint64(block.timestamp / CONFIDENTIAL_EPOCH_SECONDS);
+        uint64 previousCount = confidentialSwapCountByEpoch[token][epoch];
+        if (previousCount == 0) confidentialEpochs[token].push(epoch);
+        if (previousCount > type(uint64).max - aggregatedSwapCount) {
+            revert ArithmeticOverflow();
+        }
+        confidentialSwapCountByEpoch[token][epoch] =
+            previousCount + aggregatedSwapCount;
+        confidentialFeesByEpoch[token][epoch] = MpcCore.offBoard(
+            _addChecked(_readPrivate(confidentialFeesByEpoch[token][epoch]), amount)
+        );
+        emit ConfidentialFeesDeposited(token, msg.sender, epoch, aggregatedSwapCount);
+    }
+
+    function sweepConfidentialToken(address token)
+        external
+        onlyBeneficiary
+        nonReentrant
+    {
+        if (token.code.length == 0) revert InvalidToken();
+        if (!_isConfidentialToken(token)) revert InvalidTokenMode();
+
+        uint256 start = nextConfidentialEpochIndex[token];
+        uint256 end = _matureEpochEnd(token, start);
+        uint64 aggregatedSwapCount;
+        for (uint256 index = start; index < end; index++) {
+            uint64 count = confidentialSwapCountByEpoch[token][
+                confidentialEpochs[token][index]
+            ];
+            if (aggregatedSwapCount > type(uint64).max - count) {
+                revert ArithmeticOverflow();
+            }
+            aggregatedSwapCount += count;
+        }
+        if (aggregatedSwapCount < MIN_CONFIDENTIAL_AGGREGATED_SWAPS) {
+            revert ConfidentialSweepNotReady();
+        }
+
+        gtUint256 amount = MpcCore.setPublic256(uint256(0));
+        for (uint256 index = start; index < end; index++) {
+            uint64 epoch = confidentialEpochs[token][index];
+            amount = _addChecked(
+                amount,
+                _readPrivate(confidentialFeesByEpoch[token][epoch])
+            );
+            delete confidentialFeesByEpoch[token][epoch];
+            delete confidentialSwapCountByEpoch[token][epoch];
+        }
+        nextConfidentialEpochIndex[token] = end;
+
+        gtUint256 balanceBefore = IPrivateERC20(token).balanceOf();
+        IPrivateERC20(token).transferGT(beneficiary, amount);
+        gtUint256 balanceAfter = IPrivateERC20(token).balanceOf();
+        gtUint256 expectedBalanceAfter = _subChecked(balanceBefore, amount);
+        if (!MpcCore.decrypt(MpcCore.eq(balanceAfter, expectedBalanceAfter))) {
+            revert PrivateTransferAmountMismatch();
+        }
+        emit ConfidentialFeesSwept(token, beneficiary, aggregatedSwapCount);
+    }
+
+    function nextConfidentialSweepAt(address token) external view returns (uint64) {
+        uint256 index = nextConfidentialEpochIndex[token];
+        if (index >= confidentialEpochs[token].length) return 0;
+        return (confidentialEpochs[token][index] + 2) * CONFIDENTIAL_EPOCH_SECONDS;
+    }
+
+    function confidentialEpochCount(address token) external view returns (uint256) {
+        return confidentialEpochs[token].length;
+    }
+
+    function confidentialEpochAt(
+        address token,
+        uint256 index
+    ) external view returns (uint64) {
+        return confidentialEpochs[token][index];
+    }
+
+    function _matureEpochEnd(
+        address token,
+        uint256 start
+    ) internal view returns (uint256 end) {
+        uint256 length = confidentialEpochs[token].length;
+        end = start + MAX_CONFIDENTIAL_SWEEP_EPOCHS;
+        if (end > length) end = length;
+        uint64 currentEpoch = uint64(block.timestamp / CONFIDENTIAL_EPOCH_SECONDS);
+        uint256 index = start;
+        while (
+            index < end &&
+            uint256(confidentialEpochs[token][index]) + 2 <= currentEpoch
+        ) {
+            index++;
+        }
+        return index;
+    }
+
+    function _readPrivate(
+        ctUint256 memory value
+    ) internal returns (gtUint256) {
+        if (
+            ctUint128.unwrap(value.ciphertextHigh) == 0 &&
+            ctUint128.unwrap(value.ciphertextLow) == 0
+        ) return MpcCore.setPublic256(uint256(0));
+        return MpcCore.onBoard(value);
+    }
+
+    function _addChecked(
+        gtUint256 left,
+        gtUint256 right
+    ) internal returns (gtUint256 result) {
+        (gtBool overflow, gtUint256 value) =
+            MpcCore.checkedAddWithOverflowBit(left, right);
+        if (MpcCore.decrypt(overflow)) revert ArithmeticOverflow();
+        return value;
+    }
+
+    function _subChecked(
+        gtUint256 left,
+        gtUint256 right
+    ) internal returns (gtUint256 result) {
+        (gtBool underflow, gtUint256 value) =
+            MpcCore.checkedSubWithOverflowBit(left, right);
+        if (MpcCore.decrypt(underflow)) revert ArithmeticUnderflow();
+        return value;
+    }
+
+    function _isConfidentialToken(address token) internal view returns (bool) {
+        (bool ok, bytes memory data) = token.staticcall(
+            abi.encodeCall(
+                IERC165.supportsInterface,
+                (type(IPrivateERC20).interfaceId)
+            )
+        );
+        return ok && data.length == 32 && abi.decode(data, (bool));
+    }
+}

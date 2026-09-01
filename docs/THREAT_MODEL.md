@@ -186,3 +186,24 @@ bind execution to the configured
 factory, exact runtime codehashes, finalized strategy registry, one-time router
 binding and each strategy's one-time migrator binding, fee vault, protocol
 versions and complete canonical pool mapping.
+
+## Observable confidential risks
+
+- Consecutive buckets can reveal aggregate flow when an attacker knows or probes
+  curve depth. Minimum activity and delay reduce attribution but do not prevent it.
+- An attacker can create swaps that complete an epoch, subtract known activity and
+  narrow the remaining unknown movement.
+- Indicative prices can be stale during inactivity or intentionally bounded during
+  extreme movement. Integrations must show age and use paid encrypted quotes for
+  exact execution.
+- The epoch-closing swap pays additional MPC gas. Public due-state makes the cost
+  predictable; out-of-gas reverts the complete swap atomically.
+- Boundary manipulation can affect chart buckets. The bucket must not be used as a
+  collateral oracle, execution oracle or authoritative `minOut`.
+- Empty pool creation cannot lock an initial reference. The reference is committed
+  only by a successful first-liquidity transaction, and a malicious reference cannot
+  activate a misleading pool unless the confidential actual price lies between
+  one-half and twice that reference. As with other permissionless AMMs, the first
+  funded initializer still controls the initial market price.
+- Pool creation code is reconstructed only from immutable constructor-created stores,
+  checked against its canonical hash and deployed through a factory-pinned deployer.

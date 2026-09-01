@@ -85,8 +85,16 @@ function assertRouterIndexDeclassification(path, call, ancestors) {
   const functionNode = nearest(ancestors, "FunctionDefinition");
   const declarationStatement = nearest(ancestors, "VariableDeclarationStatement");
   if (
-    path !== "contracts/ConfidentialBestExecutionRouter.sol" ||
-    contract?.name !== "ConfidentialBestExecutionRouter" ||
+    !(
+      (
+        path === "contracts/ConfidentialBestExecutionRouter.sol" &&
+        contract?.name === "ConfidentialBestExecutionRouter"
+      ) ||
+      (
+        path === "contracts/ObservableConfidentialBestExecutionRouter.sol" &&
+        contract?.name === "ObservableConfidentialBestExecutionRouter"
+      )
+    ) ||
     functionNode?.name !== "_selectBest" ||
     functionNode.visibility !== "internal" ||
     declarationStatement?.initialValue !== call ||
@@ -248,6 +256,62 @@ function assertRouterIndexDeclassification(path, call, ancestors) {
   }
 }
 
+function assertObservablePriceDeclassification(path, call, ancestors) {
+  const contract = nearest(ancestors, "ContractDefinition");
+  const functionNode = nearest(ancestors, "FunctionDefinition");
+  const declarationStatement = nearest(ancestors, "VariableDeclarationStatement");
+  const functionName = functionNode?.name;
+  const expectedVariable = functionName === "_initializePublicObservation"
+    ? "bucket"
+    : functionName === "_recordSwapObservation"
+      ? "publishedBucket"
+      : undefined;
+  if (
+    path !== "contracts/ObservableConfidentialCPMM.sol" ||
+    contract?.name !== "ObservableConfidentialCPMM" ||
+    functionNode?.visibility !== "internal" ||
+    expectedVariable === undefined ||
+    declarationStatement?.initialValue !== call ||
+    declarationStatement.declarations?.length !== 1 ||
+    declarationStatement.declarations[0]?.name !== expectedVariable
+  ) {
+    throw new Error(`${path}: plaintext MPC price decryption is outside the reviewed observation boundary`);
+  }
+
+  const declaration = declarationStatement.declarations[0];
+  const references = [];
+  walk(functionNode.body, (node, nodeAncestors) => {
+    if (node.nodeType === "Identifier" && node.referencedDeclaration === declaration.id) {
+      references.push({ node, parent: nodeAncestors.at(-1) });
+    }
+    if (node.nodeType === "InlineAssembly") {
+      throw new Error(`${path}: reviewed observation declassification cannot use inline assembly`);
+    }
+  });
+  const expectedReferences = expectedVariable === "bucket" ? 1 : 2;
+  if (references.length !== expectedReferences) {
+    throw new Error(`${path}: decrypted observation bucket has an unexpected use count`);
+  }
+  const publishReferences = references.filter(({ node, parent }) =>
+    parent?.nodeType === "FunctionCall" &&
+    solidityCallName(parent.expression) === "_publishObservation" &&
+    parent.arguments?.[0] === node
+  );
+  const referenceAssignments = references.filter(({ node, parent }) =>
+    parent?.nodeType === "Assignment" &&
+    parent.operator === "=" &&
+    parent.rightHandSide === node &&
+    parent.leftHandSide?.nodeType === "Identifier" &&
+    parent.leftHandSide.name === "referencePrice"
+  );
+  if (
+    publishReferences.length !== 1 ||
+    referenceAssignments.length !== (expectedVariable === "bucket" ? 0 : 1)
+  ) {
+    throw new Error(`${path}: decrypted observation bucket reaches an unreviewed sink`);
+  }
+}
+
 function isInitializedFalseStatement(statement) {
   const expression = statement?.nodeType === "ExpressionStatement"
     ? statement.expression
@@ -275,13 +339,46 @@ function isTerminalProtocolFeeDepositStatement(statement) {
   );
 }
 
-function isReviewedFullExitBody(body) {
-  const statements = bodyStatements(body);
-  if (statements.length === 1) return isInitializedFalseStatement(statements[0]);
+function isClearCurrentObservationStatement(statement) {
+  const expression = statement?.nodeType === "ExpressionStatement"
+    ? statement.expression
+    : undefined;
   return (
-    statements.length === 2 &&
+    expression?.nodeType === "FunctionCall" &&
+    expression.expression?.nodeType === "Identifier" &&
+    expression.expression.name === "_clearCurrentObservation" &&
+    expression.arguments?.length === 0
+  );
+}
+
+function isClearInitialPriceReferenceStatement(statement) {
+  const expression = statement?.nodeType === "ExpressionStatement"
+    ? statement.expression
+    : undefined;
+  return (
+    expression?.nodeType === "UnaryOperation" &&
+    expression.operator === "delete" &&
+    expression.subExpression?.nodeType === "Identifier" &&
+    expression.subExpression.name === "initialPriceReferenceX18"
+  );
+}
+
+function isReviewedFullExitBody(path, body) {
+  const statements = bodyStatements(body);
+  if (path === "contracts/ConfidentialCPMM.sol") {
+    return (
+      statements.length === 2 &&
+      isTerminalProtocolFeeDepositStatement(statements[0]) &&
+      isInitializedFalseStatement(statements[1])
+    );
+  }
+  return (
+    path === "contracts/ObservableConfidentialCPMM.sol" &&
+    statements.length === 4 &&
     isTerminalProtocolFeeDepositStatement(statements[0]) &&
-    isInitializedFalseStatement(statements[1])
+    isInitializedFalseStatement(statements[1]) &&
+    isClearInitialPriceReferenceStatement(statements[2]) &&
+    isClearCurrentObservationStatement(statements[3])
   );
 }
 
@@ -319,8 +416,16 @@ function assertReviewedFullExitBoolean(path, call, ancestors) {
   const functionNode = nearest(ancestors, "FunctionDefinition");
   const declarationStatement = nearest(ancestors, "VariableDeclarationStatement");
   if (
-    path !== "contracts/ConfidentialCPMM.sol" ||
-    contract?.name !== "ConfidentialCPMM" ||
+    !(
+      (
+        path === "contracts/ConfidentialCPMM.sol" &&
+        contract?.name === "ConfidentialCPMM"
+      ) ||
+      (
+        path === "contracts/ObservableConfidentialCPMM.sol" &&
+        contract?.name === "ObservableConfidentialCPMM"
+      )
+    ) ||
     functionNode?.name !== "removeLiquidity" ||
     declarationStatement?.initialValue !== call ||
     declarationStatement.declarations?.length !== 1 ||
@@ -347,7 +452,7 @@ function assertReviewedFullExitBoolean(path, call, ancestors) {
     parent?.nodeType !== "IfStatement" ||
     parent.condition !== reference.node ||
     parent.falseBody ||
-    !isReviewedFullExitBody(parent.trueBody)
+    !isReviewedFullExitBody(path, parent.trueBody)
   ) {
     throw new Error(`${path}: plaintext MPC full-exit boolean reaches an unreviewed sink`);
   }
@@ -406,7 +511,11 @@ export function assertCompiledPrivacyDecryptBoundary(compilationSources, targetP
         throw new Error(`${path}: unsupported plaintext MPC decryption type`);
       }
       plaintextUintDecryptions += 1;
-      assertRouterIndexDeclassification(path, node, ancestors);
+      if (path === "contracts/ObservableConfidentialCPMM.sol") {
+        assertObservablePriceDeclassification(path, node, ancestors);
+      } else {
+        assertRouterIndexDeclassification(path, node, ancestors);
+      }
     });
   }
   return plaintextUintDecryptions;

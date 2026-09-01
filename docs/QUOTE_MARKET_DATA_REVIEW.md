@@ -4,6 +4,19 @@ Date: 2026-08-15
 
 ## Decision
 
+The original conclusions below remain the disclosure policy for privacy mode 1.
+CipherDEX also provides a separate opt-in privacy mode 2 for integrations that prefer
+public indicative market discovery over aggregate price secrecy. Mode 2 publishes a
+one-epoch-delayed, 50-bps quantized price after at least three swaps and two minutes.
+It never publishes reserves, depth, TVL or amount volume, and paid encrypted quotes
+remain required for authoritative output and `minOut` because public price alone does
+not reveal CPMM price impact.
+
+The two modes use separate factories and canonical namespaces. Existing mode-1 pools
+and their threat model are unchanged. See
+`docs/OBSERVABLE_CONFIDENTIAL_POOL_FEASIBILITY.md` and `docs/PRIVACY_MODEL.md` for the
+measured gas and inference boundaries.
+
 Keep confidential settlement, encrypted exact-input quotes and the absence of
 public reserve-derived state. On the current COTI testnet runtime, exact private
 quotes require paid transactions because fresh MPC operations cannot execute

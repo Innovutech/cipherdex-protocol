@@ -6,6 +6,7 @@ export * from "./liquidity.js";
 export * from "./executionError.js";
 export * from "./publicLimitOrder.js";
 export * from "./publicBestExecution.js";
+export * from "./observableConfidential.js";
 import { isEvmNativeAssetAddress } from "./nativeAsset.js";
 import { liquiditySideToContractBoolean, } from "./liquidity.js";
 /**
@@ -46,7 +47,8 @@ export const CONFIDENTIAL_QUOTE_TRANSPORT = {
 export const PRIVACY_MODE = {
     TRANSPARENT: 0,
     AMOUNT_CONFIDENTIAL_PRIVATE_LP: 1,
-    UNSUPPORTED_FULLY_CONFIDENTIAL: 2,
+    OBSERVABLE_PRICE_AMOUNT_CONFIDENTIAL_PRIVATE_LP: 2,
+    UNSUPPORTED_FULLY_CONFIDENTIAL: 255,
 };
 export const LP_DISPOSITION = {
     CREATOR_HELD: 0,
@@ -1077,7 +1079,11 @@ export function isConfidentialPoolDiscovery(value) {
     const candidate = Object.fromEntries(CONFIDENTIAL_POOL_DISCOVERY_FIELDS.map((field) => [field, ownDataValue(descriptors, field)]));
     return (candidate.disclosureSchemaVersion === DISCLOSURE_SCHEMA_VERSION &&
         candidate.protocolVersion === CIPHERDEX_CONFIDENTIAL_PROTOCOL_VERSION &&
-        candidate.poolKind === "private-erc20-cpmm-v1" &&
+        ((candidate.privacyMode === PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP &&
+            candidate.poolKind === "private-erc20-cpmm-v1") ||
+            (candidate.privacyMode ===
+                PRIVACY_MODE.OBSERVABLE_PRICE_AMOUNT_CONFIDENTIAL_PRIVATE_LP &&
+                candidate.poolKind === "observable-private-erc20-cpmm-v1")) &&
         isAddressLike(candidate.pool) &&
         isAddressLike(candidate.token0) &&
         isAddressLike(candidate.token1) &&
@@ -1094,7 +1100,6 @@ export function isConfidentialPoolDiscovery(value) {
         candidate.feeBps >= 0 &&
         isAddressLike(candidate.feeVault) &&
         isCipherDEXV1FeePolicy(candidate.feePolicy, candidate.feeBps) &&
-        candidate.privacyMode === PRIVACY_MODE.AMOUNT_CONFIDENTIAL_PRIVATE_LP &&
         isAddressLike(candidate.initializationStrategy) &&
         Number.isInteger(candidate.strategyClass) &&
         candidate.strategyClass >= 0 &&

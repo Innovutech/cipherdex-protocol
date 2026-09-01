@@ -367,3 +367,39 @@ token passes `isCompatiblePrivateToken` on that exact factory and that every poo
 LP token was issued by the recorded reviewed helper for that pool and canonical
 factory. Compatibility is not token reputation; external token semantics remain
 a pool-level trust decision.
+
+## Observable confidential mainnet deployment
+
+The observable stack is deployed only through
+`scripts/deploy-observable-confidential-mainnet.ts` and the authenticated external
+launcher. It does not replace or mutate the mode-1 stack. The deployment reuses the
+existing `PrivateLPTokenFactory` and deploys a new confidential-only fee vault, pool
+deployer, factory, strategy registry, launch strategy and constructor-created
+migrator, plus a best-execution router.
+
+Before an authorized deployment, add these non-secret values to the external
+`coti-mainnet.env`:
+
+```text
+CIPHERDEX_EXISTING_PRIVATE_LP_FACTORY=<reviewed deployed PrivateLPTokenFactory>
+CIPHERDEX_FEE_BENEFICIARY=<same immutable fee beneficiary or reviewed replacement>
+COTI_DEPLOYMENT_RECORD=deployments/coti-mainnet-observable-confidential-<full-source-commit>.json
+CIPHERDEX_MAINNET_APPROVED_COMMIT=<same full-source-commit>
+```
+
+Keep the existing RPC, recovery key and exactly one signer configuration: either
+`COTI_MAINNET_PRIVATE_KEY`, or the Ledger variables documented above. No AES key or
+private-token funding is needed to deploy the stack. Deployment creates no pool and
+moves no private assets.
+
+The launcher target is:
+
+```text
+scripts/deploy-observable-confidential-mainnet.ts --network cotiMainnet
+```
+
+Do not run this target until the source commit, TAC1 report, funded testnet evidence,
+existing LP factory address, fee beneficiary and expected deployment gas have been
+reviewed and explicitly authorized. The resulting manifest must record the two pool
+creation-code stores and their combined canonical creation-code hash in addition to
+ordinary runtime codehashes and one-time bindings.

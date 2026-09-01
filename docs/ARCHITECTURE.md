@@ -387,3 +387,34 @@ maximum side and returns caller-encrypted accepted specified amount, counterpart
 amount and expected shares. This is a preview, not an authorization: the later
 `addLiquidity` call independently enforces fresh encrypted maxima, minimum shares,
 normalized price bounds and deadline against current pool state.
+
+## Observable confidential mode
+
+`ObservableConfidentialCPMMFactory` is a separate privacy-mode-2 namespace. It
+reuses the permissionless deployed `PrivateLPTokenFactory`, private ERC-20
+interfaces, fee economics, CPMM rounding and authenticated encrypted quote and
+settlement model. Its pool deployer, strategy registry, launch strategy, migrator,
+best-execution router and confidential-only fee vault are separately and immutably
+bound because the deployed mode-1 instances cannot accept a second factory.
+
+Pool creation does not bind a price reference. A standard pool's first provider calls
+`initializeLiquidity` with the public reference in the same transaction that supplies
+the confidential reserves; launchpad migration carries the signed reference into its
+atomic bootstrap. This prevents an unfunded pool creator from permanently squatting
+the canonical key with an unusable reference. A full exit clears the reference so a
+later first provider establishes a fresh one. The mode-2 pool publishes an initial
+quantized price only after that successful initialization.
+Subsequent swaps increment a public counter. After at least three swaps and two
+minutes, the closing swap stores a network-encrypted 50-bps bucket. The next eligible
+epoch publishes that prior bucket and seals the current one. No keeper is required.
+
+The quantum is derived from the last published bucket. Before quantization, the next
+confidential price is bounded to one-half through twice that reference. Extreme price
+movement therefore appears over multiple observations instead of becoming more
+precise than the disclosure policy. This chart price is not settlement state. Exact
+paid quotes and encrypted minimum outputs remain authoritative.
+
+The CREATE2 deployer reconstructs canonical pool creation bytecode from two immutable
+constructor-created code stores. This keeps the deployer below EIP-170 without
+removing pool functionality. It records and verifies the exact combined creation-code
+hash, and the factory pins the deployer runtime codehash before creating any pool.

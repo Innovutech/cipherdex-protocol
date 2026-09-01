@@ -105,3 +105,33 @@ initialized. Dual EIP-712 authorization protects who may claim and consume the
 initialization slot; it does not hide launch identity. Encrypted seed amounts,
 final-price bounds and LP share amounts remain confidential. After bootstrap the
 strategy receives no swap callback or privileged market information.
+
+## Observable-price confidentiality
+
+Privacy mode 2 intentionally weakens aggregate price secrecy, not private asset
+custody or amount confidentiality. Public observers learn a delayed quantized price,
+its sampling and publication times, and the number of swaps in the sampled epoch.
+They do not receive exact reserves, depth, TVL, amount volume, LP balances, liquidity
+amounts, swap inputs or outputs, slippage values, or exact quote results.
+
+The three-swap and two-minute gates prevent routine direct one-event-to-one-swap
+attribution. They do not create information-theoretic anonymity. An attacker who
+already knows pool depth, knows most activity, controls probe swaps or observes a
+dominant trade can estimate aggregate flow and may constrain another participant's
+amount. One-epoch delay separates publication from the sampled closing swap but does
+not remove deterministic CPMM inference.
+
+Price quantization occurs inside MPC before public decryption. The quantum is fixed
+by the prior public bucket for each epoch, and confidential movement is bounded before
+rounding. Publishing exact reserves or continuously precise shadow reserves remains
+out of scope. Mode 1 is unchanged and has no public observation functions.
+
+The initialization reference is intentionally public but is not accepted during
+empty pool creation. It is committed atomically with the first confidential reserve
+deposit (or signed launch migration), and the actual confidential ratio must lie in
+the reviewed range around it. This discloses an indicative launch price without
+disclosing either reserve amount.
+
+Public buckets support walletless discovery and approximate charts. They do not reveal
+price impact because depth remains private, so they cannot replace paid encrypted
+quotes or produce authoritative minimum output.

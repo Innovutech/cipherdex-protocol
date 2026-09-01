@@ -137,9 +137,9 @@ describe("funded recovery journal", function () {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it("accepts only canonical COTI full-stack and public deployment bindings", function () {
+  it("accepts only canonical COTI full, public and observable deployment bindings", function () {
     for (const network of ["testnet", "mainnet"]) {
-      for (const scope of ["", "-public"]) {
+      for (const scope of ["", "-public", "-observable-confidential"]) {
         expect(validateFundedDeploymentBinding({
           ...DEPLOYMENT,
           recordPath: `deployments/coti-${network}${scope}-${COMMIT}.json`,
