@@ -13,7 +13,7 @@ import "./CipherDEXFeePolicy.sol";
 
 /**
  * @title ObservableConfidentialCPMM
- * @notice Amount-confidential CPMM with delayed quantized public price observations.
+ * @notice Amount-confidential CPMM with quantized public price observations.
  *
  * The pool deliberately does not claim anonymous or hidden-recipient execution.
  * The standard PrivateERC20 interface takes public addresses and emits public
@@ -32,8 +32,6 @@ contract ObservableConfidentialCPMM is CipherDEXFeePolicy {
     uint256 public constant OBSERVATION_BUCKET_BPS = 50;
     uint256 public constant OBSERVATION_REFERENCE_LOWER_DIVISOR = 2;
     uint256 public constant OBSERVATION_REFERENCE_UPPER_MULTIPLIER = 2;
-    uint32 public constant MIN_OBSERVATION_SWAPS = 3;
-    uint64 public constant MIN_OBSERVATION_INTERVAL = 2 minutes;
     uint32 public constant MIN_CONFIDENTIAL_COLLECTION_SWAPS = 8;
     uint64 public constant MIN_CONFIDENTIAL_COLLECTION_DELAY = 1 hours;
     uint8 public constant LP_DISPOSITION_CREATOR_HELD = 0;
@@ -65,7 +63,6 @@ contract ObservableConfidentialCPMM is CipherDEXFeePolicy {
     ctUint256 private protocolFees0State;
     ctUint256 private protocolFees1State;
     ctUint256 private totalShares;
-    ctUint256 private pendingPriceBucketState;
     mapping(bytes32 => bool) private consumedInputs;
     uint32 public protocolFeeSwapCount0;
     uint32 public protocolFeeSwapCount1;
@@ -77,12 +74,7 @@ contract ObservableConfidentialCPMM is CipherDEXFeePolicy {
     uint64 public publicObservationAt;
     uint64 public publicObservationPublishedAt;
     uint32 public publicObservationActivityCount;
-    uint32 public swapsSinceObservationClose;
-    uint64 public lastObservationClosedAt;
-    bool public hasPendingObservation;
-    uint64 public pendingObservationAt;
-    uint32 public pendingObservationActivityCount;
-    uint256 private pendingObservationQuantumX18;
+    uint32 public swapsSincePublicObservation;
     uint256 public nextLockNonce;
 
     struct LockRecord {
@@ -1139,19 +1131,6 @@ contract ObservableConfidentialCPMM is CipherDEXFeePolicy {
         return (record.owner, record.unlockTime, record.permanent, record.released);
     }
 
-    /**
-     * @notice Whether the next successful swap will close an observation epoch.
-     * @dev Integrations use this public signal to select the higher reviewed gas limit.
-     */
-    function observationDueForNextSwap() external view returns (bool) {
-        return
-            initialized &&
-            publicPriceBucketX18 != 0 &&
-            swapsSinceObservationClose + 1 >= MIN_OBSERVATION_SWAPS &&
-            block.timestamp - uint256(lastObservationClosedAt) >=
-                MIN_OBSERVATION_INTERVAL;
-    }
-
     function _initializePublicObservation(
         gtUint256 reserve0,
         gtUint256 reserve1
@@ -1171,54 +1150,34 @@ contract ObservableConfidentialCPMM is CipherDEXFeePolicy {
         uint256 bucket = MpcCore.decrypt(_quantizePrice(priceX18, quantum));
         uint64 observedAt = uint64(block.timestamp);
         _publishObservation(bucket, observedAt, 0, quantum, true);
-        lastObservationClosedAt = observedAt;
-        swapsSinceObservationClose = 0;
+        swapsSincePublicObservation = 0;
     }
 
     function _recordSwapObservation(
         gtUint256 reserve0,
         gtUint256 reserve1
     ) internal {
-        uint32 activityCount = swapsSinceObservationClose + 1;
-        swapsSinceObservationClose = activityCount;
-        if (
-            activityCount < MIN_OBSERVATION_SWAPS ||
-            block.timestamp - uint256(lastObservationClosedAt) <
-                MIN_OBSERVATION_INTERVAL
-        ) return;
-
-        uint64 closedAt = uint64(block.timestamp);
-        swapsSinceObservationClose = 0;
-        lastObservationClosedAt = closedAt;
-
         uint256 referencePrice = publicPriceBucketX18;
-        if (hasPendingObservation) {
-            uint256 publishedBucket = MpcCore.decrypt(
-                MpcCore.onBoard(pendingPriceBucketState)
-            );
-            _publishObservation(
-                publishedBucket,
-                pendingObservationAt,
-                pendingObservationActivityCount,
-                pendingObservationQuantumX18,
-                false
-            );
-            referencePrice = publishedBucket;
-        }
-
         gtUint256 currentPrice = _normalizedPriceX18(reserve0, reserve1);
         uint256 quantum = _priceQuantum(referencePrice);
         gtUint256 boundedPrice = MpcCore.max(
             MpcCore.min(currentPrice, _referenceUpper(referencePrice)),
             _referenceLower(referencePrice)
         );
-        pendingPriceBucketState = MpcCore.offBoard(
-            _quantizePrice(boundedPrice, quantum)
+        uint256 bucket = MpcCore.decrypt(_quantizePrice(boundedPrice, quantum));
+        uint32 activityCount = swapsSincePublicObservation;
+        if (activityCount != type(uint32).max) activityCount += 1;
+        swapsSincePublicObservation = activityCount;
+        if (bucket == referencePrice) return;
+
+        swapsSincePublicObservation = 0;
+        _publishObservation(
+            bucket,
+            uint64(block.timestamp),
+            activityCount,
+            quantum,
+            false
         );
-        pendingObservationAt = closedAt;
-        pendingObservationActivityCount = activityCount;
-        pendingObservationQuantumX18 = quantum;
-        hasPendingObservation = true;
     }
 
     function _publishObservation(
@@ -1298,18 +1257,12 @@ contract ObservableConfidentialCPMM is CipherDEXFeePolicy {
     }
 
     function _clearCurrentObservation() internal {
-        delete pendingPriceBucketState;
         delete publicPriceBucketX18;
         delete publicPriceQuantumX18;
         delete publicObservationAt;
         delete publicObservationPublishedAt;
         delete publicObservationActivityCount;
-        delete swapsSinceObservationClose;
-        delete lastObservationClosedAt;
-        delete hasPendingObservation;
-        delete pendingObservationAt;
-        delete pendingObservationActivityCount;
-        delete pendingObservationQuantumX18;
+        delete swapsSincePublicObservation;
     }
 
     function _reserve0() internal returns (gtUint256) {

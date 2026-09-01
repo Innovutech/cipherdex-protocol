@@ -1,20 +1,18 @@
 # Observable Confidential Pool Feasibility
 
-Status: isolated testnet experiment; not a production protocol design.
+Status: production candidate awaiting explicit deployment authorization.
 
 ## Boundary
 
-The deployed privacy-mode-1 contracts remain unchanged. This study evaluates a
-separate future privacy mode that intentionally publishes a quantized price while
+The deployed privacy-mode-1 contracts remain unchanged. This production candidate is
+a separate opt-in privacy mode that intentionally publishes a quantized price while
 retaining confidential reserves, depth, token amounts, LP positions and exact
 quotes.
 
-The baseline design is permissionless and entirely in-pool. No keeper or funded
-updater is required. A state-changing pool operation increments a public activity
-counter. Once both an immutable time interval and minimum activity count are met,
-that operation derives and quantizes the normalized reserve ratio inside MPC and
-publishes only the bucket. The paid encrypted exact-quote path remains authoritative
-for execution.
+The selected design is permissionless and entirely in-pool. No keeper or funded
+updater is required. Every swap derives a 50-bps bucket inside MPC and publishes it
+in that transaction only when it differs from the current public bucket. The paid
+encrypted exact-quote path remains authoritative for execution.
 
 An optional updater may be studied later, but it is not part of the baseline and
 must never be required for pool liveness.
@@ -27,7 +25,7 @@ as `ConfidentialCPMM`, but it does not transfer or custody tokens. This isolates
 incremental MPC and storage cost of market-data publication from private-token
 transfer costs.
 
-The funded runner measures:
+The original feasibility runner measured:
 
 1. a baseline confidential swap-like transition with observations disabled;
 2. lazy non-closing transitions;
@@ -47,19 +45,19 @@ assumes a strong attacker who already knows exact opening reserves, knows the pu
 swap direction, and observes one closing bucket. This is stronger than a passive
 observer but realistic for a launch participant or an active exact-quote prober.
 
-Minimum activity prevents a bucket from being directly attributed to one ordinary
-operation, but it does not hide aggregate same-direction flow. Sparse activity,
-attacker-created probe swaps, known LP actions, and a dominant trade inside an epoch
-can materially improve inference. A one-epoch delay separates timing but does not
-remove that information.
+The original experiment measured activity-gated immediate and delayed alternatives.
+The selected trader-focused mode instead accepts direct attribution of a bucket
+crossing to its swap. Sparse activity, attacker-created probe swaps, known LP actions,
+and dominant trades can materially improve approximate amount inference. Quantization
+does not prevent that inference; it keeps the exact reserve ratio and exact amount out
+of public state.
 
 ## Decision Gate
 
-No production implementation should proceed until the testnet evidence establishes:
+Deployment remains blocked until focused testnet evidence establishes:
 
-- ordinary non-closing overhead;
-- immediate and delayed closing overhead;
-- correct MPC-side quantization and delayed publication;
+- same-bucket and crossing-swap overhead;
+- correct MPC-side quantization and immediate crossing publication;
 - acceptable bucket precision and cadence under the inference model;
 - bounded manipulation behavior and explicit chart/TWAP semantics.
 
@@ -106,14 +104,15 @@ absolute publication increment rather than a final production-swap percentage.
 The validated immediate bucket was `1.87e18`; the delayed publication correctly
 revealed the prior epoch's `1.94e18` bucket instead of the current state.
 
-## Production Stack Testnet Validation
+## Superseded Delayed-Stack Testnet Validation
 
 Run date: 2026-09-01
 
 Source commit: `48782e07859c93b061ebb4e1a54bcd2dcdec2fe0`
 
-The authenticated funded runner deployed the complete disposable privacy-mode-2
-stack, reused the reviewed `PrivateLPTokenFactory`, initialized a real private-token
+This evidence describes the superseded delayed cadence. The authenticated funded
+runner deployed the complete disposable privacy-mode-2 stack, reused the reviewed
+`PrivateLPTokenFactory`, initialized a real private-token
 pool, executed six swaps over two eligible observation epochs, published sequence 2,
 cleared every temporary allowance, and fully exited the pool. The final live checks
 confirmed `initialized == false`, no current public bucket, no pending observation,
@@ -156,29 +155,26 @@ However, larger aggregate movement becomes relatively easier to estimate. An act
 attacker can also subtract its own probe trades, so a minimum operation count must not
 be described as complete individual-amount protection.
 
-## Recommendation
+## Selected Design
 
-The in-pool lazy design is technically feasible without a keeper. It should remain a
+The in-pool bucket-crossing design is technically feasible without a keeper. It remains a
 separate privacy mode so mode 1 and its existing threat model stay unchanged.
 
-For a production prototype:
+For the production candidate:
 
-- use immutable time and activity thresholds and expose the counter so the closing
-  gas cost is predictable;
-- use one-epoch-delayed publication when the additional roughly 176,000 gas over
-  immediate closing is acceptable;
-- publish the quantized initial launch price so a new pool is discoverable before its
-  second active epoch;
+- evaluate and quantize after every swap, publishing only when the 50-bps bucket
+  changes;
+- expose the number of same-bucket swaps since the last public observation;
+- require every mode-2 swap to budget for the publication-capable gas path because
+  confidential execution determines whether a crossing occurs;
+- publish the quantized initial launch price during successful initialization;
 - keep paid encrypted quotes authoritative for exact minimum output and settlement;
 - publish no reserves, depth, amount volume or exact OHLC values;
 - make any separately funded updater strictly optional;
-- design and test an adaptive quantizer before production because a fixed launch-price
-  quantum becomes too precise after large appreciation and too coarse after large
-  depreciation;
+- derive each quantum adaptively from the prior public bucket;
 - treat indexer candles and TWAP as approximate observations with explicit timestamps,
   activity counts and staleness.
 
-The random epoch-closing trader still pays an additional 3.7-3.8 million gas. With no
-keeper or subsidy, that cost cannot be eliminated: some state-changing transaction must
-execute the MPC price calculation and public decryption. It can only be made predictable,
-less frequent, or distributed differently.
+Every swap pays for MPC price calculation. A crossing swap additionally pays for
+public decryption and storage. This cost is the deliberate no-keeper tradeoff and must
+be measured against the final pool artifact before deployment.

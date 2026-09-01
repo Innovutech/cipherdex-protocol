@@ -160,7 +160,7 @@ async function main(): Promise<void> {
     compiler,
     transactions,
     limitations: [
-      "Price observations are delayed, quantized and non-authoritative.",
+      "Price observations publish on 50-bps bucket crossings and are non-authoritative.",
       "Exact swaps still require paid encrypted quotes and encrypted minimum output.",
       "No external audit is claimed.",
     ],

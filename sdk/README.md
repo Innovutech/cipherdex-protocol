@@ -272,8 +272,8 @@ Discovery must distinguish a standard pool (`initializationStrategy` zero, class
 
 Privacy mode `2` keeps reserves, depth, balances, LP positions, liquidity amounts,
 swap amounts and exact quote results confidential while intentionally publishing a
-delayed quantized normalized token1-per-token0 price. Mode `1` remains fully separate
-and exposes no reserve-derived public state.
+quantized normalized token1-per-token0 price whenever a swap crosses a 50-bps bucket.
+Mode `1` remains fully separate and exposes no reserve-derived public state.
 
 Use `OBSERVABLE_CONFIDENTIAL_FACTORY_ABI` for discovery and verify the same canonical
 key `(ordered pair, fee tier, privacy mode, protocol version, initialization strategy)`.
@@ -282,8 +282,10 @@ factory-bound deployer, strategy registry, router and confidential-only fee vaul
 
 `parseObservablePriceObservation` authenticates the emitter, event topic, indexed
 sequence and ABI values. `classifyObservablePriceFreshness` requires an explicit
-maximum age. Observation timestamps refer to when the price was sampled, not when
-its delayed event was published.
+maximum age. Sampling and publication occur in the same successful swap. The public
+`swapsSincePublicObservation` counter records swaps that remained within the current
+bucket. Since a crossing cannot be predicted from public state, integrations must use
+the publication-capable gas envelope for every mode-2 swap.
 
 `estimateObservableSwapOutput` applies token decimals and the advertised input fee
 to the public bucket. Its result always has `authoritative: false` and

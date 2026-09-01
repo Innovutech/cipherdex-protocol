@@ -109,23 +109,13 @@ export function cpmmSwapExactInput(
     : { reserve0: retainedReserve, reserve1: nextReserveIn, amountOut };
 }
 
-export function shouldCloseObservation(
-  lastObservationAt: number,
-  now: number,
-  operationsSinceObservation: number,
-  minimumInterval: number,
-  minimumOperations: number,
+export function shouldPublishObservation(
+  publicBucketX18: bigint,
+  nextBucketX18: bigint,
 ): boolean {
-  const values = [lastObservationAt, now, operationsSinceObservation, minimumInterval];
-  if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
-    throw new Error("observation values must be non-negative safe integers");
-  }
-  if (!Number.isSafeInteger(minimumOperations) || minimumOperations <= 0) {
-    throw new Error("minimumOperations must be a positive safe integer");
-  }
-  if (now < lastObservationAt) throw new Error("observation time moved backwards");
-  return operationsSinceObservation >= minimumOperations &&
-    now - lastObservationAt >= minimumInterval;
+  requirePositive(publicBucketX18, "publicBucketX18");
+  requirePositive(nextBucketX18, "nextBucketX18");
+  return publicBucketX18 !== nextBucketX18;
 }
 
 export type CandidateInputRange = Readonly<{

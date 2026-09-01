@@ -44,7 +44,7 @@ const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/iu;
 const EXPECTED_CHAIN_ID = 7_082_400n;
 const GAS_LIMIT = 30_000_000n;
 const CREATE_POOL_GAS_LIMIT = 15_000_000n;
-const SWAP_COUNT = 6;
+const SWAP_COUNT = 3;
 const FEE_BPS = 30n;
 const ZERO = 0n;
 const OBSERVABLE_ROUTER_RUNTIME_CODEHASH =
@@ -236,16 +236,6 @@ function normalizedPriceX18(
 
 function deadline(): bigint {
   return BigInt(Math.floor(Date.now() / 1_000) + 900);
-}
-
-async function waitUntil(timestamp: bigint): Promise<void> {
-  while (true) {
-    const block = await ethers.provider.getBlock("latest");
-    if (!block) throw new Error("latest testnet block unavailable");
-    if (BigInt(block.timestamp) >= timestamp) return;
-    const delayMs = Number(timestamp - BigInt(block.timestamp)) * 1_000;
-    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(delayMs, 10_000)));
-  }
 }
 
 async function main(): Promise<void> {
@@ -494,7 +484,7 @@ async function main(): Promise<void> {
   if (
     await pool.publicObservationSequence() !== 1n ||
     await pool.publicPriceBucketX18() === 0n ||
-    await pool.hasPendingObservation()
+    await pool.swapsSincePublicObservation() !== 0n
   ) throw new Error("initial observable price publication is invalid");
 
   const totalSwapInput = swapAmount * BigInt(SWAP_COUNT);
@@ -506,12 +496,8 @@ async function main(): Promise<void> {
   const model: PoolModel = { reserve0: amount0, reserve1: amount1 };
   const swapGas: string[] = [];
   for (let index = 0; index < SWAP_COUNT; index++) {
-    if (index === 2 || index === 5) {
-      await waitUntil(await pool.lastObservationClosedAt() + 120n);
-      if (!(await pool.observationDueForNextSwap())) {
-        throw new Error(`swap ${index + 1} was not marked observation-due`);
-      }
-    }
+    const previousSequence = await pool.publicObservationSequence();
+    const previousBucket = await pool.publicPriceBucketX18();
     const modeledOutput = modeledSwap(model, swapAmount);
     const minimumOut = minimumWithSlippage(modeledOutput);
     const selector = pool.interface.getFunction("swapExactInput")!.selector;
@@ -526,15 +512,15 @@ async function main(): Promise<void> {
         true,
         deadline(),
         { gasLimit: GAS_LIMIT },
-      ));
+    ));
     swapGas.push(evidence.receipt.gasUsed.toString());
-    if (index < 2 && await pool.publicObservationSequence() !== 1n) {
-      throw new Error("non-closing swap unexpectedly published a price");
-    }
-    if (index === 2 && (
-      !(await pool.hasPendingObservation()) ||
-      await pool.publicObservationSequence() !== 1n
-    )) throw new Error("first epoch did not remain encrypted and pending");
+    if (
+      await pool.publicObservationSequence() !== previousSequence + 1n ||
+      await pool.publicPriceBucketX18() === previousBucket ||
+      await pool.publicObservationAt() !== await pool.publicObservationPublishedAt() ||
+      await pool.publicObservationActivityCount() !== 1n ||
+      await pool.swapsSincePublicObservation() !== 0n
+    ) throw new Error(`swap ${index + 1} did not publish its crossed price bucket`);
   }
   await setRecoverablePrivateAllowance({
     journal: journal(), wallet, token: token0, tokenAddress: token0Address,
@@ -542,11 +528,10 @@ async function main(): Promise<void> {
     overrides: { gasLimit: GAS_LIMIT }, submit,
   });
   if (
-    await pool.publicObservationSequence() !== 2n ||
-    await pool.publicObservationActivityCount() !== 3n ||
-    !(await pool.hasPendingObservation()) ||
-    await pool.publicObservationAt() >= await pool.publicObservationPublishedAt()
-  ) throw new Error("delayed observable publication is invalid");
+    await pool.publicObservationSequence() !== BigInt(SWAP_COUNT + 1) ||
+    await pool.publicObservationActivityCount() !== 1n ||
+    await pool.publicObservationAt() !== await pool.publicObservationPublishedAt()
+  ) throw new Error("immediate observable publication is invalid");
 
   const shares = await decryptPrivateValue256(wallet, await pool.myShares());
   if (shares <= 0n) throw new Error("observable LP shares are unavailable for cleanup");
@@ -566,7 +551,7 @@ async function main(): Promise<void> {
     await pool.initialized() ||
     await pool.initialPriceReferenceX18() !== 0n ||
     await pool.publicPriceBucketX18() !== 0n ||
-    await pool.hasPendingObservation()
+    await pool.swapsSincePublicObservation() !== 0n
   ) throw new Error("observable full exit did not clear current market data");
   journal().markRecovered("observable-pool", [exit.transactionHash]);
   journal().markRun("passed");
@@ -580,7 +565,7 @@ async function main(): Promise<void> {
     initializationTx: initialization.transactionHash,
     swaps: SWAP_COUNT,
     swapGas,
-    publishedSequence: "2",
+    publishedSequence: String(SWAP_COUNT + 1),
     fullyExited: true,
   })}`);
 }

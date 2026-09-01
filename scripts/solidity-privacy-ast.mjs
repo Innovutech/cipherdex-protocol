@@ -261,11 +261,10 @@ function assertObservablePriceDeclassification(path, call, ancestors) {
   const functionNode = nearest(ancestors, "FunctionDefinition");
   const declarationStatement = nearest(ancestors, "VariableDeclarationStatement");
   const functionName = functionNode?.name;
-  const expectedVariable = functionName === "_initializePublicObservation"
-    ? "bucket"
-    : functionName === "_recordSwapObservation"
-      ? "publishedBucket"
-      : undefined;
+  const expectedVariable = (
+    functionName === "_initializePublicObservation" ||
+    functionName === "_recordSwapObservation"
+  ) ? "bucket" : undefined;
   if (
     path !== "contracts/ObservableConfidentialCPMM.sol" ||
     contract?.name !== "ObservableConfidentialCPMM" ||
@@ -288,7 +287,7 @@ function assertObservablePriceDeclassification(path, call, ancestors) {
       throw new Error(`${path}: reviewed observation declassification cannot use inline assembly`);
     }
   });
-  const expectedReferences = expectedVariable === "bucket" ? 1 : 2;
+  const expectedReferences = functionName === "_initializePublicObservation" ? 1 : 2;
   if (references.length !== expectedReferences) {
     throw new Error(`${path}: decrypted observation bucket has an unexpected use count`);
   }
@@ -297,16 +296,16 @@ function assertObservablePriceDeclassification(path, call, ancestors) {
     solidityCallName(parent.expression) === "_publishObservation" &&
     parent.arguments?.[0] === node
   );
-  const referenceAssignments = references.filter(({ node, parent }) =>
-    parent?.nodeType === "Assignment" &&
-    parent.operator === "=" &&
-    parent.rightHandSide === node &&
-    parent.leftHandSide?.nodeType === "Identifier" &&
-    parent.leftHandSide.name === "referencePrice"
+  const equalityReferences = references.filter(({ node, parent }) =>
+    parent?.nodeType === "BinaryOperation" &&
+    parent.operator === "==" &&
+    parent.leftExpression === node &&
+    parent.rightExpression?.nodeType === "Identifier" &&
+    parent.rightExpression.name === "referencePrice"
   );
   if (
     publishReferences.length !== 1 ||
-    referenceAssignments.length !== (expectedVariable === "bucket" ? 0 : 1)
+    equalityReferences.length !== (functionName === "_recordSwapObservation" ? 1 : 0)
   ) {
     throw new Error(`${path}: decrypted observation bucket reaches an unreviewed sink`);
   }

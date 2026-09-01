@@ -1,8 +1,6 @@
 export const OBSERVABLE_CONFIDENTIAL_PRIVACY_MODE = 2;
 export const OBSERVABLE_CONFIDENTIAL_PROTOCOL_VERSION = 1;
 export const OBSERVATION_BUCKET_BPS = 50;
-export const MIN_OBSERVATION_SWAPS = 3;
-export const MIN_OBSERVATION_INTERVAL_SECONDS = 120;
 export const OBSERVABLE_MIN_CONFIDENTIAL_AGGREGATED_SWAPS = 8;
 export const PUBLIC_PRICE_OBSERVATION_TOPIC = "0x51d2f10b0f987bba79c5f16a2cc4351099ce4c0ef967cf98938e543fa6032ce2";
 export const OBSERVABLE_CONFIDENTIAL_CPMM_ABI = [
@@ -25,12 +23,7 @@ export const OBSERVABLE_CONFIDENTIAL_CPMM_ABI = [
     "function publicObservationAt() view returns (uint64)",
     "function publicObservationPublishedAt() view returns (uint64)",
     "function publicObservationActivityCount() view returns (uint32)",
-    "function swapsSinceObservationClose() view returns (uint32)",
-    "function lastObservationClosedAt() view returns (uint64)",
-    "function hasPendingObservation() view returns (bool)",
-    "function pendingObservationAt() view returns (uint64)",
-    "function pendingObservationActivityCount() view returns (uint32)",
-    "function observationDueForNextSwap() view returns (bool)",
+    "function swapsSincePublicObservation() view returns (uint32)",
     "event PublicPriceObservation(uint64 indexed sequence,uint256 priceBucketX18,uint64 observedAt,uint64 publishedAt,uint32 activityCount,uint256 quantumX18,bool initial)",
 ];
 export const OBSERVABLE_CONFIDENTIAL_FACTORY_ABI = [
@@ -114,7 +107,7 @@ export function parseObservablePriceObservation(log, expectedPool) {
     if (sequence === 0n || sequence > UINT64_MAX ||
         priceBucketX18 === 0n || quantumX18 === 0n ||
         observedAt === 0n || observedAt > UINT64_MAX ||
-        publishedAt < observedAt || publishedAt > UINT64_MAX ||
+        publishedAt !== observedAt || publishedAt > UINT64_MAX ||
         activityCount > UINT32_MAX ||
         initialWord > 1n ||
         (initialWord === 1n && activityCount !== 0n))

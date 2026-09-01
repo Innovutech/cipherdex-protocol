@@ -52,10 +52,5 @@ interface IObservableConfidentialCPMM is IConfidentialCPMM {
     function publicObservationAt() external view returns (uint64);
     function publicObservationPublishedAt() external view returns (uint64);
     function publicObservationActivityCount() external view returns (uint32);
-    function swapsSinceObservationClose() external view returns (uint32);
-    function lastObservationClosedAt() external view returns (uint64);
-    function hasPendingObservation() external view returns (bool);
-    function pendingObservationAt() external view returns (uint64);
-    function pendingObservationActivityCount() external view returns (uint32);
-    function observationDueForNextSwap() external view returns (bool);
+    function swapsSincePublicObservation() external view returns (uint32);
 }

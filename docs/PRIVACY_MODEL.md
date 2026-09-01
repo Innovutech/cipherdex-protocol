@@ -109,20 +109,20 @@ strategy receives no swap callback or privileged market information.
 ## Observable-price confidentiality
 
 Privacy mode 2 intentionally weakens aggregate price secrecy, not private asset
-custody or amount confidentiality. Public observers learn a delayed quantized price,
-its sampling and publication times, and the number of swaps in the sampled epoch.
+custody or exact amount confidentiality. Public observers learn a quantized price in
+the same successful swap that crosses a 50-bps bucket and the number of swaps since
+the prior public observation.
 They do not receive exact reserves, depth, TVL, amount volume, LP balances, liquidity
 amounts, swap inputs or outputs, slippage values, or exact quote results.
 
-The three-swap and two-minute gates prevent routine direct one-event-to-one-swap
-attribution. They do not create information-theoretic anonymity. An attacker who
-already knows pool depth, knows most activity, controls probe swaps or observes a
-dominant trade can estimate aggregate flow and may constrain another participant's
-amount. One-epoch delay separates publication from the sampled closing swap but does
-not remove deterministic CPMM inference.
+Immediate publication deliberately allows a bucket-crossing event to be attributed to
+its swap. An attacker who knows or probes pool depth can use consecutive buckets to
+estimate a range for that trade's amount. Quantization prevents the event from directly
+disclosing an exact amount, but it does not create information-theoretic anonymity and
+must not be described as hiding approximate flow.
 
 Price quantization occurs inside MPC before public decryption. The quantum is fixed
-by the prior public bucket for each epoch, and confidential movement is bounded before
+by the prior public bucket for each update, and confidential movement is bounded before
 rounding. Publishing exact reserves or continuously precise shadow reserves remains
 out of scope. Mode 1 is unchanged and has no public observation functions.
 

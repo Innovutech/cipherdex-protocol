@@ -404,9 +404,11 @@ atomic bootstrap. This prevents an unfunded pool creator from permanently squatt
 the canonical key with an unusable reference. A full exit clears the reference so a
 later first provider establishes a fresh one. The mode-2 pool publishes an initial
 quantized price only after that successful initialization.
-Subsequent swaps increment a public counter. After at least three swaps and two
-minutes, the closing swap stores a network-encrypted 50-bps bucket. The next eligible
-epoch publishes that prior bucket and seals the current one. No keeper is required.
+Every subsequent swap derives a 50-bps price bucket inside MPC. If that bucket differs
+from the current public bucket, the swap publishes it immediately; otherwise it emits
+nothing and increments `swapsSincePublicObservation`. No timer, minimum activity gate,
+pending epoch or keeper is required. Since a bucket crossing cannot be predicted from
+public state, every mode-2 swap must budget for the publication-capable gas path.
 
 The quantum is derived from the last published bucket. Before quantization, the next
 confidential price is bounded to one-half through twice that reference. Extreme price

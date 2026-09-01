@@ -7,7 +7,7 @@ Date: 2026-08-15
 The original conclusions below remain the disclosure policy for privacy mode 1.
 CipherDEX also provides a separate opt-in privacy mode 2 for integrations that prefer
 public indicative market discovery over aggregate price secrecy. Mode 2 publishes a
-one-epoch-delayed, 50-bps quantized price after at least three swaps and two minutes.
+50-bps quantized price in the same successful swap that crosses a bucket boundary.
 It never publishes reserves, depth, TVL or amount volume, and paid encrypted quotes
 remain required for authoritative output and `minOut` because public price alone does
 not reveal CPMM price impact.
@@ -203,9 +203,9 @@ succeeds, replace only the quote transport after parity and security review.
 | Paid per-pool quote | Exact and proven | One transaction per candidate and caller learns every output | Supported direct exact transport |
 | Public exact reserves | Simple universal routing | Reveals aggregate state and per-change deltas | Rejected |
 | Public exact quote | Simple universal routing | Public active oracle over curve | Rejected |
-| Public spot/TWAP | Analytics and rough routing | Persistent ratio/history disclosure; insufficient for slippage | Not embedded |
+| Immediate quantized price | Analytics and rough routing | Bucket-crossing swaps become attributable and approximate flow can be inferred; insufficient for slippage | Implemented only in opt-in privacy mode 2 |
 | Reencrypt reserves to one API | Cheap exact backend quotes | API learns reserves/deltas; centralized confidentiality trust | Rejected |
-| Coarse or delayed snapshots | Lower-cost route filtering | Staleness, manipulation and explicit leakage budget | Future separate review |
+| Delayed snapshots | Less direct timing attribution | Staleness and weak trader/chart UX; delay does not prevent active inference | Rejected for mode 2 |
 | Unchecked forwarding router | One execution surface | Breaks authenticated sender/target/selector binding | Rejected |
 | Factory-bound GT router | One quote/execution surface with authenticated router inputs | Paid MPC work and selected-route metadata | Implemented for bounded single-hop fee/strategy classes |
 

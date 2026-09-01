@@ -9,7 +9,7 @@ import {
   normalizedPriceX18,
   observationQuantum,
   quantizePriceFloor,
-  shouldCloseObservation,
+  shouldPublishObservation,
 } from "../../scripts/observable-price-model";
 
 describe("observable confidential price model", function () {
@@ -63,10 +63,10 @@ describe("observable confidential price model", function () {
     expect(result.reserve0 * result.reserve1).to.be.gte(2_000_000_000_000n);
   });
 
-  it("closes only after both time and activity thresholds", function () {
-    expect(shouldCloseObservation(100, 220, 2, 120, 3)).to.equal(false);
-    expect(shouldCloseObservation(100, 219, 3, 120, 3)).to.equal(false);
-    expect(shouldCloseObservation(100, 220, 3, 120, 3)).to.equal(true);
+  it("publishes immediately only after crossing a quantized bucket", function () {
+    const current = 2n * PRICE_SCALE;
+    expect(shouldPublishObservation(current, current)).to.equal(false);
+    expect(shouldPublishObservation(current, current - 10n ** 16n)).to.equal(true);
   });
 
   it("shows that a coarse bucket leaves an aggregate input interval", function () {
@@ -98,7 +98,7 @@ describe("observable confidential price model", function () {
       10_000n,
       true,
     )).to.throw("feeBps is outside");
-    expect(() => shouldCloseObservation(2, 1, 1, 0, 1))
-      .to.throw("observation time moved backwards");
+    expect(() => shouldPublishObservation(0n, 1n))
+      .to.throw("publicBucketX18 must be positive");
   });
 });

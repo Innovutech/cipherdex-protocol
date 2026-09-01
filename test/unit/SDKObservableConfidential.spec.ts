@@ -3,6 +3,7 @@ import { AbiCoder, getAddress, Interface, toBeHex, zeroPadValue } from "ethers";
 
 import {
   PUBLIC_PRICE_OBSERVATION_TOPIC,
+  OBSERVABLE_CONFIDENTIAL_CPMM_ABI,
   OBSERVABLE_CONFIDENTIAL_FEE_VAULT_ABI,
   OBSERVABLE_MIN_CONFIDENTIAL_AGGREGATED_SWAPS,
   classifyObservablePriceFreshness,
@@ -35,7 +36,7 @@ describe("observable confidential SDK", function () {
       sequence: 7n,
       price: 2n * 10n ** 18n,
       observedAt: 1_000n,
-      publishedAt: 1_120n,
+      publishedAt: 1_000n,
       activityCount: 3n,
       quantum: 10n ** 16n,
       initial: false,
@@ -61,17 +62,24 @@ describe("observable confidential SDK", function () {
     } as const;
   }
 
-  it("authenticates and parses delayed observations", function () {
+  it("authenticates and parses immediate bucket-crossing observations", function () {
     expect(parseObservablePriceObservation(observationLog(), pool)).to.deep.equal({
       pool,
       sequence: 7n,
       priceBucketX18: 2n * 10n ** 18n,
       observedAt: 1_000n,
-      publishedAt: 1_120n,
+      publishedAt: 1_000n,
       activityCount: 3n,
       quantumX18: 10n ** 16n,
       initial: false,
     });
+  });
+
+  it("exposes immediate publication state without delayed-epoch fields", function () {
+    const cpmm = new Interface(OBSERVABLE_CONFIDENTIAL_CPMM_ABI);
+    expect(cpmm.getFunction("swapsSincePublicObservation")).to.not.equal(null);
+    expect(cpmm.getFunction("observationDueForNextSwap")).to.equal(null);
+    expect(cpmm.getFunction("hasPendingObservation")).to.equal(null);
   });
 
   it("rejects the wrong emitter, topic and invalid initial activity", function () {
@@ -85,6 +93,10 @@ describe("observable confidential SDK", function () {
     }, pool)).to.throw("Unauthenticated");
     expect(() => parseObservablePriceObservation(observationLog({ initial: true }), pool))
       .to.throw("Invalid observable-price event values");
+    expect(() => parseObservablePriceObservation(
+      observationLog({ publishedAt: 1_001n }),
+      pool,
+    )).to.throw("Invalid observable-price event values");
   });
 
   it("classifies unavailable, current and stale observations", function () {
@@ -94,9 +106,9 @@ describe("observable confidential SDK", function () {
       quantumX18: 10n ** 16n,
       sequence: 1n,
       observedAt: 1_000n,
-      publishedAt: 1_120n,
+      publishedAt: 1_000n,
       activityCount: 3n,
-      hasPendingObservation: true,
+      swapsSincePublicObservation: 2n,
     } as const;
     expect(classifyObservablePriceFreshness(current, 1_300n, 300n)).to.equal("current");
     expect(classifyObservablePriceFreshness(current, 1_301n, 300n)).to.equal("stale");

@@ -190,14 +190,16 @@ versions and complete canonical pool mapping.
 ## Observable confidential risks
 
 - Consecutive buckets can reveal aggregate flow when an attacker knows or probes
-  curve depth. Minimum activity and delay reduce attribution but do not prevent it.
-- An attacker can create swaps that complete an epoch, subtract known activity and
-  narrow the remaining unknown movement.
+  curve depth. Immediate bucket-crossing publication makes the triggering swap public
+  and can narrow that swap's amount to a range; this is an explicit mode-2 tradeoff.
+- An attacker can create probe swaps around bucket boundaries and combine those events
+  with paid exact quotes to improve its estimate of confidential depth and flow.
 - Indicative prices can be stale during inactivity or intentionally bounded during
   extreme movement. Integrations must show age and use paid encrypted quotes for
   exact execution.
-- The epoch-closing swap pays additional MPC gas. Public due-state makes the cost
-  predictable; out-of-gas reverts the complete swap atomically.
+- Every swap evaluates the MPC bucket and a crossing swap also pays public-decryption
+  and storage gas. The crossing cannot be predicted publicly, so all mode-2 swaps must
+  use the reviewed publication-capable gas envelope; out-of-gas reverts atomically.
 - Boundary manipulation can affect chart buckets. The bucket must not be used as a
   collateral oracle, execution oracle or authoritative `minOut`.
 - Empty pool creation cannot lock an initial reference. The reference is committed

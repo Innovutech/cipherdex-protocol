@@ -80,11 +80,9 @@ describe("observable confidential stack", function () {
     );
     expect(await pool.PRIVACY_MODE()).to.equal(2n);
     expect(await pool.initialPriceReferenceX18()).to.equal(0n);
-    expect(await pool.MIN_OBSERVATION_SWAPS()).to.equal(3n);
-    expect(await pool.MIN_OBSERVATION_INTERVAL()).to.equal(120n);
     expect(await pool.OBSERVATION_BUCKET_BPS()).to.equal(50n);
     expect(await pool.publicPriceBucketX18()).to.equal(0n);
-    expect(await pool.observationDueForNextSwap()).to.equal(false);
+    expect(await pool.swapsSincePublicObservation()).to.equal(0n);
     expect(await deployment.factory.isPool(poolAddress)).to.equal(true);
     expect(await deployment.lpTokenFactory.poolByToken(await pool.lpToken()))
       .to.equal(poolAddress);
