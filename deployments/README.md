@@ -5,6 +5,8 @@ This directory is reserved for public, reviewed deployment records.
 The active production COTI mainnet deployment is recorded in
 `coti-mainnet-b99c41abc031754990d4efcaaf1baa6754b3bb1e.json`. Historical testnet
 records are retained as validation evidence and are not production registries.
+The active optional public limit-order periphery is recorded separately in
+`coti-mainnet-public-limit-orders-ef451d3b3cf7743da75c52ab5f2f4d93540abdcf.json`.
 
 Do not commit private keys, AES keys, encrypted inputs, signatures, local
 environment files, or unverified addresses here. Testnet and optional Ledger or

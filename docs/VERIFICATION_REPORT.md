@@ -1,6 +1,6 @@
 # Verification Report
 
-Date: 2026-08-30
+Date: 2026-09-01
 
 ## Current COTI mainnet deployment
 
@@ -62,34 +62,37 @@ evidence. It is not a claim of an independent external audit.
 
 ## Public limit-order periphery
 
-Source commit `360f6c740bc6551fcc707ccfed8489b0b0e955aa` added the optional public
-best-execution and limit-order periphery to the existing canonical public
-factory. Its reviewed COTI mainnet (`2632500`) record is
-`deployments/coti-mainnet-public-limit-orders-360f6c740bc6551fcc707ccfed8489b0b0e955aa.json`.
-No existing factory, pool, vault, router or wrapped-native contract was
-redeployed.
+Source commit `ef451d3b3cf7743da75c52ab5f2f4d93540abdcf` replaced only the
+empty public limit-order book with native-COTI-aware settlement. Its reviewed
+COTI mainnet (`2632500`) record is
+`deployments/coti-mainnet-public-limit-orders-ef451d3b3cf7743da75c52ab5f2f4d93540abdcf.json`.
+The canonical public factory, existing best-execution router, pools, vaults and
+wrapped-native contract were not redeployed.
 
 - canonical public factory: `0x9c70596514De7C8DaF108f558E2d4a97E0C44E49`
 - public best-execution router: `0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B`
-- public limit-order book: `0x80bAe9C2a1bC9C2b1Fb20f9CCe103A31D9B170Cb`
+- wrapped COTI: `0xE180548963Fc30329e15BC104d753f82a8C18865`
+- public limit-order book: `0x9De328b49f4FB71654e15181bf82AD69863f59c9`
 - immutable surplus beneficiary: `0x3FEAa730727608Bb78a9B1b76fC7b85617317DAe`
 
-The router deployment transaction
-`0x6a2c18baef9c1532c5fe73e977cddcaca952da0c7a4583349fcbab42e59a161f`
-and order-book deployment transaction
-`0xb4cc1b1dcbb0cbd59024405987790f45c18824ac67664ee8f534cd3fc73af136`
-were mined successfully and consumed `1089820` and `2202595` gas,
-respectively. Live getter checks confirmed protocol version `1`, the canonical
-factory binding, the order book's router binding, and the immutable surplus
-beneficiary. The new order book had order ID `1` and zero open or claimable
-execution bounty at deployment verification time.
+The replacement deployment transaction
+`0x372ff29ae5e792d82a6deebf8ed319fcb6f9d318adf1d2c02588c1511adcbcce`
+was mined successfully and consumed `2843139` gas. Live getter checks confirmed
+protocol version `1`, the canonical factory, router, wrapped-COTI and immutable
+surplus-beneficiary bindings. The replacement had order ID `1`, zero open
+bounty, zero claimable bounty and zero claimable native proceeds at deployment
+verification time. The superseded book
+`0x80bAe9C2a1bC9C2b1Fb20f9CCe103A31D9B170Cb` had no orders or liabilities.
 
-Exact Cotiscan dry-runs and submissions passed for both direct deployments.
-Their authenticated Standard JSON inputs are retained under
-`deployments/compiler-inputs/360f6c740bc6551fcc707ccfed8489b0b0e955aa/`.
-Cotiscan classifies these `metadata.bytecodeHash: "none"` builds as partial
-matches; the repository verifier additionally established exact manifest,
-compiler-input, constructor, creation-bytecode and runtime matches.
+The focused TAC1 value-extraction diff scan
+`081168bf-305a-4ef4-864f-db4aa2a56bf9` completed with zero reportable findings.
+Exact Cotiscan dry-run and submission passed for the replacement. Its
+authenticated Standard JSON input is retained under
+`deployments/compiler-inputs/ef451d3b3cf7743da75c52ab5f2f4d93540abdcf/`.
+Cotiscan classifies the `metadata.bytecodeHash: "none"` build as a partial match;
+the repository verifier additionally established exact manifest,
+compiler-input, constructor, creation-bytecode and runtime matches. This is not
+a claim of an independent external audit.
 
 ## Historical focused public testnet evidence
 

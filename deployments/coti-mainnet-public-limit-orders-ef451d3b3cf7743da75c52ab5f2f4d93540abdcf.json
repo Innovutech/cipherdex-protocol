@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 2,
+  "status": "complete",
+  "network": "cotiMainnet",
+  "chainId": "2632500",
+  "sourceCommit": "ef451d3b3cf7743da75c52ab5f2f4d93540abdcf",
+  "stage": "public-limit-order-periphery-replacement",
+  "compiler": {
+    "PublicCPMMLimitOrderBook": {
+      "contractName": "PublicCPMMLimitOrderBook",
+      "sourceName": "contracts/PublicCPMMLimitOrderBook.sol",
+      "runtimeCodehash": "0xa7ca8c14179e0df0c3bf3f6de5be48c53e16c32993356d91cdad5f75787949ba",
+      "compilerInputHash": "0x929a009f41c3653aa64b6bd20ace35c7387cbe79e54e132ef3f6e0206b3d7cb8",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 24,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 200
+        },
+        "metadataBytecodeHash": "none"
+      }
+    }
+  },
+  "contracts": {
+    "publicCPMMLimitOrderBook": {
+      "address": "0x9De328b49f4FB71654e15181bf82AD69863f59c9",
+      "runtimeCodehash": "0xa7ca8c14179e0df0c3bf3f6de5be48c53e16c32993356d91cdad5f75787949ba",
+      "deploymentTx": "0x372ff29ae5e792d82a6deebf8ed319fcb6f9d318adf1d2c02588c1511adcbcce",
+      "gasUsed": "2843139",
+      "constructorArgs": [
+        "0x9c70596514De7C8DaF108f558E2d4a97E0C44E49",
+        "0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B",
+        "0xE180548963Fc30329e15BC104d753f82a8C18865",
+        "0x3FEAa730727608Bb78a9B1b76fC7b85617317DAe"
+      ],
+      "factory": "0x9c70596514De7C8DaF108f558E2d4a97E0C44E49",
+      "bestExecutionRouter": "0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B",
+      "wrappedNative": "0xE180548963Fc30329e15BC104d753f82a8C18865",
+      "surplusBeneficiary": "0x3FEAa730727608Bb78a9B1b76fC7b85617317DAe"
+    }
+  },
+  "transactions": [
+    {
+      "label": "public-limit-order-book-replacement-deployment",
+      "transactionHash": "0x372ff29ae5e792d82a6deebf8ed319fcb6f9d318adf1d2c02588c1511adcbcce",
+      "outcome": "mined-success",
+      "gasUsed": "2843139",
+      "contractAddress": "0x9De328b49f4FB71654e15181bf82AD69863f59c9"
+    }
+  ],
+  "supersedes": {
+    "publicCPMMLimitOrderBook": "0x80bAe9C2a1bC9C2b1Fb20f9CCe103A31D9B170Cb",
+    "reason": "The predecessor had no orders or liabilities and did not support native COTI settlement."
+  },
+  "limitations": [
+    "This record covers only the replacement public limit-order book deployed from the recorded source commit.",
+    "The canonical public CPMM factory, public best-execution router, wrapped COTI contract and surplus beneficiary are existing immutable bindings from reviewed mainnet deployments.",
+    "This deployment record and source verification are not a claim of an independent external audit."
+  ]
+}
