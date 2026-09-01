@@ -1,6 +1,7 @@
 # Observable Confidential Pool Feasibility
 
-Status: production candidate awaiting explicit deployment authorization.
+Status: focused testnet validated production candidate awaiting explicit deployment
+authorization.
 
 ## Boundary
 
@@ -103,6 +104,26 @@ absolute publication increment rather than a final production-swap percentage.
 
 The validated immediate bucket was `1.87e18`; the delayed publication correctly
 revealed the prior epoch's `1.94e18` bucket instead of the current state.
+
+## Immediate Bucket-Crossing Stack Validation
+
+Run date: 2026-09-02
+
+Source commit: `561ae9edb0fabb84ffeb2ea743caf8bc1dd03efb`
+
+The authenticated funded runner deployed a disposable stack, reused
+`PrivateLPTokenFactory` at `0x6B34a41d3990D74443cc96A9b6dd61d58C24323d`,
+initialized pool `0x3701C2812F4A106B996fA552f03dE859bAf6a7FC` through
+factory `0xb4785F163f7B3a159a1a0B7B7B30566f8B6fd2fd`, and executed three
+bucket-crossing swaps. Each swap published in the same transaction, advanced the
+sequence from 1 through 4, reported an activity count of 1, set identical observation
+and publication timestamps, and reset `swapsSincePublicObservation` to zero. Swap gas
+was `14,798,653`, `14,820,043`, and `14,820,055`.
+
+Initialization transaction:
+`0x9bb8f2db23a7f3f53aadd8e8bb92fc098dec4854ffe27e2d5eb3dbe83a3c83e1`.
+The runner cleared temporary allowances, fully exited the disposable pool and
+confirmed the initial reference, public bucket and activity counter were cleared.
 
 ## Superseded Delayed-Stack Testnet Validation
 
