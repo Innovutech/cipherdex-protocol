@@ -20,6 +20,8 @@
 - a wrapped-native administrator minting unbacked WCOTI or recovering backing;
 - native periphery retaining token/native residue, stale allowances, or sending
   an unwrap to an attacker-selected intermediate recipient;
+- native best execution trusting a frontend-selected pool, diverging from the
+  allowed fee-tier policy, or leaving wrapper/router custody after settlement;
 - a forced native transfer making WCOTI under-collateralized (it can only create
   excess backing because supply changes solely through deposit/withdraw);
 - WCOTI becoming stranded through a direct or delegated transfer to the wrapper
@@ -130,6 +132,11 @@
   beneficiary-owned proceeds liability, so availability depends on the
   beneficiary eventually claiming to a payable recipient, but fills and refunds
   cannot be redirected or swept by an outsider;
+- public spot-route previews provide no pool-state reservation. The confirmed
+  best-execution transaction re-evaluates every allowed canonical fee tier and
+  may select a different pool than the preview. `minAmountOut` and the deadline
+  remain the user's execution bounds. The native adapter adds no multi-hop or
+  split routing and rejects direct pool injection;
 - pool-state movement between a position/removal preview and settlement. Position
   results are informational; removal must recompute current values and enforce
   fresh encrypted minima and a deadline;

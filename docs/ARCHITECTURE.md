@@ -45,6 +45,9 @@
 - `contracts/PublicBestExecutionRouter.sol`: factory-derived single-hop best
   execution across the three canonical public fee tiers. Callers choose allowed
   tiers, never pool addresses.
+- `contracts/PublicBestExecutionNativeRouter.sol`: immutable native-COTI swap
+  adapter over the public best-execution router. It wraps or unwraps around the
+  router's atomic canonical-pool reselection and never accepts a pool address.
 - `contracts/PublicCPMMLimitOrderBook.sol`: pair-level exact-transfer escrow
   orders with maker amendments, optional bounded partial fills, internal native
   COTI wrapping/unwrapping, proportional execution bounties, claimable native
@@ -177,6 +180,10 @@ WCOTI output afterward. It clears temporary allowances and rejects residual
 balances. This follows the established wrapped-native/periphery boundary and
 keeps CPMM accounting token-only. WCOTI cannot be transferred to its own
 contract address, where it would otherwise become irrecoverably stranded.
+For best execution, the native best-execution adapter delegates the complete
+three-tier search to the existing router inside the settlement transaction.
+Off-chain or `eth_call` quotes provide UI previews but do not select or pin the
+executed pool.
 
 LP shares are ciphertext stored in aggregate by the pool. Factory-created pools
 also mint a pool-bound `PrivateLPToken` for each provider, so the encrypted share

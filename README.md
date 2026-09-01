@@ -103,6 +103,13 @@ caller selects tiers with a three-bit bitmap; the router skips absent or
 uninitialized pools and atomically settles through the single pool returning the
 largest output. It does not split or multi-hop a swap.
 
+`PublicBestExecutionNativeRouter` composes above that selector for ordinary
+native-COTI spot swaps. It wraps native exact input or unwraps WCOTI exact output
+without accepting a caller-selected pool. The underlying best router re-quotes
+all allowed canonical tiers during the same transaction, so a preview is
+advisory while execution remains atomic. The adapter has no owner, mutable
+configuration, upgrade path or recovery authority.
+
 `PublicCPMMLimitOrderBook` is an optional public-only escrow periphery bound to
 that router and the same factory. A maker escrows an exact public input, sets a
 raw-unit minimum price, recipient, expiry and allowed fee tiers, and may attach

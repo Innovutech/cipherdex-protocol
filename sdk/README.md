@@ -54,7 +54,8 @@ while unrelated RPC or execution failures remain exceptions. Applications own
 localized wording and token capability policy; the SDK does not hardcode token
 addresses or assume a tax-token classification remains permanent.
 
-`PUBLIC_BEST_EXECUTION_ROUTER_ABI` and
+`PUBLIC_BEST_EXECUTION_ROUTER_ABI`,
+`PUBLIC_BEST_EXECUTION_NATIVE_ROUTER_ABI` and
 `PUBLIC_CPMM_LIMIT_ORDER_BOOK_ABI` expose the public routed-order periphery.
 `PUBLIC_ROUTE_CANDIDATE` maps the approved `5`, `30`, and `100` bps pools to a
 typed three-bit policy. The create, permit-create, amend and fill builders
@@ -74,6 +75,18 @@ receipts from a trusted provider bound to the reviewed chain and deployment; the
 parsers do not establish chain consensus independently. Read the current
 remaining amount immediately before building an amendment; the contract remains
 authoritative if another transaction changes state first.
+
+`buildPublicBestExecutionQuoteCall` prepares a gasless `eth_call` preview against
+the existing public best-execution router. Pass its decoded tuple through
+`parsePublicBestExecutionQuoteResult` before displaying the selected pool, fee
+tier and expected output. `buildPublicBestExactInputSwapExecution` then selects the
+ordinary best router for token pairs or the immutable native best-execution
+adapter for COTI input/output. The confirmed transaction reselects the best
+allowed pool atomically; the preview does not pin it. Use
+`parsePublicBestExecutionSwapResult` to authenticate the actual route. Native
+results require matching events from both the adapter and underlying router.
+The convenience API rejects direct WCOTI so applications render and settle
+native COTI at the user boundary.
 
 `buildConfidentialCandidateBitmap` derives the active bitmap from the standard
 class plus the factory's finalized registered strategy count.

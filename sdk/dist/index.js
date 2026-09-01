@@ -5,6 +5,7 @@ export * from "./nativeAsset.js";
 export * from "./liquidity.js";
 export * from "./executionError.js";
 export * from "./publicLimitOrder.js";
+export * from "./publicBestExecution.js";
 import { isEvmNativeAssetAddress } from "./nativeAsset.js";
 import { liquiditySideToContractBoolean, } from "./liquidity.js";
 /**
@@ -536,6 +537,16 @@ export const PUBLIC_BEST_EXECUTION_ROUTER_ABI = [
     "function quoteBestExactInput(address,address,uint256,uint8) view returns (address,uint256,bool,uint256)",
     "function swapBestExactInput(address,address,uint256,uint256,uint8,address,uint64) returns (address,uint256,uint256)",
     "event BestSwapRouted(address indexed trader,address indexed selectedPool,address indexed recipient,address inputToken,address outputToken,uint256 selectedFeeBps,uint8 candidateBitmap,uint256 amountIn,uint256 amountOut)",
+];
+export const PUBLIC_BEST_EXECUTION_NATIVE_ROUTER_ABI = [
+    "function PROTOCOL_VERSION() view returns (uint256)",
+    "function ALL_CANDIDATE_BITMAP() view returns (uint8)",
+    "function factory() view returns (address)",
+    "function bestExecutionRouter() view returns (address)",
+    "function wrappedNative() view returns (address)",
+    "function swapExactNativeForToken(address,uint256,uint8,address,uint64) payable returns (address,uint256,uint256)",
+    "function swapExactTokenForNative(address,uint256,uint256,uint8,address,uint64) returns (address,uint256,uint256)",
+    "event NativeBestSwapRouted(address indexed trader,address indexed selectedPool,address indexed recipient,address inputToken,address outputToken,uint256 selectedFeeBps,uint8 candidateBitmap,uint256 amountIn,uint256 amountOut)",
 ];
 export const PUBLIC_CPMM_LIMIT_ORDER_BOOK_ABI = [
     "function PROTOCOL_VERSION() view returns (uint256)",

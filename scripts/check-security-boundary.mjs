@@ -40,6 +40,10 @@ const requiredNonReentrant = new Map([
   ["contracts/PublicCPMMRouter.sol", ["swapExactInput"]],
   ["contracts/PublicBestExecutionRouter.sol", ["swapBestExactInput"]],
   [
+    "contracts/PublicBestExecutionNativeRouter.sol",
+    ["swapExactNativeForToken", "swapExactTokenForNative"],
+  ],
+  [
     "contracts/PublicCPMMLimitOrderBook.sol",
     [
       "createOrder",
@@ -101,6 +105,9 @@ const publicRouterSource = maskSourceCommentsAndLiterals(
 const publicBestExecutionRouterSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicBestExecutionRouter.sol", "utf8"),
 );
+const publicBestExecutionNativeRouterSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/PublicBestExecutionNativeRouter.sol", "utf8"),
+);
 const publicLimitOrderBookSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicCPMMLimitOrderBook.sol", "utf8"),
 );
@@ -155,6 +162,9 @@ if (/\bdelegatecall\b|\bselfdestruct\b/.test(publicLiquidityRouterSource)) {
 }
 if (/\bdelegatecall\b|\bselfdestruct\b/.test(publicNativeRouterSource)) {
   throw new Error("Public native router contains an unsafe dynamic execution primitive");
+}
+if (/\bdelegatecall\b|\bselfdestruct\b/.test(publicBestExecutionNativeRouterSource)) {
+  throw new Error("Public native best-execution router contains an unsafe dynamic execution primitive");
 }
 if (/\bdelegatecall\b|\bselfdestruct\b/.test(wrappedNativeSource)) {
   throw new Error("Wrapped native token contains an unsafe dynamic execution primitive");
@@ -361,6 +371,41 @@ function functionBody(source, functionName, sourceLabel = "source") {
   return uniqueFunctionBody(source, functionName, sourceLabel);
 }
 
+const nativeBestInputSwapBody = functionBody(
+  publicBestExecutionNativeRouterSource,
+  "swapExactNativeForToken",
+);
+for (const fragment of [
+  "IWrappedNativeToken(wrappedNative).deposit{value: msg.value}()",
+  "wrapped.forceApprove(bestExecutionRouter, msg.value)",
+  ".swapBestExactInput(",
+  "wrapped.forceApprove(bestExecutionRouter, 0)",
+  "wrapped.allowance(address(this), bestExecutionRouter) != 0",
+  "wrapped.balanceOf(address(this)) != wrappedBefore",
+]) {
+  if (!nativeBestInputSwapBody.includes(fragment)) {
+    throw new Error("Public native best-input execution omits custody or allowance cleanup");
+  }
+}
+
+const nativeBestOutputSwapBody = functionBody(
+  publicBestExecutionNativeRouterSource,
+  "swapExactTokenForNative",
+);
+for (const fragment of [
+  "input.safeTransferFrom(msg.sender, address(this), amountIn)",
+  "input.forceApprove(bestExecutionRouter, amountIn)",
+  ".swapBestExactInput(",
+  "input.forceApprove(bestExecutionRouter, 0)",
+  "input.allowance(address(this), bestExecutionRouter) != 0",
+  "IWrappedNativeToken(wrappedNative).withdraw(amountOut)",
+  "recipient.call{value: amountOut}",
+]) {
+  if (!nativeBestOutputSwapBody.includes(fragment)) {
+    throw new Error("Public native best-output execution omits custody or allowance cleanup");
+  }
+}
+
 function parseTypeScript(source, file) {
   return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 }
@@ -532,6 +577,7 @@ for (const fragment of [
 }
 for (const [source, label] of [
   [publicBestExecutionRouterSource, "Public best-execution router"],
+  [publicBestExecutionNativeRouterSource, "Public native best-execution router"],
   [publicLimitOrderBookSource, "Public limit-order book"],
 ]) {
   if (/\bdelegatecall\b|\bselfdestruct\b/.test(source)) {
