@@ -555,6 +555,16 @@ takes precedence; the SDK now exposes the threshold and the fee economics, threa
 model, and integration documentation state that maturity alone does not guarantee
 sweepability.
 
+Follow-up TAC1 diff scan `2e5625cb-a8fb-4c7c-b4fa-f54114d73d31` reviewed the
+immediate 50-bps bucket-crossing cadence through commit
+`4406b5ba28e8b96eac40dff4345394df04169c9c`. The automatic five-file inventory
+was expanded to all 18 changed Solidity, interface, SDK, generated distribution,
+test, deployment and documentation files. Two disjoint Daybreak Blue passes found
+no candidate or reportable vulnerability. The exact-source funded run at commit
+`561ae9edb0fabb84ffeb2ea743caf8bc1dd03efb` validated three immediate crossings,
+same-transaction observation timestamps, the publication-capable gas envelope and
+a complete pool exit on COTI testnet.
+
 ## Fresh testnet evidence gate
 
 After reviewed source is committed, the deployment must publish a
