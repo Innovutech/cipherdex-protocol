@@ -366,6 +366,9 @@ function isClearInitialPriceReferenceStatement(statement) {
 function isReviewedFullExitBody(path, body) {
   const statements = bodyStatements(body);
   if (path === "contracts/ConfidentialCPMM.sol") {
+    if (statements.length === 1) {
+      return isInitializedFalseStatement(statements[0]);
+    }
     return (
       statements.length === 2 &&
       isTerminalProtocolFeeDepositStatement(statements[0]) &&
