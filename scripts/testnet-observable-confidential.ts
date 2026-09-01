@@ -26,6 +26,10 @@ import {
   setRecoverablePrivateAllowance,
 } from "./funded-private-allowance";
 import {
+  deriveFundedTestAmount,
+  minimumInputWithProtocolFee,
+} from "./funded-balance-budget";
+import {
   verifyDeployedRuntimeArtifact,
   verifyDeployedRuntimeArtifactWithProvenance,
 } from "./runtime-artifact";
@@ -102,14 +106,6 @@ function requiredInteger(name: string, minimum: number, maximum: number): number
     throw new Error(`${name} is outside the supported range`);
   }
   return parsed;
-}
-
-function requiredAmount(name: string): bigint {
-  const value = required(name);
-  if (!/^\d+$/u.test(value) || BigInt(value) <= 0n) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return BigInt(value);
 }
 
 async function assertCleanCommittedSource(): Promise<string> {
@@ -260,9 +256,6 @@ async function main(): Promise<void> {
   const tokenBAddress = requiredAddress("COTI_TOKEN1");
   const decimalsA = requiredInteger("COTI_TOKEN0_DECIMALS", 0, 18);
   const decimalsB = requiredInteger("COTI_TOKEN1_DECIMALS", 0, 18);
-  const maximumLiquidityA = requiredAmount("COTI_LIQUIDITY_AMOUNT0");
-  const maximumLiquidityB = requiredAmount("COTI_LIQUIDITY_AMOUNT1");
-  const maximumSwapAmount = requiredAmount("COTI_TEST_AMOUNT_IN");
   const existingFactoryAddress = requiredAddress("COTI_FACTORY");
   const existingVaultAddress = requiredAddress("COTI_FEE_VAULT");
 
@@ -409,21 +402,18 @@ async function main(): Promise<void> {
   if (Number(actualDecimalsA) !== decimalsA || Number(actualDecimalsB) !== decimalsB) {
     throw new Error("configured private token decimals changed");
   }
-  const [token0Address, token1Address, decimals0, decimals1, maximumAmount0, maximumAmount1] =
+  const [token0Address, token1Address, decimals0, decimals1] =
     tokenAAddress.toLowerCase() < tokenBAddress.toLowerCase()
-      ? [tokenAAddress, tokenBAddress, decimalsA, decimalsB, maximumLiquidityA, maximumLiquidityB]
-      : [tokenBAddress, tokenAAddress, decimalsB, decimalsA, maximumLiquidityB, maximumLiquidityA];
+      ? [tokenAAddress, tokenBAddress, decimalsA, decimalsB]
+      : [tokenBAddress, tokenAAddress, decimalsB, decimalsA];
   const balance0 = token0Address === tokenAAddress ? balanceA : balanceB;
   const balance1 = token1Address === tokenBAddress ? balanceB : balanceA;
-  const amount0 = maximumAmount0 < balance0 / 8n ? maximumAmount0 : balance0 / 8n;
-  const amount1 = maximumAmount1 < balance1 / 8n ? maximumAmount1 : balance1 / 8n;
-  const remainingToken0 = balance0 - amount0;
-  const perSwapBudget = remainingToken0 / (BigInt(SWAP_COUNT) * 2n);
-  const swapAmount = maximumSwapAmount < perSwapBudget
-    ? maximumSwapAmount
-    : perSwapBudget;
-  if (amount0 === 0n || amount1 === 0n || swapAmount === 0n) {
-    throw new Error("observable funded wallet has insufficient private test balance");
+  const minimumSwap = minimumInputWithProtocolFee(Number(FEE_BPS));
+  const swapAmount = deriveFundedTestAmount(balance0, minimumSwap).amount;
+  const amount0 = deriveFundedTestAmount(balance0, swapAmount * 8n).amount;
+  const amount1 = deriveFundedTestAmount(balance1, 1n).amount;
+  if (amount0 + swapAmount * BigInt(SWAP_COUNT) > balance0) {
+    throw new Error("observable funded token0 budget is invalid");
   }
   const initialReference = normalizedPriceX18(amount0, decimals0, amount1, decimals1);
   const create = await submit("observable pool creation", () =>

@@ -4,6 +4,7 @@ import { decryptPrivateValue256 } from "../../scripts/coti-testnet-values";
 import {
   deriveFundedTestAmount,
   fundedScenarioCap,
+  minimumInputWithProtocolFee,
 } from "../../scripts/funded-balance-budget";
 import { assertCompatiblePrivateTokens } from "../../scripts/private-token-compatibility";
 
@@ -99,5 +100,14 @@ describe("funded private-balance budgeting", function () {
     expect(deriveFundedTestAmount(10_000_000n, 2_000n).amount).to.equal(2_000n);
     expect(() => deriveFundedTestAmount(10_000_000n, 10_001n))
       .to.throw("within the 0.1% cap");
+  });
+
+  it("derives the first input that yields a nonzero v1 protocol fee", function () {
+    const amount = minimumInputWithProtocolFee(30);
+    expect(amount).to.equal(1_667n);
+    const priorFee = (amount - 1n) - ((amount - 1n) * 9_970n / 10_000n);
+    const currentFee = amount - (amount * 9_970n / 10_000n);
+    expect(priorFee / 6n).to.equal(0n);
+    expect(currentFee / 6n).to.equal(1n);
   });
 });
