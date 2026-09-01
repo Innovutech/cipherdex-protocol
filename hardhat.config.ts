@@ -85,6 +85,7 @@ export default defineConfig({
       "contracts/mocks/MockPermitERC20.sol": compilerSettings(200, false),
       "contracts/mocks/MockTokenMetadata.sol": compilerSettings(200, false),
       "contracts/mocks/MpcQuoteCallProbe.sol": compilerSettings(208),
+      "contracts/mocks/MpcObservablePriceProbe.sol": compilerSettings(208),
       "contracts/mocks/MpcBestExecutionPoolProbe.sol": compilerSettings(209),
       "contracts/mocks/MpcBestExecutionRouterProbe.sol": compilerSettings(210),
     },

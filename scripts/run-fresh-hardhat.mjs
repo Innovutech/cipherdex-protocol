@@ -217,6 +217,11 @@ const ALLOWED_TARGETS = new Map([
       "COTI_DEPLOYMENT_RECORD",
     ],
   }],
+  ["scripts/testnet-observable-price-probe.ts", {
+    arguments: ["--network", "cotiTestnet"],
+    funded: true,
+    environment: ["COTI_AES_KEY"],
+  }],
   ["scripts/testnet-launchpad.ts", {
     arguments: ["--network", "cotiTestnet"],
     funded: true,
