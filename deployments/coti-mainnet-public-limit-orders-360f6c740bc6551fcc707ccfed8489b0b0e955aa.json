@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 2,
+  "status": "complete",
+  "network": "cotiMainnet",
+  "chainId": "2632500",
+  "sourceCommit": "360f6c740bc6551fcc707ccfed8489b0b0e955aa",
+  "stage": "public-limit-order-periphery",
+  "compiler": {
+    "PublicBestExecutionRouter": {
+      "contractName": "PublicBestExecutionRouter",
+      "sourceName": "contracts/PublicBestExecutionRouter.sol",
+      "runtimeCodehash": "0xf44b14c508c13d3ab6339e84b669b54c79a3845fd79109d97e9cb8c500806ed0",
+      "compilerInputHash": "0x5859218f41759cbc1ddf8af966328980aed191db60dd9e5bf88b63921c9c5ad2",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 4,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 207
+        },
+        "metadataBytecodeHash": "none"
+      }
+    },
+    "PublicCPMMLimitOrderBook": {
+      "contractName": "PublicCPMMLimitOrderBook",
+      "sourceName": "contracts/PublicCPMMLimitOrderBook.sol",
+      "runtimeCodehash": "0x282a8750da70c22282ab71b1626270eb67028da9b3bc45cde0c7280acbd75c32",
+      "compilerInputHash": "0x6f026fd30889990dfd98314d0df4b916fc464147f5af4be68b7fea80cc0dbb60",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 8,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 200
+        },
+        "metadataBytecodeHash": "none"
+      }
+    }
+  },
+  "contracts": {
+    "publicBestExecutionRouter": {
+      "address": "0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B",
+      "runtimeCodehash": "0xf44b14c508c13d3ab6339e84b669b54c79a3845fd79109d97e9cb8c500806ed0",
+      "deploymentTx": "0x6a2c18baef9c1532c5fe73e977cddcaca952da0c7a4583349fcbab42e59a161f",
+      "gasUsed": "1089820",
+      "constructorArgs": [
+        "0x9c70596514De7C8DaF108f558E2d4a97E0C44E49"
+      ],
+      "factory": "0x9c70596514De7C8DaF108f558E2d4a97E0C44E49"
+    },
+    "publicCPMMLimitOrderBook": {
+      "address": "0x80bAe9C2a1bC9C2b1Fb20f9CCe103A31D9B170Cb",
+      "runtimeCodehash": "0x282a8750da70c22282ab71b1626270eb67028da9b3bc45cde0c7280acbd75c32",
+      "deploymentTx": "0xb4cc1b1dcbb0cbd59024405987790f45c18824ac67664ee8f534cd3fc73af136",
+      "gasUsed": "2202595",
+      "constructorArgs": [
+        "0x9c70596514De7C8DaF108f558E2d4a97E0C44E49",
+        "0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B",
+        "0x3FEAa730727608Bb78a9B1b76fC7b85617317DAe"
+      ],
+      "factory": "0x9c70596514De7C8DaF108f558E2d4a97E0C44E49",
+      "bestExecutionRouter": "0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B",
+      "surplusBeneficiary": "0x3FEAa730727608Bb78a9B1b76fC7b85617317DAe"
+    }
+  },
+  "transactions": [
+    {
+      "label": "public-best-execution-router-deployment",
+      "transactionHash": "0x6a2c18baef9c1532c5fe73e977cddcaca952da0c7a4583349fcbab42e59a161f",
+      "outcome": "mined-success",
+      "gasUsed": "1089820",
+      "contractAddress": "0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B"
+    },
+    {
+      "label": "public-limit-order-book-deployment",
+      "transactionHash": "0xb4cc1b1dcbb0cbd59024405987790f45c18824ac67664ee8f534cd3fc73af136",
+      "outcome": "mined-success",
+      "gasUsed": "2202595",
+      "contractAddress": "0x80bAe9C2a1bC9C2b1Fb20f9CCe103A31D9B170Cb"
+    }
+  ],
+  "limitations": [
+    "This record covers only the public best-execution and limit-order periphery deployed from the recorded source commit.",
+    "The canonical public CPMM factory and surplus beneficiary are external immutable bindings from the active mainnet deployment."
+  ]
+}

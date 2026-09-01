@@ -60,6 +60,37 @@ matches for every direct deployment.
 This records deployment, on-chain binding and explorer source-verification
 evidence. It is not a claim of an independent external audit.
 
+## Public limit-order periphery
+
+Source commit `360f6c740bc6551fcc707ccfed8489b0b0e955aa` added the optional public
+best-execution and limit-order periphery to the existing canonical public
+factory. Its reviewed COTI mainnet (`2632500`) record is
+`deployments/coti-mainnet-public-limit-orders-360f6c740bc6551fcc707ccfed8489b0b0e955aa.json`.
+No existing factory, pool, vault, router or wrapped-native contract was
+redeployed.
+
+- canonical public factory: `0x9c70596514De7C8DaF108f558E2d4a97E0C44E49`
+- public best-execution router: `0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B`
+- public limit-order book: `0x80bAe9C2a1bC9C2b1Fb20f9CCe103A31D9B170Cb`
+- immutable surplus beneficiary: `0x3FEAa730727608Bb78a9B1b76fC7b85617317DAe`
+
+The router deployment transaction
+`0x6a2c18baef9c1532c5fe73e977cddcaca952da0c7a4583349fcbab42e59a161f`
+and order-book deployment transaction
+`0xb4cc1b1dcbb0cbd59024405987790f45c18824ac67664ee8f534cd3fc73af136`
+were mined successfully and consumed `1089820` and `2202595` gas,
+respectively. Live getter checks confirmed protocol version `1`, the canonical
+factory binding, the order book's router binding, and the immutable surplus
+beneficiary. The new order book had order ID `1` and zero open or claimable
+execution bounty at deployment verification time.
+
+Exact Cotiscan dry-runs and submissions passed for both direct deployments.
+Their authenticated Standard JSON inputs are retained under
+`deployments/compiler-inputs/360f6c740bc6551fcc707ccfed8489b0b0e955aa/`.
+Cotiscan classifies these `metadata.bytecodeHash: "none"` builds as partial
+matches; the repository verifier additionally established exact manifest,
+compiler-input, constructor, creation-bytecode and runtime matches.
+
 ## Historical focused public testnet evidence
 
 The same source commit was deployed to COTI testnet (`7082400`) through
