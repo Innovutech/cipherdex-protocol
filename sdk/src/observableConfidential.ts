@@ -3,6 +3,7 @@ export const OBSERVABLE_CONFIDENTIAL_PROTOCOL_VERSION = 1 as const;
 export const OBSERVATION_BUCKET_BPS = 50 as const;
 export const MIN_OBSERVATION_SWAPS = 3 as const;
 export const MIN_OBSERVATION_INTERVAL_SECONDS = 120 as const;
+export const OBSERVABLE_MIN_CONFIDENTIAL_AGGREGATED_SWAPS = 8 as const;
 export const PUBLIC_PRICE_OBSERVATION_TOPIC =
   "0x51d2f10b0f987bba79c5f16a2cc4351099ce4c0ef967cf98938e543fa6032ce2" as const;
 
@@ -52,11 +53,13 @@ export const OBSERVABLE_CONFIDENTIAL_FACTORY_ABI = [
 
 export const OBSERVABLE_CONFIDENTIAL_FEE_VAULT_ABI = [
   "function PRIVACY_MODE() view returns (uint8)",
+  "function MIN_CONFIDENTIAL_AGGREGATED_SWAPS() view returns (uint64)",
   "function beneficiary() view returns (address)",
   "function confidentialFactory() view returns (address)",
   "function nextConfidentialSweepAt(address) view returns (uint64)",
   "function confidentialEpochCount(address) view returns (uint256)",
   "function confidentialEpochAt(address,uint256) view returns (uint64)",
+  "function confidentialSwapCountByEpoch(address,uint64) view returns (uint64)",
   "function sweepConfidentialToken(address)",
 ] as const;
 

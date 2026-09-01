@@ -537,6 +537,24 @@ cleanup provenance plus live terminal-state proof.
 
 Codex Security is an internal automated review, not an external audit.
 
+### Observable confidential mode review
+
+TAC1 diff scan `01a39f2c-6468-4efa-8949-2ccb64c8f2bd` reviewed the complete
+observable privacy-mode-2 change through commit
+`48782e07859c93b061ebb4e1a54bcd2dcdec2fe0`. The workbench inventory was
+expanded to include every new Solidity contract and interface omitted by its
+automatic 13-file list. Three disjoint Daybreak Blue discovery passes covered
+pool/vault accounting, factory/protected-launch topology, and router/deployment/SDK
+boundaries.
+
+The review found no Critical, High, or Medium issues. One high-confidence Low
+residual remains: terminal protocol fees representing fewer than eight same-token
+swaps have no privacy-bypassing rescue and may remain unavailable indefinitely.
+The exact six-swap funded testnet pool reproduced this state. Strict amount privacy
+takes precedence; the SDK now exposes the threshold and the fee economics, threat
+model, and integration documentation state that maturity alone does not guarantee
+sweepability.
+
 ## Fresh testnet evidence gate
 
 After reviewed source is committed, the deployment must publish a

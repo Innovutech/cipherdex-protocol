@@ -106,6 +106,32 @@ absolute publication increment rather than a final production-swap percentage.
 The validated immediate bucket was `1.87e18`; the delayed publication correctly
 revealed the prior epoch's `1.94e18` bucket instead of the current state.
 
+## Production Stack Testnet Validation
+
+Run date: 2026-09-01
+
+Source commit: `48782e07859c93b061ebb4e1a54bcd2dcdec2fe0`
+
+The authenticated funded runner deployed the complete disposable privacy-mode-2
+stack, reused the reviewed `PrivateLPTokenFactory`, initialized a real private-token
+pool, executed six swaps over two eligible observation epochs, published sequence 2,
+cleared every temporary allowance, and fully exited the pool. The final live checks
+confirmed `initialized == false`, no current public bucket, no pending observation,
+and a cleared initial reference.
+
+| Swap class | Gas used |
+| --- | ---: |
+| Non-closing swaps | 11,505,531-11,524,103 |
+| First epoch close, pending only | 14,951,372 |
+| Second epoch close, publish prior | 15,003,784 |
+
+The terminal six-swap protocol-fee accumulator was deposited into the dedicated
+vault exactly as designed. Its public epoch count is 6, below the immutable sweep
+threshold of 8. Strict fee privacy provides no sub-threshold rescue; without later
+same-token activity that encrypted protocol revenue remains unavailable. The TAC1
+review records this as a low-severity, explicitly accepted fee-liveness tradeoff,
+not a user or LP asset loss.
+
 ## Inference Results
 
 The deterministic model used 1,000,000 token0 units, 2,000,000 token1 units, a

@@ -1,8 +1,10 @@
 import { expect } from "chai";
-import { AbiCoder, getAddress, toBeHex, zeroPadValue } from "ethers";
+import { AbiCoder, getAddress, Interface, toBeHex, zeroPadValue } from "ethers";
 
 import {
   PUBLIC_PRICE_OBSERVATION_TOPIC,
+  OBSERVABLE_CONFIDENTIAL_FEE_VAULT_ABI,
+  OBSERVABLE_MIN_CONFIDENTIAL_AGGREGATED_SWAPS,
   classifyObservablePriceFreshness,
   estimateObservableSwapOutput,
   parseObservablePriceObservation,
@@ -10,6 +12,15 @@ import {
 
 describe("observable confidential SDK", function () {
   const pool = getAddress("0x1000000000000000000000000000000000000001");
+
+  it("exposes the strict confidential fee anonymity threshold without a bypass", function () {
+    const vault = new Interface(OBSERVABLE_CONFIDENTIAL_FEE_VAULT_ABI);
+    expect(OBSERVABLE_MIN_CONFIDENTIAL_AGGREGATED_SWAPS).to.equal(8);
+    expect(vault.getFunction("MIN_CONFIDENTIAL_AGGREGATED_SWAPS")).to.not.equal(null);
+    expect(vault.getFunction("confidentialSwapCountByEpoch")).to.not.equal(null);
+    expect(vault.getFunction("rescue")).to.equal(null);
+    expect(vault.getFunction("sweepSubthreshold")).to.equal(null);
+  });
 
   function observationLog(overrides: Partial<{
     sequence: bigint;

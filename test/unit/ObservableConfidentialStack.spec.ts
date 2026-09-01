@@ -22,11 +22,16 @@ describe("observable confidential stack", function () {
       await deployment.lpTokenFactory.getAddress(),
     );
     expect(await deployment.vault.PRIVACY_MODE()).to.equal(2n);
+    expect(await deployment.vault.MIN_CONFIDENTIAL_AGGREGATED_SWAPS()).to.equal(8n);
     expect(await deployment.vault.confidentialFactory()).to.equal(
       await deployment.factory.getAddress(),
     );
     expect(new Interface(deployment.vault.interface.fragments)
       .getFunction("setPublicFactory")).to.equal(null);
+    expect(new Interface(deployment.vault.interface.fragments)
+      .getFunction("sweepSubthreshold")).to.equal(null);
+    expect(new Interface(deployment.vault.interface.fragments)
+      .getFunction("rescue")).to.equal(null);
     expect(await configured.router.PRIVACY_MODE()).to.equal(2n);
     expect(await configured.router.factory()).to.equal(
       await deployment.factory.getAddress(),

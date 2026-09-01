@@ -291,6 +291,13 @@ to the public bucket. Its result always has `authoritative: false` and
 never for encrypted `minOut`, settlement, or exact route ranking. Obtain the existing
 paid encrypted quote after the user enters an amount.
 
+`OBSERVABLE_MIN_CONFIDENTIAL_AGGREGATED_SWAPS` and
+`OBSERVABLE_CONFIDENTIAL_FEE_VAULT_ABI` expose the immutable eight-swap fee sweep
+policy. A matured same-token aggregate below eight has no rescue or early-sweep
+path and can remain unavailable until later same-token activity. Integrations must
+not present `nextConfidentialSweepAt` as a guarantee that a sub-threshold epoch is
+sweepable at that timestamp.
+
 Observable launches additionally sign the public `initialPriceReferenceX18` using
 `OBSERVABLE_LAUNCHPAD_MIGRATION_EIP712_TYPES` and the distinct
 `CipherDEX Observable Launchpad Migrator` domain. Initialization verifies the

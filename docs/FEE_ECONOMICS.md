@@ -104,6 +104,13 @@ Collection is aggregate rather than per-swap:
   into that same vault aggregation before clearing pool counters;
 - public and confidential vault sweep methods reject the wrong token mode.
 
+Strict amount privacy takes precedence over terminal fee availability. A matured
+same-token aggregate below eight swaps is intentionally not sweepable and has no
+administrator or beneficiary bypass. If no later same-token deposits bring that
+aggregate to eight, those protocol fees can remain encrypted and unavailable
+indefinitely. This is a fee-revenue liveness tradeoff; it never transfers the fees
+to LPs, changes effective reserves, or permits another caller to claim them.
+
 The public count and window disclose no amount beyond already-public direction
 and timing. They prevent ordinary one-swap collection. They do not provide an
 information-theoretic anonymity set: a fee beneficiary or active adversary that

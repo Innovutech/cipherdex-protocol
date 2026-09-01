@@ -207,3 +207,7 @@ versions and complete canonical pool mapping.
   funded initializer still controls the initial market price.
 - Pool creation code is reconstructed only from immutable constructor-created stores,
   checked against its canonical hash and deployed through a factory-pinned deployer.
+- A full exit can leave one-to-seven same-token protocol-fee events below the vault's
+  immutable sweep threshold. Strict privacy deliberately provides no sub-threshold
+  rescue, so rare-token fees may remain unavailable until later same-token activity.
+  This affects protocol revenue availability, not LP reserves or user withdrawals.
