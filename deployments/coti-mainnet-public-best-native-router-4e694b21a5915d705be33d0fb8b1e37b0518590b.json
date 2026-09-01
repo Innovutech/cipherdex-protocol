@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 2,
+  "status": "complete",
+  "network": "cotiMainnet",
+  "chainId": "2632500",
+  "sourceCommit": "4e694b21a5915d705be33d0fb8b1e37b0518590b",
+  "stage": "public-best-execution-native-periphery",
+  "compiler": {
+    "PublicBestExecutionNativeRouter": {
+      "contractName": "PublicBestExecutionNativeRouter",
+      "sourceName": "contracts/PublicBestExecutionNativeRouter.sol",
+      "runtimeCodehash": "0x000af4ec601918982aca24c4dc5fd763d97bb7c1acb176a92074d5264ce4a0a7",
+      "compilerInputHash": "0xe0b42bd8a6c15b9c591af5118a3d5f9de62fc25c8670728c3fe29afb835b3558",
+      "solcVersion": "0.8.28",
+      "solcLongVersion": "0.8.28+commit.7893614a",
+      "immutableReferenceCount": 12,
+      "settings": {
+        "evmVersion": "paris",
+        "viaIR": true,
+        "optimizer": {
+          "enabled": true,
+          "runs": 200
+        },
+        "metadataBytecodeHash": "none"
+      }
+    }
+  },
+  "contracts": {
+    "publicBestExecutionNativeRouter": {
+      "address": "0x0B82fbC9F7944B493530922898103CBCCD466487",
+      "runtimeCodehash": "0x000af4ec601918982aca24c4dc5fd763d97bb7c1acb176a92074d5264ce4a0a7",
+      "deploymentTx": "0x86c08ea91785e952311402906455ebe60d16867ed02e10098da990e88569dc8e",
+      "gasUsed": "994057",
+      "constructorArgs": [
+        "0x9c70596514De7C8DaF108f558E2d4a97E0C44E49",
+        "0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B",
+        "0xE180548963Fc30329e15BC104d753f82a8C18865"
+      ],
+      "factory": "0x9c70596514De7C8DaF108f558E2d4a97E0C44E49",
+      "bestExecutionRouter": "0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B",
+      "wrappedNative": "0xE180548963Fc30329e15BC104d753f82a8C18865",
+      "allCandidateBitmap": 7
+    }
+  },
+  "transactions": [
+    {
+      "label": "public-best-execution-native-router-deployment",
+      "transactionHash": "0x86c08ea91785e952311402906455ebe60d16867ed02e10098da990e88569dc8e",
+      "outcome": "mined-success",
+      "gasUsed": "994057",
+      "contractAddress": "0x0B82fbC9F7944B493530922898103CBCCD466487"
+    }
+  ],
+  "limitations": [
+    "This record covers only the additive native-COTI best-execution adapter deployed from the recorded source commit.",
+    "The canonical public factory, existing public best-execution router and wrapped COTI contract are immutable bindings from reviewed mainnet deployments.",
+    "The adapter performs direct single-pool best execution across the three approved fee tiers; it does not provide multi-hop or split routing.",
+    "This deployment record and source verification are not a claim of an independent external audit."
+  ]
+}

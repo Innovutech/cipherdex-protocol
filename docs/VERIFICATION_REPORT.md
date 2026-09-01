@@ -94,6 +94,39 @@ the repository verifier additionally established exact manifest,
 compiler-input, constructor, creation-bytecode and runtime matches. This is not
 a claim of an independent external audit.
 
+## Public native best execution
+
+Source commit `4e694b21a5915d705be33d0fb8b1e37b0518590b` added an immutable
+native-COTI adapter over the existing public best-execution router. Its reviewed
+COTI mainnet (`2632500`) record is
+`deployments/coti-mainnet-public-best-native-router-4e694b21a5915d705be33d0fb8b1e37b0518590b.json`.
+No factory, pool, vault, wrapped-native contract, existing router, native
+liquidity router or limit-order contract was redeployed.
+
+- canonical public factory: `0x9c70596514De7C8DaF108f558E2d4a97E0C44E49`
+- public best-execution router: `0x07FB2d28027B81Fdd40f8D05E72af94D9130D59B`
+- wrapped COTI: `0xE180548963Fc30329e15BC104d753f82a8C18865`
+- public native best-execution adapter: `0x0B82fbC9F7944B493530922898103CBCCD466487`
+
+Deployment transaction
+`0x86c08ea91785e952311402906455ebe60d16867ed02e10098da990e88569dc8e`
+was mined successfully and consumed `994057` gas. Live RPC checks confirmed
+protocol version `1`, candidate bitmap `7`, all three immutable bindings, a
+`4154`-byte runtime and runtime codehash
+`0x000af4ec601918982aca24c4dc5fd763d97bb7c1acb176a92074d5264ce4a0a7`.
+
+Independent scoped TAC1 value-extraction scans
+`eb451f35-f950-4c9e-aa46-aefc71f211cf` and
+`344d46f1-6cae-41aa-8ff2-2a7423aa1939` completed with zero reportable
+findings across contract custody/callback paths and SDK/deployment/evidence
+paths. Exact Cotiscan dry-run and submission passed. The authenticated Standard
+JSON input is retained under
+`deployments/compiler-inputs/4e694b21a5915d705be33d0fb8b1e37b0518590b/`.
+Cotiscan classifies the `metadata.bytecodeHash: "none"` build as a partial match;
+the repository verifier additionally established exact manifest,
+compiler-input, constructor, creation-bytecode and runtime matches. This is not
+a claim of an independent external audit.
+
 ## Historical focused public testnet evidence
 
 The same source commit was deployed to COTI testnet (`7082400`) through

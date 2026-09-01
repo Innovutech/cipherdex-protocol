@@ -7,6 +7,8 @@ The active production COTI mainnet deployment is recorded in
 records are retained as validation evidence and are not production registries.
 The active optional public limit-order periphery is recorded separately in
 `coti-mainnet-public-limit-orders-ef451d3b3cf7743da75c52ab5f2f4d93540abdcf.json`.
+The active optional native public best-execution adapter is recorded in
+`coti-mainnet-public-best-native-router-4e694b21a5915d705be33d0fb8b1e37b0518590b.json`.
 
 Do not commit private keys, AES keys, encrypted inputs, signatures, local
 environment files, or unverified addresses here. Testnet and optional Ledger or
