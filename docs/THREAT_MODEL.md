@@ -56,6 +56,15 @@
   protocol vault, or debiting stored LP reserves and accrued protocol fees;
 - public swap/router/withdrawal minimums being satisfied by a nominal transfer
   while a taxed recipient receives less;
+- caller-selected or noncanonical pools being injected into public best
+  execution or escrow-order settlement;
+- partial fills weakening the maker price through floor rounding, filling below
+  the configured minimum size, or overpaying the native bounty;
+- non-makers amending, reactivating, topping up, or cancelling public orders;
+- failed routed fills consuming escrow, bounty, allowance, or terminal status;
+- permissionless order-book surplus sweeps touching open token escrow, open
+  bounties, deferred bounty credits, or redirecting proceeds away from the
+  immutable beneficiary;
 - untrusted confidential discovery metadata selecting a non-factory pool;
 - stack exhaustion or getter execution while validating untrusted SDK metadata;
 - the confidential core has no public spot, TWAP, reserve, TVL, or aggregate
@@ -111,6 +120,11 @@
 - pool-state movement between a confidential liquidity preview and settlement.
   The preview reserves nothing; the later add must use fresh authenticated
   inputs, nonzero minimum shares, normalized price bounds and a deadline;
+- public routed orders provide no MEV protection, pool-state reservation,
+  off-chain signature/rebroadcast model, multi-hop routing or split execution.
+  `canFillOrder` is advisory; state can move before inclusion. Editing the token
+  pair or escrow amount requires cancellation and a new order. Exact-transfer
+  ERC-20 behavior is required throughout creation, fill and cancellation;
 - pool-state movement between a position/removal preview and settlement. Position
   results are informational; removal must recompute current values and enforce
   fresh encrypted minima and a deadline;

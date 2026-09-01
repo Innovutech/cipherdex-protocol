@@ -97,23 +97,37 @@ native COTI around swaps and liquidity operations while public pools remain
 ERC-20-only. The standard `0xEeee...` native sentinel exists only at the SDK/UI
 boundary and is never stored as a pool token.
 
-`PublicCPMMLimitOrderBook` is an optional public-only escrow periphery for
-existing canonical `PublicCPMM` pools. A maker escrows an exact ERC-20 input,
-sets a minimum output, recipient and expiry, and may attach a native COTI
-execution bounty. Orders are full-fill only. Any address may call `fillOrder`
-when the pool can satisfy the minimum; successful execution pays the optional
-bounty to that caller. The maker may cancel an open order before or after expiry
-and receives the token escrow back independently of native delivery. Bounty
-payments use a bounded immediate push for normal wallet UX; a rejecting receiver
-gets an exact beneficiary-owned credit instead of rolling back the fill or
-cancellation. `claimNativeBounty` lets that beneficiary pull its aggregate credit
-to a chosen payable address. Open and claimable bounty totals remain explicit
-native liabilities, while forced native COTI is never assigned to an order.
-`canFillOrder` is a keeper-friendly view helper, not an authorization boundary.
+`PublicBestExecutionRouter` searches the complete canonical public v1 namespace
+for a token pair: one pool at each approved `5`, `30`, and `100` bps tier. A
+caller selects tiers with a three-bit bitmap; the router skips absent or
+uninitialized pools and atomically settles through the single pool returning the
+largest output. It does not split or multi-hop a swap.
+
+`PublicCPMMLimitOrderBook` is an optional public-only escrow periphery bound to
+that router and the same factory. A maker escrows an exact ERC-20 input pair,
+sets a raw-unit minimum price, recipient, expiry and allowed fee tiers, and may
+attach a native COTI execution bounty. Orders may be full-fill only or explicitly
+permit partial fills above a maker-selected minimum. Each partial fill receives
+ceiling-rounded price protection and a proportional floor-rounded bounty; the
+final fill receives every remainder. The maker may amend price, recipient,
+expiry, allowed tiers and partial-fill policy, reactivate an expired open order,
+increase but not reduce its bounty, or cancel before or after expiry. Input
+amounts and token pairs are immutable; changing either requires cancellation and
+a new order. EIP-2612 creation is optional and allowance-backed creation remains
+available for all supported tokens.
+
+Bounty payments use a bounded immediate push for normal wallet UX; a rejecting
+receiver gets an exact beneficiary-owned credit instead of rolling back the
+fill or cancellation. `claimNativeBounty` lets that beneficiary pull its
+aggregate credit to a chosen payable address. Terminal order storage is deleted
+after retaining compact status and authoritative events. Permissionless surplus
+sweeps can send only balances above token escrow or native bounty liabilities to
+one immutable beneficiary. `canFillOrder` is a keeper-friendly view helper, not
+an authorization boundary or execution reservation.
 Chainlink, Gelato, thirdweb, OpenZeppelin Relayer, self-hosted bots and ordinary
 users may all call the same permissionless fill function, but none is required
 by the contract. The module has no owner, keeper whitelist, relayer trust, rescue
-path, partial-fill path, signed off-chain orders, or confidential-token support.
+redirection, signed off-chain orders, or confidential-token support.
 Its source presence does not make it part of the active mainnet deployment; only
 a reviewed deployment record can establish that status.
 
@@ -207,15 +221,17 @@ The deployment process reads exactly these environment variables:
 
 ```text
 PUBLIC_CPMM_FACTORY_ADDRESS=<canonical deployed public factory>
+PUBLIC_LIMIT_ORDER_SURPLUS_BENEFICIARY=<immutable surplus recipient>
 DEPLOYER_PRIVATE_KEY=<funded deployment key>
 COTI_RPC_URL=<COTI testnet or mainnet RPC URL>
 ```
 
 Keep the private key in the same owner-only external environment boundary used
 by other funded operations; never add it to this repository. The script accepts
-only COTI testnet (`7082400`) or mainnet (`2632500`), deploys no pool or other
-protocol component, validates the immutable factory binding, and prints the
-network, deployer, deployed address, transaction hash and constructor arguments.
+only COTI testnet (`7082400`) or mainnet (`2632500`), deploys only the public
+best-execution router and its bound order book, validates all immutable factory,
+router and beneficiary bindings, and prints both addresses, transactions and
+constructor arguments. Existing factories, pools, vaults and WCOTI are unchanged.
 
 Before a mainnet deployment:
 

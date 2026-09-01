@@ -42,6 +42,12 @@
   pools.
 - `contracts/PublicCPMMRouter.sol`: factory-gated exact-input routing for
   public pools only.
+- `contracts/PublicBestExecutionRouter.sol`: factory-derived single-hop best
+  execution across the three canonical public fee tiers. Callers choose allowed
+  tiers, never pool addresses.
+- `contracts/PublicCPMMLimitOrderBook.sol`: pair-level exact-transfer escrow
+  orders with maker amendments, optional bounded partial fills, proportional
+  native execution bounties and immutable surplus recovery.
 - `contracts/PublicCPMMLiquidityRouter.sol`: factory-gated atomic create-or-add
   and remove-liquidity periphery. It mints pool-bound ERC-20 shares directly to
   the recipient, refunds unused proportional token maxima, and supports
@@ -235,6 +241,25 @@ atomically resolves or creates a canonical pool, exact-pulls both desired token
 maxima, grants exact temporary pool allowances, mints shares to the caller and
 returns unused amounts. A revert rolls back pool creation, token movement and
 allowances. Existing direct creation and liquidity methods remain compatible.
+
+The public best-execution router searches exactly three deterministic factory
+keys for the requested pair: `5`, `30`, and `100` bps. Unknown bitmap bits are
+rejected, absent or uninitialized pools are skipped, and equal quotes keep the
+lower-fee candidate because iteration is fee-ascending. Execution recomputes
+the winner in the same transaction, grants one exact temporary allowance and
+sends measured output directly to the recipient. It deliberately does not split
+liquidity or route through intermediate tokens.
+
+The limit-order book stores a price as `minimum output / input` in raw token
+units. Each partial fill applies full-precision ceiling division, so splitting a
+fill cannot weaken maker price protection. Native bounties use proportional
+floor division and the final fill receives the remainder, preserving exact
+liability conservation. Only the maker can amend mutable terms, add bounty or
+cancel; expiry disables filling but does not transfer control to an outsider.
+Terminal structs are deleted while status and events remain. Direct token and
+forced-native surplus are not assigned to orders: anyone may trigger a sweep,
+but the destination is one immutable beneficiary and escrow/bounty liabilities
+are excluded.
 
 Confidential direct pool execution remains available. For best execution, COTI
 authenticated `itUint256` inputs bind the user to the router and exact quote or

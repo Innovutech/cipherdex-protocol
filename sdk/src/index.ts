@@ -4,6 +4,7 @@ export * from "./walletCallBatch.js";
 export * from "./nativeAsset.js";
 export * from "./liquidity.js";
 export * from "./executionError.js";
+export * from "./publicLimitOrder.js";
 
 import { isEvmNativeAssetAddress } from "./nativeAsset.js";
 import {
@@ -570,6 +571,53 @@ export const PUBLIC_CPMM_ROUTER_ABI = [
   "function factory() view returns (address)",
   "function swapExactInput(address,uint256,uint256,bool,uint64) returns (uint256)",
   "event SwapRouted(address indexed trader,address indexed pool,address indexed inputToken,address outputToken,uint256 amountIn,uint256 amountOut)",
+] as const;
+
+export const PUBLIC_BEST_EXECUTION_ROUTER_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function factory() view returns (address)",
+  "function LOW_FEE_CANDIDATE() view returns (uint8)",
+  "function STANDARD_FEE_CANDIDATE() view returns (uint8)",
+  "function HIGH_FEE_CANDIDATE() view returns (uint8)",
+  "function ALL_CANDIDATE_BITMAP() view returns (uint8)",
+  "function quoteBestExactInput(address,address,uint256,uint8) view returns (address,uint256,bool,uint256)",
+  "function swapBestExactInput(address,address,uint256,uint256,uint8,address,uint64) returns (address,uint256,uint256)",
+  "event BestSwapRouted(address indexed trader,address indexed selectedPool,address indexed recipient,address inputToken,address outputToken,uint256 selectedFeeBps,uint8 candidateBitmap,uint256 amountIn,uint256 amountOut)",
+] as const;
+
+export const PUBLIC_CPMM_LIMIT_ORDER_BOOK_ABI = [
+  "function PROTOCOL_VERSION() view returns (uint256)",
+  "function PRIVACY_MODE() view returns (uint8)",
+  "function factory() view returns (address)",
+  "function bestExecutionRouter() view returns (address)",
+  "function surplusBeneficiary() view returns (address)",
+  "function nextOrderId() view returns (uint256)",
+  "function orderStatus(uint256) view returns (uint8)",
+  "function totalEscrowed(address) view returns (uint256)",
+  "function totalOpenExecutionBounties() view returns (uint256)",
+  "function totalClaimableNativeBounties() view returns (uint256)",
+  "function claimableNativeBounties(address) view returns (uint256)",
+  "function createOrder((address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint64 expiry,uint8 candidateBitmap,bool allowPartialFills,uint256 minimumFillAmount)) payable returns (uint256)",
+  "function createOrderWithPermit((address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint64 expiry,uint8 candidateBitmap,bool allowPartialFills,uint256 minimumFillAmount),uint256,uint8,bytes32,bytes32) payable returns (uint256)",
+  "function amendOrder(uint256,(address recipient,uint256 minAmountOutForRemaining,uint64 expiry,uint8 candidateBitmap,bool allowPartialFills,uint256 minimumFillAmount))",
+  "function increaseExecutionBounty(uint256) payable",
+  "function canFillOrder(uint256,uint256) view returns (bool,address,uint256,uint256,uint256)",
+  "function fillOrder(uint256,uint256) returns (uint256)",
+  "function cancelOrder(uint256)",
+  "function claimNativeBounty(address) returns (uint256)",
+  "function sweepTokenSurplus(address) returns (uint256)",
+  "function sweepNativeSurplus() returns (uint256)",
+  "function minimumOutputFor(uint256,uint256) view returns (uint256)",
+  "function getOrder(uint256) view returns ((uint256 id,address maker,address recipient,address tokenIn,address tokenOut,uint256 remainingAmountIn,uint256 priceNumerator,uint256 priceDenominator,uint256 minimumFillAmount,uint256 remainingExecutionBounty,uint64 expiry,uint32 revision,uint8 candidateBitmap,bool allowPartialFills))",
+  "event OrderCreated(uint256 indexed orderId,address indexed maker,address indexed tokenIn,address tokenOut,address recipient,uint256 amountIn,uint256 minAmountOut,uint64 expiry,uint8 candidateBitmap,bool allowPartialFills,uint256 minimumFillAmount,uint256 executionBounty)",
+  "event OrderAmended(uint256 indexed orderId,address indexed maker,uint32 revision,address recipient,uint256 minAmountOutForRemaining,uint64 expiry,uint8 candidateBitmap,bool allowPartialFills,uint256 minimumFillAmount)",
+  "event OrderBountyIncreased(uint256 indexed orderId,address indexed maker,uint256 amount,uint256 remainingExecutionBounty)",
+  "event OrderFilled(uint256 indexed orderId,address indexed maker,address indexed filler,address recipient,address selectedPool,uint256 selectedFeeBps,uint256 amountIn,uint256 amountOut,uint256 minimumAmountOut,uint256 remainingAmountIn,uint256 executionBounty)",
+  "event OrderCancelled(uint256 indexed orderId,address indexed maker,uint256 returnedAmountIn,uint256 returnedExecutionBounty)",
+  "event NativeBountyCredited(uint256 indexed orderId,address indexed beneficiary,uint256 amount)",
+  "event NativeBountyClaimed(address indexed beneficiary,address indexed recipient,uint256 amount)",
+  "event TokenSurplusSwept(address indexed token,address indexed beneficiary,uint256 amount)",
+  "event NativeSurplusSwept(address indexed beneficiary,uint256 amount)",
 ] as const;
 
 export const PUBLIC_CPMM_LIQUIDITY_ROUTER_ABI = [

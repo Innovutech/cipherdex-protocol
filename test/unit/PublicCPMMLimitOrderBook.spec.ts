@@ -4,7 +4,8 @@ import { deployFeeVault } from "../helpers/deployFeeVault";
 
 describe("PublicCPMMLimitOrderBook", function () {
   async function deployFixture() {
-    const [owner, maker, filler, recipient, outsider] = await ethers.getSigners();
+    const [liquidityProvider, maker, filler, recipient, outsider, beneficiary] =
+      await ethers.getSigners();
     const tokenFactory = await ethers.getContractFactory("MockERC20");
     const tokenA = await tokenFactory.deploy("Token A", "TKA", 18);
     const tokenB = await tokenFactory.deploy("Token B", "TKB", 6);
@@ -15,577 +16,543 @@ describe("PublicCPMMLimitOrderBook", function () {
       await vault.getAddress(),
     );
     await factory.waitForDeployment();
-    await factory.createPool(
-      await tokenA.getAddress(),
-      await tokenB.getAddress(),
-      18,
-      6,
-      30,
-    );
 
-    const key = await factory.poolKey(
-      await tokenA.getAddress(),
-      await tokenB.getAddress(),
-      18,
-      6,
-      30,
-    );
-    const poolAddress = await factory.getPool(key);
-    const pool = await ethers.getContractAt("PublicCPMM", poolAddress);
-    const token0IsA = (await pool.token0()).toLowerCase() ===
-      (await tokenA.getAddress()).toLowerCase();
-    const token0 = token0IsA ? tokenA : tokenB;
-    const token1 = token0IsA ? tokenB : tokenA;
-    const unit0 = token0IsA ? ethers.parseEther("1") : 1_000_000n;
-    const unit1 = token0IsA ? 1_000_000n : ethers.parseEther("1");
-    const liquidity0 = unit0 * 1_000n;
-    const liquidity1 = unit1 * 1_000n;
+    async function createPool(feeBps: number, reserveA: bigint, reserveB: bigint) {
+      const tokenAAddress = await tokenA.getAddress();
+      const tokenBAddress = await tokenB.getAddress();
+      await factory.createPool(tokenAAddress, tokenBAddress, 18, 6, feeBps);
+      const key = await factory.poolKey(tokenAAddress, tokenBAddress, 18, 6, feeBps);
+      const poolAddress = await factory.getPool(key);
+      const pool = await ethers.getContractAt("PublicCPMM", poolAddress);
+      const amountA = ethers.parseUnits(reserveA.toString(), 18);
+      const amountB = ethers.parseUnits(reserveB.toString(), 6);
+      await tokenA.mint(liquidityProvider.address, amountA);
+      await tokenB.mint(liquidityProvider.address, amountB);
+      await tokenA.approve(poolAddress, amountA);
+      await tokenB.approve(poolAddress, amountB);
+      const token0IsA = (await pool.token0()).toLowerCase() === tokenAAddress.toLowerCase();
+      await pool.addLiquidity(
+        token0IsA ? amountA : amountB,
+        token0IsA ? amountB : amountA,
+        1n,
+        0n,
+        ethers.MaxUint256,
+        0xffffffff,
+      );
+      return pool;
+    }
 
-    await token0.mint(owner.address, liquidity0);
-    await token1.mint(owner.address, liquidity1);
-    await token0.approve(poolAddress, liquidity0);
-    await token1.approve(poolAddress, liquidity1);
-    await pool.addLiquidity(
-      liquidity0,
-      liquidity1,
-      1n,
-      0n,
-      ethers.MaxUint256,
-      0xffffffff,
-    );
-
+    const lowPool = await createPool(5, 1_000n, 900n);
+    const standardPool = await createPool(30, 1_000n, 1_000n);
+    const highPool = await createPool(100, 1_000n, 1_200n);
+    const router = await (
+      await ethers.getContractFactory("PublicBestExecutionRouter")
+    ).deploy(await factory.getAddress());
+    await router.waitForDeployment();
     const orderBook = await (
       await ethers.getContractFactory("PublicCPMMLimitOrderBook")
-    ).deploy(await factory.getAddress());
+    ).deploy(
+      await factory.getAddress(),
+      await router.getAddress(),
+      beneficiary.address,
+    );
     await orderBook.waitForDeployment();
-    const orderBookAddress = await orderBook.getAddress();
-    await token0.mint(maker.address, unit0 * 20n);
-    await token1.mint(maker.address, unit1 * 20n);
-    await token0.connect(maker).approve(orderBookAddress, ethers.MaxUint256);
-    await token1.connect(maker).approve(orderBookAddress, ethers.MaxUint256);
 
+    const amountIn = ethers.parseUnits("10", 18);
+    await tokenA.mint(maker.address, ethers.parseUnits("100", 18));
+    await tokenB.mint(maker.address, ethers.parseUnits("100", 6));
+    await tokenA.connect(maker).approve(await orderBook.getAddress(), ethers.MaxUint256);
+    await tokenB.connect(maker).approve(await orderBook.getAddress(), ethers.MaxUint256);
     const latest = await ethers.provider.getBlock("latest");
     if (!latest) throw new Error("latest block unavailable");
     const expiry = BigInt(latest.timestamp + 3_600);
-    const amountIn = unit0;
-    const expectedAmountOut = await pool.quoteExactInput(amountIn, true);
 
     return {
       amountIn,
-      expectedAmountOut,
+      beneficiary,
       expiry,
       factory,
       filler,
+      highPool,
+      lowPool,
       maker,
       orderBook,
       outsider,
-      pool,
-      poolAddress,
       recipient,
-      token0,
-      token1,
-      unit0,
-      unit1,
+      router,
+      standardPool,
+      tokenA,
+      tokenAAddress: await tokenA.getAddress(),
+      tokenB,
+      tokenBAddress: await tokenB.getAddress(),
     };
   }
 
   type Fixture = Awaited<ReturnType<typeof deployFixture>>;
 
-  async function placeOrder(
-    fixture: Fixture,
-    options: {
-      amountIn?: bigint;
-      bounty?: bigint;
-      expiry?: bigint;
-      minAmountOut?: bigint;
-      recipient?: string;
-      zeroForOne?: boolean;
-    } = {},
-  ): Promise<bigint> {
-    const orderId = await fixture.orderBook.nextOrderId();
-    await fixture.orderBook.connect(fixture.maker).createOrder(
-      fixture.poolAddress,
-      options.zeroForOne ?? true,
-      options.amountIn ?? fixture.amountIn,
-      options.minAmountOut ?? fixture.expectedAmountOut,
-      options.recipient ?? fixture.recipient.address,
-      options.expiry ?? fixture.expiry,
-      { value: options.bounty ?? 0n },
-    );
-    return orderId;
+  function orderParams(fixture: Fixture, overrides: Record<string, unknown> = {}) {
+    return {
+      tokenIn: fixture.tokenAAddress,
+      tokenOut: fixture.tokenBAddress,
+      amountIn: fixture.amountIn,
+      minAmountOut: 1n,
+      recipient: fixture.recipient.address,
+      expiry: fixture.expiry,
+      candidateBitmap: 7,
+      allowPartialFills: false,
+      minimumFillAmount: 0n,
+      ...overrides,
+    };
   }
 
-  it("binds only to a deployed factory", async function () {
-    const [owner] = await ethers.getSigners();
-    const orderBookFactory = await ethers.getContractFactory("PublicCPMMLimitOrderBook");
-    await expect(orderBookFactory.deploy(ethers.ZeroAddress))
-      .to.be.revertedWithCustomError(orderBookFactory, "InvalidFactory");
-    await expect(orderBookFactory.deploy(owner.address))
-      .to.be.revertedWithCustomError(orderBookFactory, "InvalidFactory");
-  });
-
-  it("escrows exact input and stores canonical token directions", async function () {
-    const fixture = await deployFixture();
-    const bounty = ethers.parseEther("0.01");
-    const firstId = await placeOrder(fixture, { bounty });
-    const first = await fixture.orderBook.getOrder(firstId);
-
-    expect(first.id).to.equal(firstId);
-    expect(first.maker).to.equal(fixture.maker.address);
-    expect(first.recipient).to.equal(fixture.recipient.address);
-    expect(first.pool).to.equal(fixture.poolAddress);
-    expect(first.tokenIn).to.equal(await fixture.token0.getAddress());
-    expect(first.tokenOut).to.equal(await fixture.token1.getAddress());
-    expect(first.zeroForOne).to.equal(true);
-    expect(first.amountIn).to.equal(fixture.amountIn);
-    expect(first.minAmountOut).to.equal(fixture.expectedAmountOut);
-    expect(first.executionBounty).to.equal(bounty);
-    expect(first.status).to.equal(0n);
-    expect(await fixture.token0.balanceOf(await fixture.orderBook.getAddress()))
-      .to.equal(fixture.amountIn);
-    expect(await fixture.orderBook.totalEscrowed(await fixture.token0.getAddress()))
-      .to.equal(fixture.amountIn);
-    expect(await ethers.provider.getBalance(await fixture.orderBook.getAddress()))
-      .to.equal(bounty);
-    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(bounty);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
-
-    const reverseAmount = fixture.unit1;
-    const reverseMinimum = await fixture.pool.quoteExactInput(reverseAmount, false);
-    const secondId = await placeOrder(fixture, {
-      amountIn: reverseAmount,
-      minAmountOut: reverseMinimum,
-      zeroForOne: false,
-    });
-    const second = await fixture.orderBook.getOrder(secondId);
-    expect(second.tokenIn).to.equal(await fixture.token1.getAddress());
-    expect(second.tokenOut).to.equal(await fixture.token0.getAddress());
-    expect(second.zeroForOne).to.equal(false);
-  });
-
-  it("preserves backing for concurrent orders after one is filled", async function () {
-    const fixture = await deployFixture();
-    const firstId = await placeOrder(fixture, { minAmountOut: 1n });
-    const secondId = await placeOrder(fixture, { minAmountOut: 1n });
-    const orderBookAddress = await fixture.orderBook.getAddress();
-    const token0Address = await fixture.token0.getAddress();
-    expect(await fixture.orderBook.totalEscrowed(token0Address))
-      .to.equal(fixture.amountIn * 2n);
-
-    await fixture.orderBook.connect(fixture.filler).fillOrder(firstId);
-
-    expect(await fixture.orderBook.totalEscrowed(token0Address)).to.equal(fixture.amountIn);
-    expect(await fixture.token0.balanceOf(orderBookAddress)).to.equal(fixture.amountIn);
-    expect((await fixture.orderBook.getOrder(secondId)).status).to.equal(0n);
-    expect((await fixture.orderBook.canFillOrder(secondId))[0]).to.equal(true);
-  });
-
-  it("rejects non-canonical pools", async function () {
-    const fixture = await deployFixture();
-    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
-      await fixture.token0.getAddress(),
-      true,
-      fixture.amountIn,
-      fixture.expectedAmountOut,
-      fixture.recipient.address,
-      fixture.expiry,
-    )).to.be.revertedWithCustomError(fixture.orderBook, "InvalidPool");
-  });
-
-  it("rejects invalid order parameters", async function () {
-    const fixture = await deployFixture();
-    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
-      fixture.poolAddress,
-      true,
-      0n,
-      fixture.expectedAmountOut,
-      fixture.recipient.address,
-      fixture.expiry,
-    )).to.be.revertedWithCustomError(fixture.orderBook, "InvalidAmount");
-    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
-      fixture.poolAddress,
-      true,
-      fixture.amountIn,
-      0n,
-      fixture.recipient.address,
-      fixture.expiry,
-    )).to.be.revertedWithCustomError(fixture.orderBook, "InvalidMinimumOutput");
-    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
-      fixture.poolAddress,
-      true,
-      fixture.amountIn,
-      fixture.expectedAmountOut,
-      ethers.ZeroAddress,
-      fixture.expiry,
-    )).to.be.revertedWithCustomError(fixture.orderBook, "InvalidRecipient");
-    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
-      fixture.poolAddress,
-      true,
-      fixture.amountIn,
-      fixture.expectedAmountOut,
-      fixture.recipient.address,
-      0n,
-    )).to.be.revertedWithCustomError(fixture.orderBook, "InvalidExpiry");
-  });
-
-  it("rejects short-credit fee-on-transfer escrow atomically", async function () {
-    const [maker, recipient] = await ethers.getSigners();
-    const taxed = await (await ethers.getContractFactory("FeeOnTransferERC20")).deploy(
-      "Taxed Token",
-      "TAX",
-      100,
-    );
-    const paired = await (await ethers.getContractFactory("MockERC20")).deploy(
-      "Paired Token",
-      "PAIR",
-      18,
-    );
-    await Promise.all([taxed.waitForDeployment(), paired.waitForDeployment()]);
-    const vault = await deployFeeVault();
-    const factory = await (await ethers.getContractFactory("PublicCPMMFactory")).deploy(
-      await vault.getAddress(),
-    );
-    await factory.waitForDeployment();
-    await factory.createPool(await taxed.getAddress(), await paired.getAddress(), 18, 18, 30);
-    const key = await factory.poolKey(
-      await taxed.getAddress(),
-      await paired.getAddress(),
-      18,
-      18,
-      30,
-    );
-    const poolAddress = await factory.getPool(key);
-    const pool = await ethers.getContractAt("PublicCPMM", poolAddress);
-    const taxedIsToken0 = (await pool.token0()).toLowerCase() ===
-      (await taxed.getAddress()).toLowerCase();
-    const orderBook = await (
-      await ethers.getContractFactory("PublicCPMMLimitOrderBook")
-    ).deploy(await factory.getAddress());
-    await orderBook.waitForDeployment();
-    const orderBookAddress = await orderBook.getAddress();
-    const amountIn = 1_000n;
-    const bounty = ethers.parseEther("0.01");
-    await taxed.mint(maker.address, amountIn);
-    await taxed.setTaxedSender(maker.address);
-    await taxed.connect(maker).approve(orderBookAddress, amountIn);
-    const latest = await ethers.provider.getBlock("latest");
-    if (!latest) throw new Error("latest block unavailable");
-
-    await expect(orderBook.connect(maker).createOrder(
-      poolAddress,
-      taxedIsToken0,
-      amountIn,
-      1n,
-      recipient.address,
-      BigInt(latest.timestamp + 3_600),
+  async function placeOrder(
+    fixture: Fixture,
+    overrides: Record<string, unknown> = {},
+    bounty = 0n,
+  ): Promise<bigint> {
+    const id = await fixture.orderBook.nextOrderId();
+    await fixture.orderBook.connect(fixture.maker).createOrder(
+      orderParams(fixture, overrides),
       { value: bounty },
-    )).to.be.revertedWithCustomError(orderBook, "TransferAmountMismatch");
+    );
+    return id;
+  }
 
-    expect(await orderBook.nextOrderId()).to.equal(1n);
-    expect(await orderBook.totalEscrowed(await taxed.getAddress())).to.equal(0n);
-    expect(await taxed.balanceOf(orderBookAddress)).to.equal(0n);
-    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(0n);
-    expect(await taxed.balanceOf(maker.address)).to.equal(amountIn);
+  it("binds to one reviewed factory, router, and immutable surplus beneficiary", async function () {
+    const fixture = await deployFixture();
+    expect(await fixture.orderBook.factory()).to.equal(await fixture.factory.getAddress());
+    expect(await fixture.orderBook.bestExecutionRouter()).to.equal(
+      await fixture.router.getAddress(),
+    );
+    expect(await fixture.orderBook.surplusBeneficiary()).to.equal(
+      fixture.beneficiary.address,
+    );
+
+    const orderBookFactory = await ethers.getContractFactory("PublicCPMMLimitOrderBook");
+    await expect(orderBookFactory.deploy(
+      ethers.ZeroAddress,
+      await fixture.router.getAddress(),
+      fixture.beneficiary.address,
+    )).to.be.revertedWithCustomError(orderBookFactory, "InvalidFactory");
+    await expect(orderBookFactory.deploy(
+      await fixture.factory.getAddress(),
+      await fixture.tokenA.getAddress(),
+      fixture.beneficiary.address,
+    )).to.be.revertedWithCustomError(orderBookFactory, "InvalidRouter");
+    await expect(orderBookFactory.deploy(
+      await fixture.factory.getAddress(),
+      await fixture.router.getAddress(),
+      ethers.ZeroAddress,
+    )).to.be.revertedWithCustomError(orderBookFactory, "InvalidSurplusBeneficiary");
   });
 
-  it("reports keeper readiness without reverting for unavailable orders", async function () {
+  it("escrows a pair-level order instead of binding it to one pool", async function () {
     const fixture = await deployFixture();
-    expect(await fixture.orderBook.canFillOrder(999n)).to.deep.equal([false, 0n]);
-
-    const orderId = await placeOrder(fixture);
-    const readiness = await fixture.orderBook.canFillOrder(orderId);
-    expect(readiness[0]).to.equal(true);
-    expect(readiness[1]).to.equal(fixture.expectedAmountOut);
-  });
-
-  it("allows a permissionless third party to fill a satisfiable order", async function () {
-    const fixture = await deployFixture();
-    const orderId = await placeOrder(fixture);
-    const recipientBefore = await fixture.token1.balanceOf(fixture.recipient.address);
-
-    await expect(fixture.orderBook.connect(fixture.filler).fillOrder(orderId))
-      .to.emit(fixture.orderBook, "OrderFilled")
-      .withArgs(
-        orderId,
-        fixture.maker.address,
-        fixture.filler.address,
-        fixture.recipient.address,
-        fixture.amountIn,
-        fixture.expectedAmountOut,
-        0n,
-      );
-
-    expect(await fixture.token1.balanceOf(fixture.recipient.address))
-      .to.equal(recipientBefore + fixture.expectedAmountOut);
-    expect((await fixture.orderBook.getOrder(orderId)).status).to.equal(1n);
-    expect(await fixture.orderBook.totalEscrowed(await fixture.token0.getAddress()))
-      .to.equal(0n);
-    expect(await fixture.token0.balanceOf(await fixture.orderBook.getAddress())).to.equal(0n);
-    expect(await fixture.token1.balanceOf(await fixture.orderBook.getAddress())).to.equal(0n);
-  });
-
-  it("keeps an order open when the pool cannot satisfy its minimum", async function () {
-    const fixture = await deployFixture();
-    const bounty = ethers.parseEther("0.01");
-    const impossibleMinimum = fixture.expectedAmountOut + 1n;
-    const orderId = await placeOrder(fixture, {
-      bounty,
-      minAmountOut: impossibleMinimum,
-    });
-    const readiness = await fixture.orderBook.canFillOrder(orderId);
-    expect(readiness[0]).to.equal(false);
-    expect(readiness[1]).to.equal(fixture.expectedAmountOut);
-
-    await expect(fixture.orderBook.connect(fixture.filler).fillOrder(orderId))
-      .to.be.revertedWithCustomError(fixture.pool, "SlippageExceeded");
-    expect((await fixture.orderBook.getOrder(orderId)).status).to.equal(0n);
-    expect(await fixture.token0.balanceOf(await fixture.orderBook.getAddress()))
+    const bounty = 11n;
+    const orderId = await placeOrder(fixture, {}, bounty);
+    const order = await fixture.orderBook.getOrder(orderId);
+    expect(order.id).to.equal(orderId);
+    expect(order.maker).to.equal(fixture.maker.address);
+    expect(order.tokenIn).to.equal(await fixture.tokenA.getAddress());
+    expect(order.tokenOut).to.equal(await fixture.tokenB.getAddress());
+    expect(order.remainingAmountIn).to.equal(fixture.amountIn);
+    expect(order.priceNumerator).to.equal(1n);
+    expect(order.priceDenominator).to.equal(fixture.amountIn);
+    expect(order.candidateBitmap).to.equal(7n);
+    expect(order.remainingExecutionBounty).to.equal(bounty);
+    expect(await fixture.orderBook.orderStatus(orderId)).to.equal(1n);
+    expect(await fixture.orderBook.totalEscrowed(await fixture.tokenA.getAddress()))
       .to.equal(fixture.amountIn);
-    expect((await fixture.orderBook.getOrder(orderId)).executionBounty).to.equal(bounty);
-    expect(await ethers.provider.getBalance(await fixture.orderBook.getAddress()))
-      .to.equal(bounty);
-    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(bounty);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
-    expect(await fixture.token0.allowance(
+  });
+
+  it("fills through the best eligible canonical pool and compacts terminal state", async function () {
+    const fixture = await deployFixture();
+    const orderId = await placeOrder(fixture);
+    const quote = await fixture.router.quoteBestExactInput(
+      await fixture.tokenA.getAddress(),
+      await fixture.tokenB.getAddress(),
+      fixture.amountIn,
+      7,
+    );
+    expect(quote.selectedPool).to.equal(await fixture.highPool.getAddress());
+
+    await expect(fixture.orderBook.connect(fixture.filler).fillOrder(
+      orderId,
+      fixture.amountIn,
+    )).to.emit(fixture.orderBook, "OrderFilled");
+    expect(await fixture.tokenB.balanceOf(fixture.recipient.address)).to.equal(quote.amountOut);
+    expect(await fixture.orderBook.orderStatus(orderId)).to.equal(2n);
+    expect((await fixture.orderBook.getOrder(orderId)).maker).to.equal(ethers.ZeroAddress);
+    expect(await fixture.orderBook.totalEscrowed(await fixture.tokenA.getAddress()))
+      .to.equal(0n);
+    expect(await fixture.tokenA.allowance(
       await fixture.orderBook.getAddress(),
-      fixture.poolAddress,
+      await fixture.router.getAddress(),
     )).to.equal(0n);
   });
 
-  it("cannot fill or cancel an already filled order", async function () {
+  it("restricts routing to the maker-selected fee tiers", async function () {
     const fixture = await deployFixture();
-    const orderId = await placeOrder(fixture);
-    await fixture.orderBook.connect(fixture.filler).fillOrder(orderId);
-
-    await expect(fixture.orderBook.connect(fixture.outsider).fillOrder(orderId))
-      .to.be.revertedWithCustomError(fixture.orderBook, "OrderNotOpen");
-    await expect(fixture.orderBook.connect(fixture.maker).cancelOrder(orderId))
-      .to.be.revertedWithCustomError(fixture.orderBook, "OrderNotOpen");
+    const orderId = await placeOrder(fixture, { candidateBitmap: 2 });
+    const readiness = await fixture.orderBook.canFillOrder(orderId, fixture.amountIn);
+    expect(readiness.canFill).to.equal(true);
+    expect(readiness.selectedPool).to.equal(await fixture.standardPool.getAddress());
+    expect(readiness.selectedFeeBps).to.equal(30n);
   });
 
-  it("allows only the maker to cancel and returns token escrow", async function () {
+  it("supports bounded partial fills with ceiling price rounding and conserved bounties", async function () {
     const fixture = await deployFixture();
-    const makerBalanceBefore = await fixture.token0.balanceOf(fixture.maker.address);
-    const orderId = await placeOrder(fixture);
-    expect(await fixture.token0.balanceOf(fixture.maker.address))
-      .to.equal(makerBalanceBefore - fixture.amountIn);
+    const unit = ethers.parseUnits("1", 18);
+    const bounty = 10n;
+    const orderId = await placeOrder(fixture, {
+      amountIn: 10n * unit,
+      minAmountOut: 7n,
+      allowPartialFills: true,
+      minimumFillAmount: unit,
+    }, bounty);
 
-    await expect(fixture.orderBook.connect(fixture.outsider).cancelOrder(orderId))
+    expect(await fixture.orderBook.minimumOutputFor(orderId, 3n * unit)).to.equal(3n);
+    await fixture.orderBook.connect(fixture.filler).fillOrder(orderId, 3n * unit);
+    let order = await fixture.orderBook.getOrder(orderId);
+    expect(order.remainingAmountIn).to.equal(7n * unit);
+    expect(order.remainingExecutionBounty).to.equal(7n);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(7n);
+
+    await fixture.orderBook.connect(fixture.outsider).fillOrder(orderId, 2n * unit);
+    order = await fixture.orderBook.getOrder(orderId);
+    expect(order.remainingAmountIn).to.equal(5n * unit);
+    expect(order.remainingExecutionBounty).to.equal(5n);
+
+    await fixture.orderBook.connect(fixture.filler).fillOrder(orderId, 5n * unit);
+    expect(await fixture.orderBook.orderStatus(orderId)).to.equal(2n);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
+    expect(await ethers.provider.getBalance(await fixture.orderBook.getAddress())).to.equal(0n);
+  });
+
+  it("preserves aggregate escrow and bounty invariants across interleaved orders", async function () {
+    const fixture = await deployFixture();
+    const unit = ethers.parseUnits("1", 18);
+    const first = await placeOrder(fixture, {
+      amountIn: 10n * unit,
+      allowPartialFills: true,
+      minimumFillAmount: unit,
+    }, 11n);
+    const second = await placeOrder(fixture, {
+      amountIn: 20n * unit,
+      allowPartialFills: true,
+      minimumFillAmount: unit,
+    }, 17n);
+    const third = await placeOrder(fixture, {
+      amountIn: 30n * unit,
+      allowPartialFills: true,
+      minimumFillAmount: unit,
+    }, 23n);
+    const token = await fixture.tokenA.getAddress();
+    const orderBookAddress = await fixture.orderBook.getAddress();
+
+    expect(await fixture.orderBook.totalEscrowed(token)).to.equal(60n * unit);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(51n);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(51n);
+
+    await fixture.orderBook.connect(fixture.filler).fillOrder(first, 3n * unit);
+    await fixture.orderBook.connect(fixture.outsider).fillOrder(second, 7n * unit);
+    await fixture.orderBook.connect(fixture.maker).cancelOrder(third);
+    expect(await fixture.orderBook.totalEscrowed(token)).to.equal(20n * unit);
+    expect(await fixture.tokenA.balanceOf(orderBookAddress)).to.equal(20n * unit);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(20n);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(20n);
+
+    await fixture.orderBook.connect(fixture.filler).fillOrder(first, 7n * unit);
+    await fixture.orderBook.connect(fixture.filler).fillOrder(second, 3n * unit);
+    expect(await fixture.orderBook.totalEscrowed(token)).to.equal(10n * unit);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(10n);
+    await fixture.orderBook.connect(fixture.maker).cancelOrder(second);
+    expect(await fixture.orderBook.totalEscrowed(token)).to.equal(0n);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
+    expect(await fixture.tokenA.balanceOf(orderBookAddress)).to.equal(0n);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(0n);
+  });
+
+  it("enforces full-fill orders and the configured minimum partial size", async function () {
+    const fixture = await deployFixture();
+    const unit = ethers.parseUnits("1", 18);
+    const fullOnly = await placeOrder(fixture);
+    await expect(fixture.orderBook.connect(fixture.filler).fillOrder(fullOnly, unit))
+      .to.be.revertedWithCustomError(fixture.orderBook, "InvalidFillAmount");
+
+    const partial = await placeOrder(fixture, {
+      allowPartialFills: true,
+      minimumFillAmount: 2n * unit,
+    });
+    await expect(fixture.orderBook.connect(fixture.filler).fillOrder(partial, unit))
+      .to.be.revertedWithCustomError(fixture.orderBook, "InvalidFillAmount");
+    expect(await fixture.orderBook.canFillOrder(partial, unit)).to.deep.equal([
+      false,
+      ethers.ZeroAddress,
+      0n,
+      0n,
+      0n,
+    ]);
+  });
+
+  it("lets only the maker amend price, expiry, recipient, routing, and partial-fill policy", async function () {
+    const fixture = await deployFixture();
+    const latest = await ethers.provider.getBlock("latest");
+    if (!latest) throw new Error("latest block unavailable");
+    const shortExpiry = BigInt(latest.timestamp + 10);
+    const orderId = await placeOrder(fixture, { expiry: shortExpiry });
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(shortExpiry + 1n)]);
+    await ethers.provider.send("evm_mine", []);
+    expect((await fixture.orderBook.canFillOrder(orderId, fixture.amountIn)).canFill)
+      .to.equal(false);
+
+    const current = await ethers.provider.getBlock("latest");
+    if (!current) throw new Error("latest block unavailable");
+    const amendment = {
+      recipient: fixture.outsider.address,
+      minAmountOutForRemaining: 2n,
+      expiry: BigInt(current.timestamp + 600),
+      candidateBitmap: 2,
+      allowPartialFills: true,
+      minimumFillAmount: ethers.parseUnits("1", 18),
+    };
+    await expect(fixture.orderBook.connect(fixture.outsider).amendOrder(orderId, amendment))
       .to.be.revertedWithCustomError(fixture.orderBook, "NotOrderMaker");
+    await fixture.orderBook.connect(fixture.maker).amendOrder(orderId, amendment);
+
+    const order = await fixture.orderBook.getOrder(orderId);
+    expect(order.revision).to.equal(1n);
+    expect(order.recipient).to.equal(fixture.outsider.address);
+    expect(order.priceNumerator).to.equal(2n);
+    expect(order.priceDenominator).to.equal(fixture.amountIn);
+    expect(order.candidateBitmap).to.equal(2n);
+    expect(order.allowPartialFills).to.equal(true);
+    const readiness = await fixture.orderBook.canFillOrder(orderId, fixture.amountIn);
+    expect(readiness.canFill).to.equal(true);
+    expect(readiness.selectedPool).to.equal(await fixture.standardPool.getAddress());
+  });
+
+  it("allows only bounty increases while an order remains open", async function () {
+    const fixture = await deployFixture();
+    const orderId = await placeOrder(fixture, {}, 3n);
+    await expect(fixture.orderBook.connect(fixture.outsider).increaseExecutionBounty(
+      orderId,
+      { value: 2n },
+    )).to.be.revertedWithCustomError(fixture.orderBook, "NotOrderMaker");
+    await fixture.orderBook.connect(fixture.maker).increaseExecutionBounty(
+      orderId,
+      { value: 2n },
+    );
+    expect((await fixture.orderBook.getOrder(orderId)).remainingExecutionBounty)
+      .to.equal(5n);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(5n);
+  });
+
+  it("cancels after a partial fill and returns only remaining escrow and bounty", async function () {
+    const fixture = await deployFixture();
+    const unit = ethers.parseUnits("1", 18);
+    const makerBefore = await fixture.tokenA.balanceOf(fixture.maker.address);
+    const orderId = await placeOrder(fixture, {
+      allowPartialFills: true,
+      minimumFillAmount: unit,
+    }, 10n);
+    await fixture.orderBook.connect(fixture.filler).fillOrder(orderId, 3n * unit);
     await fixture.orderBook.connect(fixture.maker).cancelOrder(orderId);
 
-    expect(await fixture.token0.balanceOf(fixture.maker.address)).to.equal(makerBalanceBefore);
-    expect((await fixture.orderBook.getOrder(orderId)).status).to.equal(2n);
-    expect(await fixture.orderBook.totalEscrowed(await fixture.token0.getAddress()))
-      .to.equal(0n);
-  });
-
-  it("returns the native execution bounty when the maker cancels", async function () {
-    const fixture = await deployFixture();
-    const bounty = ethers.parseEther("0.01");
-    const orderId = await placeOrder(fixture, { bounty });
-
-    await expect(() => fixture.orderBook.connect(fixture.maker).cancelOrder(orderId))
-      .to.changeEtherBalances(
-        ethers,
-        [await fixture.orderBook.getAddress(), fixture.maker.address],
-        [-bounty, bounty],
-      );
-    expect((await fixture.orderBook.getOrder(orderId)).executionBounty).to.equal(0n);
+    expect(await fixture.tokenA.balanceOf(fixture.maker.address))
+      .to.equal(makerBefore - 3n * unit);
+    expect(await fixture.orderBook.orderStatus(orderId)).to.equal(3n);
+    expect((await fixture.orderBook.getOrder(orderId)).maker).to.equal(ethers.ZeroAddress);
     expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
   });
 
-  it("cancels for a rejecting contract maker and preserves a claimable bounty", async function () {
+  it("keeps impossible fills atomic and leaves the order open", async function () {
     const fixture = await deployFixture();
-    const bounty = ethers.parseEther("0.01");
-    const actor = await (
-      await ethers.getContractFactory("RejectingNativeLimitOrderActor")
-    ).deploy({ value: bounty });
-    await actor.waitForDeployment();
-    const actorAddress = await actor.getAddress();
-    const orderBookAddress = await fixture.orderBook.getAddress();
-    await fixture.token0.mint(actorAddress, fixture.amountIn);
-    const latest = await ethers.provider.getBlock("latest");
-    if (!latest) throw new Error("latest block unavailable");
-    const expiry = BigInt(latest.timestamp + 10);
-    const orderId = await fixture.orderBook.nextOrderId();
-
-    await actor.createOrder(
-      orderBookAddress,
-      await fixture.token0.getAddress(),
-      fixture.poolAddress,
-      true,
+    const quote = await fixture.router.quoteBestExactInput(
+      await fixture.tokenA.getAddress(),
+      await fixture.tokenB.getAddress(),
       fixture.amountIn,
-      fixture.expectedAmountOut,
-      fixture.recipient.address,
-      expiry,
-      bounty,
+      7,
     );
-    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(expiry + 1n)]);
-    await ethers.provider.send("evm_mine", []);
-
-    await expect(actor.cancelOrder(orderBookAddress, orderId))
-      .to.emit(fixture.orderBook, "NativeBountyCredited")
-      .withArgs(orderId, actorAddress, bounty);
-
-    expect((await fixture.orderBook.getOrder(orderId)).status).to.equal(2n);
-    expect(await fixture.token0.balanceOf(actorAddress)).to.equal(fixture.amountIn);
-    expect(await fixture.orderBook.totalEscrowed(await fixture.token0.getAddress()))
-      .to.equal(0n);
-    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(bounty);
-    expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(bounty);
-    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(bounty);
-
-    await expect(
-      fixture.orderBook.connect(fixture.outsider).claimNativeBounty(
-        fixture.outsider.address,
-      ),
-    ).to.be.revertedWithCustomError(
-      fixture.orderBook,
-      "NoClaimableNativeBounty",
-    );
-    await expect(actor.claimNativeBounty(orderBookAddress, ethers.ZeroAddress))
-      .to.be.revertedWithCustomError(fixture.orderBook, "InvalidBountyRecipient");
-    await expect(actor.claimNativeBounty(orderBookAddress, orderBookAddress))
-      .to.be.revertedWithCustomError(fixture.orderBook, "InvalidBountyRecipient");
-    await expect(actor.claimNativeBounty(orderBookAddress, actorAddress)).to.be.revert(
-      ethers,
-    );
-    expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(bounty);
-
-    const recipientBefore = await ethers.provider.getBalance(fixture.outsider.address);
-    await actor.claimNativeBounty(orderBookAddress, fixture.outsider.address);
-    expect(await ethers.provider.getBalance(fixture.outsider.address))
-      .to.equal(recipientBefore + bounty);
-    expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(0n);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
-    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(0n);
-    await expect(actor.claimNativeBounty(orderBookAddress, fixture.outsider.address))
-      .to.be.revertedWithCustomError(
-        fixture.orderBook,
-        "NoClaimableNativeBounty",
-      );
-  });
-
-  it("keeps open-order bounties backed while a deferred credit is claimed", async function () {
-    const fixture = await deployFixture();
-    const bounty = ethers.parseEther("0.01");
-    const openOrderId = await placeOrder(fixture, { bounty });
-    const actor = await (
-      await ethers.getContractFactory("RejectingNativeLimitOrderActor")
-    ).deploy({ value: bounty });
-    await actor.waitForDeployment();
-    const actorAddress = await actor.getAddress();
-    const orderBookAddress = await fixture.orderBook.getAddress();
-    await fixture.token0.mint(actorAddress, fixture.amountIn);
-    const latest = await ethers.provider.getBlock("latest");
-    if (!latest) throw new Error("latest block unavailable");
-    const expiry = BigInt(latest.timestamp + 10);
-    const actorOrderId = await fixture.orderBook.nextOrderId();
-
-    await actor.createOrder(
-      orderBookAddress,
-      await fixture.token0.getAddress(),
-      fixture.poolAddress,
-      true,
+    const orderId = await placeOrder(fixture, { minAmountOut: quote.amountOut + 1n }, 10n);
+    const readiness = await fixture.orderBook.canFillOrder(orderId, fixture.amountIn);
+    expect(readiness.canFill).to.equal(false);
+    await expect(fixture.orderBook.connect(fixture.filler).fillOrder(
+      orderId,
       fixture.amountIn,
-      fixture.expectedAmountOut,
-      fixture.recipient.address,
-      expiry,
-      bounty,
-    );
-    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(expiry + 1n)]);
-    await ethers.provider.send("evm_mine", []);
-    await actor.cancelOrder(orderBookAddress, actorOrderId);
-
-    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(bounty);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(bounty);
-    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(2n * bounty);
-
-    await actor.claimNativeBounty(orderBookAddress, fixture.outsider.address);
-    expect((await fixture.orderBook.getOrder(openOrderId)).status).to.equal(0n);
-    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(bounty);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
-    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(bounty);
-
-    await fixture.orderBook.connect(fixture.maker).cancelOrder(openOrderId);
-    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
-    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(0n);
+    )).to.be.revertedWithCustomError(fixture.router, "SlippageExceeded");
+    expect(await fixture.orderBook.orderStatus(orderId)).to.equal(1n);
+    expect((await fixture.orderBook.getOrder(orderId)).remainingAmountIn)
+      .to.equal(fixture.amountIn);
+    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(10n);
   });
 
-  it("blocks expired fills while preserving maker cancellation", async function () {
-    const fixture = await deployFixture();
-    const latest = await ethers.provider.getBlock("latest");
-    if (!latest) throw new Error("latest block unavailable");
-    const expiry = BigInt(latest.timestamp + 10);
-    const orderId = await placeOrder(fixture, { expiry });
-    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(expiry + 1n)]);
-    await ethers.provider.send("evm_mine", []);
-
-    expect(await fixture.orderBook.canFillOrder(orderId)).to.deep.equal([false, 0n]);
-    await expect(fixture.orderBook.connect(fixture.filler).fillOrder(orderId))
-      .to.be.revertedWithCustomError(fixture.orderBook, "OrderExpired");
-    await fixture.orderBook.connect(fixture.maker).cancelOrder(orderId);
-    expect((await fixture.orderBook.getOrder(orderId)).status).to.equal(2n);
-  });
-
-  it("pays the native execution bounty to the successful filler", async function () {
+  it("credits a rejecting filler without rolling back settlement", async function () {
     const fixture = await deployFixture();
     const bounty = ethers.parseEther("0.01");
-    const orderId = await placeOrder(fixture, { bounty });
-
-    await expect(() => fixture.orderBook.connect(fixture.filler).fillOrder(orderId))
-      .to.changeEtherBalances(
-        ethers,
-        [await fixture.orderBook.getAddress(), fixture.filler.address],
-        [-bounty, bounty],
-      );
-    expect((await fixture.orderBook.getOrder(orderId)).executionBounty).to.equal(0n);
-    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
-  });
-
-  it("fills through a rejecting contract caller and credits its bounty", async function () {
-    const fixture = await deployFixture();
-    const bounty = ethers.parseEther("0.01");
-    const orderId = await placeOrder(fixture, { bounty });
+    const orderId = await placeOrder(fixture, {}, bounty);
     const actor = await (
       await ethers.getContractFactory("RejectingNativeLimitOrderActor")
     ).deploy();
     await actor.waitForDeployment();
     const actorAddress = await actor.getAddress();
-    const orderBookAddress = await fixture.orderBook.getAddress();
-    const outputBefore = await fixture.token1.balanceOf(fixture.recipient.address);
 
-    await expect(actor.fillOrder(orderBookAddress, orderId))
-      .to.emit(fixture.orderBook, "NativeBountyCredited")
+    await expect(actor.fillOrder(
+      await fixture.orderBook.getAddress(),
+      orderId,
+      fixture.amountIn,
+    )).to.emit(fixture.orderBook, "NativeBountyCredited")
       .withArgs(orderId, actorAddress, bounty);
-
-    expect((await fixture.orderBook.getOrder(orderId)).status).to.equal(1n);
-    expect(await fixture.token1.balanceOf(fixture.recipient.address))
-      .to.equal(outputBefore + fixture.expectedAmountOut);
-    expect(await fixture.orderBook.totalOpenExecutionBounties()).to.equal(0n);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(bounty);
+    expect(await fixture.orderBook.orderStatus(orderId)).to.equal(2n);
     expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(bounty);
+    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(bounty);
 
-    const recipientBefore = await ethers.provider.getBalance(fixture.outsider.address);
-    await actor.claimNativeBounty(orderBookAddress, fixture.outsider.address);
-    expect(await ethers.provider.getBalance(fixture.outsider.address))
-      .to.equal(recipientBefore + bounty);
+    await actor.claimNativeBounty(
+      await fixture.orderBook.getAddress(),
+      fixture.outsider.address,
+    );
     expect(await fixture.orderBook.claimableNativeBounties(actorAddress)).to.equal(0n);
-    expect(await fixture.orderBook.totalClaimableNativeBounties()).to.equal(0n);
   });
 
-  it("clears the exact pool allowance after a successful fill", async function () {
+  it("sweeps only token and native surplus to the immutable beneficiary", async function () {
     const fixture = await deployFixture();
-    const orderId = await placeOrder(fixture);
-    await fixture.orderBook.connect(fixture.filler).fillOrder(orderId);
+    const bounty = 10n;
+    await placeOrder(fixture, {}, bounty);
+    const orderBookAddress = await fixture.orderBook.getAddress();
+    const surplus = ethers.parseUnits("5", 18);
+    await fixture.tokenA.mint(orderBookAddress, surplus);
+    const beneficiaryBefore = await fixture.tokenA.balanceOf(fixture.beneficiary.address);
 
-    expect(await fixture.token0.allowance(
+    await fixture.orderBook.connect(fixture.outsider).sweepTokenSurplus(
+      await fixture.tokenA.getAddress(),
+    );
+    expect(await fixture.tokenA.balanceOf(fixture.beneficiary.address))
+      .to.equal(beneficiaryBefore + surplus);
+    expect(await fixture.tokenA.balanceOf(orderBookAddress)).to.equal(fixture.amountIn);
+    await expect(fixture.orderBook.sweepTokenSurplus(await fixture.tokenA.getAddress()))
+      .to.be.revertedWithCustomError(fixture.orderBook, "NoSurplus");
+
+    await ethers.provider.send("hardhat_setBalance", [orderBookAddress, ethers.toQuantity(15n)]);
+    const nativeBefore = await ethers.provider.getBalance(fixture.beneficiary.address);
+    await fixture.orderBook.connect(fixture.outsider).sweepNativeSurplus();
+    expect(await ethers.provider.getBalance(fixture.beneficiary.address))
+      .to.equal(nativeBefore + 5n);
+    expect(await ethers.provider.getBalance(orderBookAddress)).to.equal(bounty);
+  });
+
+  it("supports EIP-2612 creation and allowance-backed fallback for non-permit tokens", async function () {
+    const fixture = await deployFixture();
+    const permitToken = await (
+      await ethers.getContractFactory("MockPermitERC20")
+    ).deploy("Permit Token", "PRM", 18);
+    await permitToken.waitForDeployment();
+    const amount = ethers.parseUnits("1", 18);
+    await permitToken.mint(fixture.maker.address, amount);
+    const network = await ethers.provider.getNetwork();
+    const nonce = await permitToken.nonces(fixture.maker.address);
+    const permitDeadline = fixture.expiry;
+    const signature = ethers.Signature.from(await fixture.maker.signTypedData(
+      {
+        name: "Permit Token",
+        version: "1",
+        chainId: network.chainId,
+        verifyingContract: await permitToken.getAddress(),
+      },
+      {
+        Permit: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
+      {
+        owner: fixture.maker.address,
+        spender: await fixture.orderBook.getAddress(),
+        value: amount,
+        nonce,
+        deadline: permitDeadline,
+      },
+    ));
+    await fixture.orderBook.connect(fixture.maker).createOrderWithPermit(
+      orderParams(fixture, { tokenIn: await permitToken.getAddress(), amountIn: amount }),
+      permitDeadline,
+      signature.v,
+      signature.r,
+      signature.s,
+    );
+    expect(await fixture.orderBook.totalEscrowed(await permitToken.getAddress()))
+      .to.equal(amount);
+
+    const fallbackId = await fixture.orderBook.nextOrderId();
+    await fixture.orderBook.connect(fixture.maker).createOrderWithPermit(
+      orderParams(fixture),
+      permitDeadline,
+      27,
+      ethers.ZeroHash,
+      ethers.ZeroHash,
+    );
+    expect(await fixture.orderBook.orderStatus(fallbackId)).to.equal(1n);
+
+    await expect(fixture.orderBook.connect(fixture.outsider).createOrderWithPermit(
+      orderParams(fixture),
+      permitDeadline,
+      27,
+      ethers.ZeroHash,
+      ethers.ZeroHash,
+    )).to.be.revertedWithCustomError(fixture.orderBook, "PermitFailed");
+  });
+
+  it("rolls back creation when an input token attempts callback reentry", async function () {
+    const fixture = await deployFixture();
+    const reentrant = await (
+      await ethers.getContractFactory("ReentrantERC20")
+    ).deploy(18);
+    await reentrant.waitForDeployment();
+    const amount = ethers.parseUnits("1", 18);
+    await reentrant.mint(fixture.maker.address, amount);
+    await reentrant.connect(fixture.maker).approve(await fixture.orderBook.getAddress(), amount);
+    await reentrant.configureCallback(
       await fixture.orderBook.getAddress(),
-      fixture.poolAddress,
-    )).to.equal(0n);
+      fixture.orderBook.interface.encodeFunctionData("cancelOrder", [1n]),
+    );
+
+    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
+      orderParams(fixture, { tokenIn: await reentrant.getAddress(), amountIn: amount }),
+    )).to.be.revertedWithCustomError(
+      fixture.orderBook,
+      "ReentrancyGuardReentrantCall",
+    );
+    expect(await fixture.orderBook.nextOrderId()).to.equal(1n);
+    expect(await fixture.orderBook.totalEscrowed(await reentrant.getAddress())).to.equal(0n);
+  });
+
+  it("rejects malformed orders and short-credit fee-on-transfer escrow", async function () {
+    const fixture = await deployFixture();
+    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
+      orderParams(fixture, { candidateBitmap: 0 }),
+    )).to.be.revertedWithCustomError(fixture.orderBook, "InvalidCandidateBitmap");
+    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
+      orderParams(fixture, { allowPartialFills: true, minimumFillAmount: 0n }),
+    )).to.be.revertedWithCustomError(
+      fixture.orderBook,
+      "InvalidPartialFillConfiguration",
+    );
+    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
+      orderParams(fixture, { minAmountOut: 0n }),
+    )).to.be.revertedWithCustomError(fixture.orderBook, "InvalidMinimumOutput");
+
+    const taxed = await (
+      await ethers.getContractFactory("FeeOnTransferERC20")
+    ).deploy("Taxed", "TAX", 100);
+    await taxed.waitForDeployment();
+    const amount = 1_000n;
+    await taxed.mint(fixture.maker.address, amount);
+    await taxed.setTaxedSender(fixture.maker.address);
+    await taxed.connect(fixture.maker).approve(await fixture.orderBook.getAddress(), amount);
+    await expect(fixture.orderBook.connect(fixture.maker).createOrder(
+      orderParams(fixture, { tokenIn: await taxed.getAddress(), amountIn: amount }),
+    )).to.be.revertedWithCustomError(fixture.orderBook, "TransferAmountMismatch");
   });
 });

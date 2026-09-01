@@ -38,9 +38,20 @@ const requiredNonReentrant = new Map([
     ["depositPublicFees", "depositConfidentialFees", "sweepPublicToken", "sweepConfidentialToken"],
   ],
   ["contracts/PublicCPMMRouter.sol", ["swapExactInput"]],
+  ["contracts/PublicBestExecutionRouter.sol", ["swapBestExactInput"]],
   [
     "contracts/PublicCPMMLimitOrderBook.sol",
-    ["createOrder", "fillOrder", "cancelOrder", "claimNativeBounty"],
+    [
+      "createOrder",
+      "createOrderWithPermit",
+      "amendOrder",
+      "increaseExecutionBounty",
+      "fillOrder",
+      "cancelOrder",
+      "claimNativeBounty",
+      "sweepTokenSurplus",
+      "sweepNativeSurplus",
+    ],
   ],
   [
     "contracts/PublicCPMMLiquidityRouter.sol",
@@ -85,6 +96,12 @@ const publicSource = maskSourceCommentsAndLiterals(
 );
 const publicRouterSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicCPMMRouter.sol", "utf8"),
+);
+const publicBestExecutionRouterSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/PublicBestExecutionRouter.sol", "utf8"),
+);
+const publicLimitOrderBookSource = maskSourceCommentsAndLiterals(
+  await readFile("contracts/PublicCPMMLimitOrderBook.sol", "utf8"),
 );
 const publicLiquidityRouterSource = maskSourceCommentsAndLiterals(
   await readFile("contracts/PublicCPMMLiquidityRouter.sol", "utf8"),
@@ -510,6 +527,88 @@ for (const fragment of [
 ]) {
   if (!publicRouterSwapBody.includes(fragment)) {
     throw new Error("Public router can consume a pre-funded balance after a short input credit");
+  }
+}
+for (const [source, label] of [
+  [publicBestExecutionRouterSource, "Public best-execution router"],
+  [publicLimitOrderBookSource, "Public limit-order book"],
+]) {
+  if (/\bdelegatecall\b|\bselfdestruct\b/.test(source)) {
+    throw new Error(`${label} contains an unsafe dynamic execution primitive`);
+  }
+}
+
+const publicBestSwapBody = functionBody(
+  publicBestExecutionRouterSource,
+  "swapBestExactInput",
+);
+for (const fragment of [
+  "_quoteBestExactInput(tokenIn, tokenOut, amountIn, candidateBitmap)",
+  "input.safeTransferFrom(msg.sender, address(this), amountIn)",
+  "input.forceApprove(selectedPool, amountIn)",
+  "input.forceApprove(selectedPool, 0)",
+  "input.allowance(address(this), selectedPool) != 0",
+  "input.balanceOf(address(this)) != inputBefore",
+  "output.balanceOf(address(this)) != outputBefore",
+]) {
+  if (!publicBestSwapBody.includes(fragment)) {
+    throw new Error("Public best execution omits canonical selection or custody cleanup");
+  }
+}
+const publicBestQuoteBody = functionBody(
+  publicBestExecutionRouterSource,
+  "_quoteBestExactInput",
+);
+for (const fragment of [
+  "IPublicCPMMFactory(factory).poolKey(",
+  "IPublicCPMMFactory(factory).getPool(key)",
+  "IPublicCPMMFactory(factory).isPool(pool)",
+  "candidateAmountOut > amountOut",
+]) {
+  if (!publicBestQuoteBody.includes(fragment)) {
+    throw new Error("Public best execution accepts noncanonical or nondeterministic candidates");
+  }
+}
+
+const publicOrderFillBody = functionBody(publicLimitOrderBookSource, "fillOrder");
+for (const fragment of [
+  "_validFillAmount(order, amountInToFill)",
+  "_minimumOutput(order, amountInToFill)",
+  "totalEscrowed[tokenIn] -= amountInToFill",
+  "totalOpenExecutionBounties -= bounty",
+  "delete orders[orderId]",
+  "input.forceApprove(bestExecutionRouter, amountInToFill)",
+  "input.forceApprove(bestExecutionRouter, 0)",
+  "_payOrCreditNativeBounty(orderId, msg.sender, bounty)",
+]) {
+  if (!publicOrderFillBody.includes(fragment)) {
+    throw new Error("Public limit-order fill omits liability or allowance enforcement");
+  }
+}
+const publicOrderTokenSweepBody = functionBody(
+  publicLimitOrderBookSource,
+  "sweepTokenSurplus",
+);
+const publicOrderNativeSweepBody = functionBody(
+  publicLimitOrderBookSource,
+  "sweepNativeSurplus",
+);
+for (const fragment of [
+  "balance <= liability",
+  "balance - liability",
+  "_transferExact(asset, surplusBeneficiary, amount)",
+]) {
+  if (!publicOrderTokenSweepBody.includes(fragment)) {
+    throw new Error("Public limit-order token sweep can consume or redirect escrow");
+  }
+}
+for (const fragment of [
+  "totalOpenExecutionBounties + totalClaimableNativeBounties",
+  "address(this).balance - liabilities",
+  "surplusBeneficiary.sendValue(amount)",
+]) {
+  if (!publicOrderNativeSweepBody.includes(fragment)) {
+    throw new Error("Public limit-order native sweep can consume or redirect liabilities");
   }
 }
 for (const [body, helper, label] of [

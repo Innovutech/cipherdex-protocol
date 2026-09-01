@@ -2,6 +2,7 @@ import {
   ContractFactory,
   JsonRpcProvider,
   Wallet,
+  ZeroAddress,
   getAddress,
   isAddress,
 } from "ethers";
@@ -18,21 +19,49 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
+function requiredAddress(name: string): string {
+  const value = requiredEnvironment(name);
+  if (!isAddress(value) || getAddress(value) === ZeroAddress) {
+    throw new Error(`${name} must be a nonzero address`);
+  }
+  return getAddress(value);
+}
+
+async function deploy(
+  name: string,
+  constructorArguments: readonly unknown[],
+  wallet: Wallet,
+) {
+  const artifact = await artifacts.readArtifact(name);
+  const contract = await new ContractFactory(
+    artifact.abi,
+    artifact.bytecode,
+    wallet,
+  ).deploy(...constructorArguments);
+  const transaction = contract.deploymentTransaction();
+  if (!transaction) throw new Error(`${name} deployment transaction was not created`);
+  const receipt = await transaction.wait();
+  if (!receipt || receipt.status !== 1) {
+    throw new Error(`${name} deployment did not mine successfully`);
+  }
+  await contract.waitForDeployment();
+  return { contract, transaction };
+}
+
 async function main(): Promise<void> {
   const rpcUrl = requiredEnvironment("COTI_RPC_URL");
   const privateKey = requiredEnvironment("DEPLOYER_PRIVATE_KEY");
-  const configuredFactory = requiredEnvironment("PUBLIC_CPMM_FACTORY_ADDRESS");
-  if (!isAddress(configuredFactory)) {
-    throw new Error("PUBLIC_CPMM_FACTORY_ADDRESS must be a valid address");
-  }
-  const canonicalFactory = getAddress(configuredFactory);
+  const canonicalFactory = requiredAddress("PUBLIC_CPMM_FACTORY_ADDRESS");
+  const surplusBeneficiary = requiredAddress(
+    "PUBLIC_LIMIT_ORDER_SURPLUS_BENEFICIARY",
+  );
 
   const provider = new JsonRpcProvider(rpcUrl);
   const network = await provider.getNetwork();
   const networkName = COTI_NETWORKS.get(network.chainId);
   if (!networkName) {
     throw new Error(
-      `limit-order deployment supports only COTI testnet/mainnet; got chain ${network.chainId}`,
+      `public limit-order deployment supports only COTI testnet/mainnet; got chain ${network.chainId}`,
     );
   }
   if ((await provider.getCode(canonicalFactory)) === "0x") {
@@ -40,34 +69,48 @@ async function main(): Promise<void> {
   }
 
   const deployer = new Wallet(privateKey, provider);
-  const artifact = await artifacts.readArtifact("PublicCPMMLimitOrderBook");
-  const contractFactory = new ContractFactory(
-    artifact.abi,
-    artifact.bytecode,
+  const routerDeployment = await deploy(
+    "PublicBestExecutionRouter",
+    [canonicalFactory],
     deployer,
   );
-  const orderBook = await contractFactory.deploy(canonicalFactory);
-  const deploymentTransaction = orderBook.deploymentTransaction();
-  if (!deploymentTransaction) throw new Error("deployment transaction was not created");
-  const receipt = await deploymentTransaction.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error("PublicCPMMLimitOrderBook deployment did not mine successfully");
-  }
-  await orderBook.waitForDeployment();
+  const routerAddress = await routerDeployment.contract.getAddress();
+  const orderBookDeployment = await deploy(
+    "PublicCPMMLimitOrderBook",
+    [canonicalFactory, routerAddress, surplusBeneficiary],
+    deployer,
+  );
+  const orderBookAddress = await orderBookDeployment.contract.getAddress();
 
-  const deployedAddress = await orderBook.getAddress();
-  const boundFactory = await orderBook.getFunction("factory").staticCall();
-  if (getAddress(String(boundFactory)) !== canonicalFactory) {
-    throw new Error("deployed limit-order book factory binding mismatch");
-  }
+  const boundRouterFactory = await routerDeployment.contract
+    .getFunction("factory").staticCall();
+  const boundOrderBookFactory = await orderBookDeployment.contract
+    .getFunction("factory").staticCall();
+  const boundOrderBookRouter = await orderBookDeployment.contract
+    .getFunction("bestExecutionRouter").staticCall();
+  const boundSurplusBeneficiary = await orderBookDeployment.contract
+    .getFunction("surplusBeneficiary").staticCall();
+  if (
+    getAddress(String(boundRouterFactory)) !== canonicalFactory ||
+    getAddress(String(boundOrderBookFactory)) !== canonicalFactory ||
+    getAddress(String(boundOrderBookRouter)) !== routerAddress ||
+    getAddress(String(boundSurplusBeneficiary)) !== surplusBeneficiary
+  ) throw new Error("deployed public limit-order binding mismatch");
 
   console.log(`network=${networkName}`);
   console.log(`chainId=${network.chainId}`);
   console.log(`deployer=${await deployer.getAddress()}`);
   console.log(`publicCPMMFactory=${canonicalFactory}`);
-  console.log(`publicCPMMLimitOrderBook=${deployedAddress}`);
-  console.log(`deploymentTx=${deploymentTransaction.hash}`);
-  console.log(`constructorArgs=${JSON.stringify([canonicalFactory])}`);
+  console.log(`publicBestExecutionRouter=${routerAddress}`);
+  console.log(`publicBestExecutionRouterDeploymentTx=${routerDeployment.transaction.hash}`);
+  console.log(`publicBestExecutionRouterConstructorArgs=${JSON.stringify([canonicalFactory])}`);
+  console.log(`publicCPMMLimitOrderBook=${orderBookAddress}`);
+  console.log(`publicCPMMLimitOrderBookDeploymentTx=${orderBookDeployment.transaction.hash}`);
+  console.log(`publicCPMMLimitOrderBookConstructorArgs=${JSON.stringify([
+    canonicalFactory,
+    routerAddress,
+    surplusBeneficiary,
+  ])}`);
 }
 
 void main().catch((error: unknown) => {
@@ -79,6 +122,6 @@ void main().catch((error: unknown) => {
     (message, secret) => secret ? message.replaceAll(secret, "[redacted]") : message,
     rawMessage,
   );
-  console.error(`PublicCPMMLimitOrderBook deployment failed: ${safeMessage}`);
+  console.error(`Public limit-order deployment failed: ${safeMessage}`);
   process.exitCode = 1;
 });

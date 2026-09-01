@@ -54,6 +54,20 @@ while unrelated RPC or execution failures remain exceptions. Applications own
 localized wording and token capability policy; the SDK does not hardcode token
 addresses or assume a tax-token classification remains permanent.
 
+`PUBLIC_BEST_EXECUTION_ROUTER_ABI` and
+`PUBLIC_CPMM_LIMIT_ORDER_BOOK_ABI` expose the public routed-order periphery.
+`PUBLIC_ROUTE_CANDIDATE` maps the approved `5`, `30`, and `100` bps pools to a
+typed three-bit policy. The create, permit-create, amend and fill builders
+validate and freeze wallet-call arguments without signing or submitting them.
+`publicLimitOrderMinimumOutput` and `publicLimitOrderBountyForFill` mirror the
+contract's ceiling price and proportional/final-remainder bounty calculations.
+Strict receipt-evidence parsers reject failed, mismatched or ambiguous logs
+before returning creation, amendment, fill or cancellation results. Supply
+receipts from a trusted provider bound to the reviewed chain and deployment; the
+parsers do not establish chain consensus independently. Read the current
+remaining amount immediately before building an amendment; the contract remains
+authoritative if another transaction changes state first.
+
 `buildConfidentialCandidateBitmap` derives the active bitmap from the standard
 class plus the factory's finalized registered strategy count.
 `partitionConfidentialQuoteCandidateBitmap` deterministically groups that bitmap
