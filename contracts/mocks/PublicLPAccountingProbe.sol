@@ -131,6 +131,7 @@ contract PublicLPAccountingProbeToken is ERC20 {
     }
 
     function _update(address from, address to, uint256 amount) internal override {
+        uint256 previousSupply = totalSupply();
         if (from != address(0)) _settle(from);
         if (to != address(0) && to != from) _settle(to);
         if (
@@ -139,6 +140,14 @@ contract PublicLPAccountingProbeToken is ERC20 {
         ) revert LockedPrincipal();
 
         super._update(from, to, amount);
+        if (from != address(0) && balanceOf(from) == 0) {
+            _recycleZeroBalanceCarry(from);
+        }
+        if (from == address(0) && previousSupply == 0) {
+            for (uint8 side = 0; side < 2; side++) {
+                _redistributeGlobalRemainder(side, address(0));
+            }
+        }
     }
 
     function _settle(address owner) internal {
@@ -153,6 +162,40 @@ contract PublicLPAccountingProbeToken is ERC20 {
             holderCarry[owner][side] = fractionalNumerator % SCALE;
             checkpointWhole[owner][side] = feeGrowthWhole[side];
             checkpointFraction[owner][side] = feeGrowthFraction[side];
+        }
+    }
+
+    function _recycleZeroBalanceCarry(address owner) internal {
+        for (uint8 side = 0; side < 2; side++) {
+            globalRemainder[side] += holderCarry[owner][side];
+            holderCarry[owner][side] = 0;
+            _redistributeGlobalRemainder(side, owner);
+        }
+    }
+
+    function _redistributeGlobalRemainder(
+        uint8 side,
+        address zeroSupplyBeneficiary
+    ) internal {
+        uint256 unallocated = globalRemainder[side];
+        if (unallocated == 0) return;
+        uint256 supply = totalSupply();
+        if (supply == 0) {
+            uint256 terminalWhole = unallocated / SCALE;
+            globalRemainder[side] = unallocated % SCALE;
+            claimable[zeroSupplyBeneficiary][side] += terminalWhole;
+            return;
+        }
+
+        uint256 fractionIncrement = unallocated / supply;
+        globalRemainder[side] = unallocated % supply;
+        if (fractionIncrement == 0) return;
+        uint256 combinedFraction =
+            feeGrowthFraction[side] + fractionIncrement;
+        feeGrowthWhole[side] += combinedFraction / SCALE;
+        feeGrowthFraction[side] = combinedFraction % SCALE;
+        if (feeGrowthWhole[side] > lifetimeAccrued[side]) {
+            revert InvalidAmount();
         }
     }
 

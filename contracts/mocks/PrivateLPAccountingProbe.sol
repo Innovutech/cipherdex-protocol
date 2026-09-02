@@ -197,6 +197,18 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
         claim1 = _read(claimableState[owner][1]);
     }
 
+    function diagnosticCarryState(address owner, uint8 side)
+        external
+        onlyPool
+        returns (gtUint256 balance, gtUint256 carry, gtUint256 claimValue)
+    {
+        if (side > 1) revert InvalidPrivateAccountingAmount();
+        _settle(owner);
+        balance = _getBalance(owner);
+        carry = _read(holderCarryState[owner][side]);
+        claimValue = _read(claimableState[owner][side]);
+    }
+
     function lockInfo(bytes32 lockId)
         external
         view
@@ -250,7 +262,14 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
 
         super._update(from, to, amount);
         accountingTotalSharesState = MpcCore.offBoard(nextSupply);
-
+        if (from != address(0)) {
+            _recycleZeroBalanceCarry(from, nextSupply);
+        }
+        if (from == address(0)) {
+            for (uint8 side = 0; side < 2; side++) {
+                _redistributeGlobalRemainder(side, nextSupply, to);
+            }
+        }
     }
 
     function _settle(address owner) internal {
@@ -266,23 +285,12 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
             gtUint256 previousFraction = _read(
                 checkpointFractionState[owner][side]
             );
-            gtUint256 wholeDelta = _subChecked(currentWhole, previousWhole);
-            gtUint256 fractionDelta;
-            if (MpcCore.decrypt(MpcCore.ge(currentFraction, previousFraction))) {
-                fractionDelta = MpcCore.sub(
-                    currentFraction,
-                    previousFraction
-                );
-            } else {
-                wholeDelta = _subChecked(
-                    wholeDelta,
-                    MpcCore.setPublic256(uint256(1))
-                );
-                fractionDelta = _subChecked(
-                    _addChecked(MpcCore.setPublic256(SCALE), currentFraction),
-                    previousFraction
-                );
-            }
+            (gtUint256 wholeDelta, gtUint256 fractionDelta) = _growthDelta(
+                currentWhole,
+                currentFraction,
+                previousWhole,
+                previousFraction
+            );
             gtUint256 fractionalNumerator = _addChecked(
                 _mulChecked(ownerBalance, fractionDelta),
                 _read(holderCarryState[owner][side])
@@ -302,6 +310,123 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
                 currentFraction
             );
         }
+    }
+
+    function _growthDelta(
+        gtUint256 currentWhole,
+        gtUint256 currentFraction,
+        gtUint256 previousWhole,
+        gtUint256 previousFraction
+    ) internal returns (gtUint256 wholeDelta, gtUint256 fractionDelta) {
+        wholeDelta = _subChecked(currentWhole, previousWhole);
+        gtBool noBorrow = MpcCore.ge(currentFraction, previousFraction);
+        gtBool validBorrow = MpcCore.or(
+            noBorrow,
+            MpcCore.gt(wholeDelta, uint256(0))
+        );
+        if (!MpcCore.decrypt(validBorrow)) {
+            revert PrivateAccountingUnderflow();
+        }
+        fractionDelta = _selectFractionDelta(
+            noBorrow,
+            currentFraction,
+            previousFraction
+        );
+        wholeDelta = MpcCore.mux(
+            noBorrow,
+            MpcCore.sub(wholeDelta, MpcCore.setPublic256(uint256(1))),
+            wholeDelta
+        );
+    }
+
+    function _selectFractionDelta(
+        gtBool noBorrow,
+        gtUint256 currentFraction,
+        gtUint256 previousFraction
+    ) internal returns (gtUint256) {
+        return MpcCore.mux(
+            noBorrow,
+            MpcCore.sub(
+                MpcCore.add(MpcCore.setPublic256(SCALE), currentFraction),
+                previousFraction
+            ),
+            MpcCore.sub(currentFraction, previousFraction)
+        );
+    }
+
+    function _recycleZeroBalanceCarry(
+        address owner,
+        gtUint256 nextSupply
+    ) internal {
+        gtUint256 zero = MpcCore.setPublic256(uint256(0));
+        gtBool balanceIsZero = MpcCore.eq(_getBalance(owner), zero);
+        for (uint8 side = 0; side < 2; side++) {
+            gtUint256 carry = _read(holderCarryState[owner][side]);
+            gtUint256 recycled = MpcCore.mux(balanceIsZero, zero, carry);
+            holderCarryState[owner][side] = MpcCore.offBoard(
+                MpcCore.mux(balanceIsZero, carry, zero)
+            );
+            globalRemainderState[side] = MpcCore.offBoard(
+                _addChecked(_read(globalRemainderState[side]), recycled)
+            );
+            _redistributeGlobalRemainder(side, nextSupply, owner);
+        }
+    }
+
+    function _redistributeGlobalRemainder(
+        uint8 side,
+        gtUint256 supply,
+        address zeroSupplyBeneficiary
+    ) internal {
+        gtUint256 zero = MpcCore.setPublic256(uint256(0));
+        gtUint256 one = MpcCore.setPublic256(uint256(1));
+        gtUint256 scale = MpcCore.setPublic256(SCALE);
+        gtUint256 unallocated = _read(globalRemainderState[side]);
+        gtBool supplyPositive = MpcCore.gt(supply, uint256(0));
+        gtUint256 safeSupply = MpcCore.mux(supplyPositive, one, supply);
+        gtUint256 positiveIncrement = MpcCore.div(unallocated, safeSupply);
+        gtUint256 positiveRemainder = MpcCore.rem(unallocated, safeSupply);
+        gtUint256 terminalWhole = MpcCore.div(unallocated, scale);
+        gtUint256 terminalRemainder = MpcCore.rem(unallocated, scale);
+        gtUint256 fractionIncrement = MpcCore.mux(
+            supplyPositive,
+            zero,
+            positiveIncrement
+        );
+        gtUint256 nextRemainder = MpcCore.mux(
+            supplyPositive,
+            terminalRemainder,
+            positiveRemainder
+        );
+        gtUint256 terminalClaim = MpcCore.mux(
+            supplyPositive,
+            terminalWhole,
+            zero
+        );
+        globalRemainderState[side] = MpcCore.offBoard(nextRemainder);
+        claimableState[zeroSupplyBeneficiary][side] = MpcCore.offBoard(
+            _addChecked(
+                _read(claimableState[zeroSupplyBeneficiary][side]),
+                terminalClaim
+            )
+        );
+
+        gtUint256 combinedFraction = _addChecked(
+            _read(feeGrowthFractionState[side]),
+            fractionIncrement
+        );
+        gtUint256 nextWhole = _addChecked(
+            _read(feeGrowthWholeState[side]),
+            MpcCore.div(combinedFraction, SCALE)
+        );
+        gtUint256 lifetime = _read(lifetimeAccruedState[side]);
+        if (!MpcCore.decrypt(MpcCore.le(nextWhole, lifetime))) {
+            revert InvalidPrivateAccountingAmount();
+        }
+        feeGrowthWholeState[side] = MpcCore.offBoard(nextWhole);
+        feeGrowthFractionState[side] = MpcCore.offBoard(
+            MpcCore.rem(combinedFraction, SCALE)
+        );
     }
 
     function _requireUnlocked(address owner, gtUint256 amount) internal {
@@ -430,6 +555,15 @@ contract PrivateLPAccountingProbe {
         ctUint256 otherClaim0,
         ctUint256 otherClaim1,
         ctUint256 callerAllowance
+    );
+
+    event PrivateLPAccountingCarrySnapshot(
+        address indexed caller,
+        address indexed holder,
+        uint8 indexed side,
+        ctUint256 balance,
+        ctUint256 carry,
+        ctUint256 claimValue
     );
 
     event LockedPrivatePrincipalDiagnostic(
@@ -578,6 +712,22 @@ contract PrivateLPAccountingProbe {
             MpcCore.offBoardToUser(otherClaim0, msg.sender),
             MpcCore.offBoardToUser(otherClaim1, msg.sender),
             MpcCore.offBoardToUser(callerAllowance, msg.sender)
+        );
+    }
+
+    function requestCarrySnapshot(address holder, uint8 side) external {
+        (
+            gtUint256 balance,
+            gtUint256 carry,
+            gtUint256 claimValue
+        ) = lpToken.diagnosticCarryState(holder, side);
+        emit PrivateLPAccountingCarrySnapshot(
+            msg.sender,
+            holder,
+            side,
+            MpcCore.offBoardToUser(balance, msg.sender),
+            MpcCore.offBoardToUser(carry, msg.sender),
+            MpcCore.offBoardToUser(claimValue, msg.sender)
         );
     }
 

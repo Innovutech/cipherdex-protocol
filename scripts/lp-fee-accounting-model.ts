@@ -290,8 +290,10 @@ export class FungibleLpFeeModel {
       requireRange(amount, 1n, MAX_TOTAL_SHARES, "mint amount");
       this.settle(account);
       if (this.total + amount > MAX_TOTAL_SHARES) throw new Error("total shares exceed the proved cap");
+      const wasEmpty = this.total === 0n;
       this.ensureHolder(account).balance += amount;
       this.total += amount;
+      if (wasEmpty) this.redistributeAllGlobalRemainders();
     });
   }
 
@@ -303,6 +305,7 @@ export class FungibleLpFeeModel {
       this.requireUnlocked(account, amount);
       this.ensureHolder(account).balance -= amount;
       this.total -= amount;
+      this.recycleCarryIfEmpty(account);
       if (this.total === 0n) this.generation += 1n;
     });
   }
@@ -546,6 +549,63 @@ export class FungibleLpFeeModel {
     }
   }
 
+  private recycleCarryIfEmpty(account: string): void {
+    const holder = this.ensureHolder(account);
+    if (holder.balance !== 0n) return;
+    for (const side of [0, 1] as const) {
+      const carry = holder.carry[side];
+      holder.carry[side] = 0n;
+      this.sides[side].globalRemainder = checkedAdd(
+        this.sides[side].globalRemainder,
+        carry,
+        "global unallocated carry",
+      );
+      this.redistributeGlobalRemainder(side, account);
+    }
+  }
+
+  private redistributeAllGlobalRemainders(): void {
+    for (const side of [0, 1] as const) this.redistributeGlobalRemainder(side);
+  }
+
+  private redistributeGlobalRemainder(side: FeeSide, zeroSupplyBeneficiary?: string): void {
+    const state = this.sides[side];
+    const unallocated = state.globalRemainder;
+    if (unallocated === 0n) return;
+    if (this.total === 0n) {
+      if (!zeroSupplyBeneficiary) return;
+      const terminalWhole = unallocated / FEE_GROWTH_SCALE;
+      state.globalRemainder = unallocated % FEE_GROWTH_SCALE;
+      const holder = this.ensureHolder(zeroSupplyBeneficiary);
+      holder.claimable[side] = checkedAdd(
+        holder.claimable[side],
+        terminalWhole,
+        "terminal holder claim",
+      );
+      return;
+    }
+
+    const fractionIncrement = unallocated / this.total;
+    state.globalRemainder = unallocated % this.total;
+    if (fractionIncrement === 0n) return;
+    const combinedFraction = checkedAdd(
+      state.growth.fraction,
+      fractionIncrement,
+      "recycled fractional growth",
+    );
+    state.growth = {
+      whole: checkedAdd(
+        state.growth.whole,
+        combinedFraction / FEE_GROWTH_SCALE,
+        "recycled whole growth",
+      ),
+      fraction: combinedFraction % FEE_GROWTH_SCALE,
+    };
+    if (state.growth.whole > state.lifetimeAccrued) {
+      throw new Error("recycled per-share growth exceeds lifetime fees");
+    }
+  }
+
   private move(sender: string, recipient: string, amount: bigint): void {
     requireRange(amount, 1n, MAX_TOTAL_SHARES, "transfer amount");
     if (sender === recipient) throw new Error("self transfer");
@@ -554,6 +614,7 @@ export class FungibleLpFeeModel {
     this.requireUnlocked(sender, amount);
     this.ensureHolder(sender).balance -= amount;
     this.ensureHolder(recipient).balance += amount;
+    this.recycleCarryIfEmpty(sender);
   }
 
   private requireUnlocked(account: string, amount: bigint): void {

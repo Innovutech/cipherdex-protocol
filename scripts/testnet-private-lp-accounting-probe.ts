@@ -40,15 +40,19 @@ const execFileAsync = promisify(execFile);
 const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const EXPECTED_CHAIN_ID = 7_082_400n;
 const GAS_LIMIT = 30_000_000n;
+const SCALE = 1n << 128n;
+const BRANCH_CASE_FEE = 3n;
+const CARRY_RECYCLE_FEE = 1n;
+const FEE0_TOTAL = BRANCH_CASE_FEE + CARRY_RECYCLE_FEE;
+const FEE1_TOTAL = 0n;
+// Retained for the prior Phase 2B recovery path below. The Phase 2C clean-run path
+// returns before those historical lifecycle steps execute.
 const LOCK_SECONDS = 15;
 const TOTAL_SHARES = 1_000n;
 const DIRECT_TRANSFER = 300n;
 const DELEGATED_TRANSFER = 200n;
 const LOCKED_SHARES = 400n;
 const MAIN_FEE0_TOTAL = 3_000n;
-const FEE1_TOTAL = 3_000n;
-const REMAINDER_EDGE_FEE_TOTAL = 3n;
-const FEE0_TOTAL = MAIN_FEE0_TOTAL + REMAINDER_EDGE_FEE_TOTAL;
 
 let stage = "configuration";
 let recoveryJournal: FundedRecoveryJournal | undefined;
@@ -93,6 +97,11 @@ type LockDiagnostic = Readonly<{
   expectedSelector: string;
   actualSelector: string;
   revertDataHash: string;
+  transaction: Submitted;
+}>;
+
+type CarrySnapshot = Readonly<{
+  values: readonly [bigint, bigint, bigint];
   transaction: Submitted;
 }>;
 
@@ -428,6 +437,40 @@ async function diagnosticSnapshot(
   });
 }
 
+async function carrySnapshot(
+  context: ProbeContext,
+  holder: string,
+  side: 0 | 1,
+  label: string,
+): Promise<CarrySnapshot> {
+  const transaction = await submit(label, () => context.probe.requestCarrySnapshot(
+    holder,
+    side,
+    { gasLimit: GAS_LIMIT },
+  ));
+  const matches = transaction.receipt.logs.flatMap((log) => {
+    if (log.address.toLowerCase() !== context.probeAddress.toLowerCase()) return [];
+    try {
+      const parsed = context.probe.interface.parseLog(log);
+      return parsed?.name === "PrivateLPAccountingCarrySnapshot" ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  }).filter((event) =>
+    String(event.args.caller).toLowerCase() === context.primaryAddress.toLowerCase() &&
+    String(event.args.holder).toLowerCase() === holder.toLowerCase() &&
+    Number(event.args.side) === side
+  );
+  if (matches.length !== 1) throw new Error(`${label} event is missing or ambiguous`);
+  const event = matches[0]!;
+  const values = await Promise.all([
+    decryptPrivateValue256(context.primary, event.args.balance),
+    decryptPrivateValue256(context.primary, event.args.carry),
+    decryptPrivateValue256(context.primary, event.args.claimValue),
+  ]) as readonly [bigint, bigint, bigint];
+  return Object.freeze({ values, transaction });
+}
+
 async function lockedDiagnostic(
   context: ProbeContext,
   operation: "transfer" | "burn",
@@ -503,19 +546,19 @@ function requireConservation(
   ) throw new Error(`${label} conservation diverged`);
 }
 
-function buildSanitizedPhase2BEvidence(input: Readonly<{
+function buildSanitizedPhase2CEvidence(input: Readonly<{
   sourceCommit: string;
   chainId: number;
   context: ProbeContext;
-  transferDiagnostic: LockDiagnostic;
-  burnDiagnostic: LockDiagnostic;
+  transferDiagnostic?: LockDiagnostic;
+  burnDiagnostic?: LockDiagnostic;
   gas: Readonly<Record<string, string>>;
 }>): Readonly<Record<string, unknown>> {
   if (
     journal().runStatus !== "passed" ||
     journal().activeResources.length !== 0 ||
     journal().activeAllowanceObligations.length !== 0
-  ) throw new Error("Phase 2B evidence requires terminal journal cleanup");
+  ) throw new Error("Phase 2C evidence requires terminal journal cleanup");
   const journalTransactions = journal().transactions;
   if (
     journalTransactions.length !== submittedTransactions.length ||
@@ -526,7 +569,7 @@ function buildSanitizedPhase2BEvidence(input: Readonly<{
         recorded.status !== "mined-success" ||
         recorded.blockNumber !== transaction.blockNumber;
     })
-  ) throw new Error("Phase 2B evidence diverges from the authenticated recovery journal");
+  ) throw new Error("Phase 2C evidence diverges from the authenticated recovery journal");
   const journalProjection = {
     runner: journal().identity.runner,
     sourceCommit: journal().identity.sourceCommit,
@@ -559,8 +602,8 @@ function buildSanitizedPhase2BEvidence(input: Readonly<{
     ethersLibrary.toUtf8Bytes(JSON.stringify(journalProjection)),
   );
   const evidence = Object.freeze({
-    schema: "cipherdex.phase2b-private-lp-funded-evidence/v1",
-    runner: "phase2b-private-lp-accounting",
+    schema: "cipherdex.phase2c-private-lp-funded-evidence/v1",
+    runner: "phase2c-private-lp-accounting",
     sourceCommit: input.sourceCommit,
     chainId: input.chainId,
     runnerSourceSha256: createHash("sha256")
@@ -575,30 +618,13 @@ function buildSanitizedPhase2BEvidence(input: Readonly<{
       underlyingToken1: input.context.token1Address,
     }),
     transactions: Object.freeze([...submittedTransactions]),
-    lockRejections: Object.freeze([
-      Object.freeze({
-        operation: input.transferDiagnostic.operation,
-        transactionHash: input.transferDiagnostic.transaction.hash,
-        expectedSelector: input.transferDiagnostic.expectedSelector,
-        actualSelector: input.transferDiagnostic.actualSelector,
-        revertDataHash: input.transferDiagnostic.revertDataHash,
-      }),
-      Object.freeze({
-        operation: input.burnDiagnostic.operation,
-        transactionHash: input.burnDiagnostic.transaction.hash,
-        expectedSelector: input.burnDiagnostic.expectedSelector,
-        actualSelector: input.burnDiagnostic.actualSelector,
-        revertDataHash: input.burnDiagnostic.revertDataHash,
-      }),
-    ]),
     assertions: Object.freeze({
-      exactLockedPrincipalSelector: true,
-      diagnosticStateUnchanged: true,
-      nonzeroGlobalRemainderObserved: true,
-      rollingGlobalRemainderResolved: true,
-      directAndDelegatedTransfersSettled: true,
-      feesWhileLockedClaimed: true,
-      postExitClaimsPreserved: true,
+      branchlessNoBorrowSettlement: true,
+      branchlessBorrowSettlement: true,
+      successfulSettlementControlFlowIsMuxed: true,
+      zeroBalanceCarryRecycled: true,
+      recycledCarryRedistributedWithoutHolderLoop: true,
+      zeroSupplyGlobalValueBounded: true,
       reinitializationCheckpointIsolated: true,
       exactFundedBalancesRestored: true,
       zeroFinalCustody: true,
@@ -612,9 +638,9 @@ function buildSanitizedPhase2BEvidence(input: Readonly<{
   });
   const serialized = JSON.stringify(evidence);
   if (
-    /"(?:privateKey|aesKey|signedTransaction|ciphertext|encryptedInput|decryptedAmount|privateBalance)"\s*:/iu
+    /"(?:privateKey|aesKey|signedTransaction|ciphertext|signature|encryptedInput|decryptedAmount|privateAmount|privateBalance)"\s*:/iu
       .test(serialized)
-  ) throw new Error("Phase 2B evidence contains a forbidden private field");
+  ) throw new Error("Phase 2C evidence contains a forbidden private field");
   return evidence;
 }
 
@@ -886,22 +912,245 @@ async function main(): Promise<void> {
     overrides: { gasLimit: GAS_LIMIT },
     submit,
   });
-  await setRecoverablePrivateAllowance({
-    journal: journal(),
-    wallet: primary,
-    token: token1Primary,
-    tokenAddress: configuredToken1,
-    spender: probeAddress,
-    amount: FEE1_TOTAL,
-    label: "private LP probe token1 approval",
-    overrides: { gasLimit: GAS_LIMIT },
-    submit,
-  });
-
   const gas: Record<string, string> = {
     probeDeployment: probeDeployment.transaction.gasUsed.toString(),
     spenderDeployment: spenderDeployment.transaction.gasUsed.toString(),
   };
+
+  {
+  const phase2cSecondProbe = context.probe.connect(second) as Contract;
+  const branchMintInput = await encryptFor(primary, 3n, context.probe, "mintShares");
+  gas.branchMint = (
+    await submit(
+      "mint branchless-settlement shares",
+      () => context.probe.mintShares(branchMintInput, { gasLimit: GAS_LIMIT }),
+    )
+  ).gasUsed.toString();
+  gas.branchAccrueNoBorrow = (
+    await accrue(context, 0, 1n, "accrue no-borrow settlement fee")
+  ).gasUsed.toString();
+  const noBorrowSnapshot = await carrySnapshot(
+    context,
+    primaryAddress,
+    0,
+    "settle branchless no-borrow case",
+  );
+  gas.branchSettleNoBorrow = noBorrowSnapshot.transaction.gasUsed.toString();
+  if (
+    noBorrowSnapshot.values[0] !== 3n ||
+    noBorrowSnapshot.values[1] !== SCALE - 1n ||
+    noBorrowSnapshot.values[2] !== 0n
+  ) throw new Error("branchless no-borrow settlement diverged");
+
+  gas.branchAccrueBorrow = (
+    await accrue(context, 0, 2n, "accrue borrow settlement fee")
+  ).gasUsed.toString();
+  const borrowSnapshot = await carrySnapshot(
+    context,
+    primaryAddress,
+    0,
+    "settle branchless borrow case",
+  );
+  gas.branchSettleBorrow = borrowSnapshot.transaction.gasUsed.toString();
+  if (
+    borrowSnapshot.values[0] !== 3n ||
+    borrowSnapshot.values[1] !== 0n ||
+    borrowSnapshot.values[2] !== 3n
+  ) throw new Error("branchless borrow settlement diverged");
+  const branchBalanceBefore = await privateBalance(
+    token0Primary,
+    primary,
+    primaryAddress,
+  );
+  gas.branchClaim = (
+    await claim(context, primary, 0, "consume branchless settlement claim")
+  ).gasUsed.toString();
+  if (
+    await privateBalance(token0Primary, primary, primaryAddress) !==
+      branchBalanceBefore + BRANCH_CASE_FEE
+  ) throw new Error("branchless settlement claim was not exact");
+  const branchBurn = await burnShares(
+    context,
+    primary,
+    3n,
+    "burn branchless-settlement shares",
+  );
+  gas.branchBurn = branchBurn!.gasUsed.toString();
+  const branchConservation = await conservation(
+    context,
+    0,
+    "read branchless-settlement conservation",
+  );
+  gas.branchConservation = branchConservation.transaction.gasUsed.toString();
+  requireConservation(branchConservation.values, 0n, 0n, "branchless settlement");
+
+  const carryPrimaryMintInput = await encryptFor(
+    primary,
+    2n,
+    context.probe,
+    "mintShares",
+  );
+  gas.carryMintPrimary = (
+    await submit(
+      "mint carry-recycling primary shares",
+      () => context.probe.mintShares(
+        carryPrimaryMintInput,
+        { gasLimit: GAS_LIMIT },
+      ),
+    )
+  ).gasUsed.toString();
+  const carrySecondMintInput = await encryptFor(
+    second,
+    1n,
+    phase2cSecondProbe,
+    "mintShares",
+  );
+  gas.carryMintSecond = (
+    await submit(
+      "mint carry-recycling second shares",
+      () => phase2cSecondProbe.mintShares(
+        carrySecondMintInput,
+        { gasLimit: GAS_LIMIT },
+      ),
+    )
+  ).gasUsed.toString();
+  gas.carryAccrue = (
+    await accrue(context, 0, CARRY_RECYCLE_FEE, "accrue carry-recycling fee")
+  ).gasUsed.toString();
+  gas.carryBurnSecond = (
+    await burnShares(
+      context,
+      second,
+      1n,
+      "burn zero-balance holder and recycle carry",
+    )
+  )!.gasUsed.toString();
+  const exitedCarrySnapshot = await carrySnapshot(
+    context,
+    secondAddress,
+    0,
+    "read recycled zero-balance holder carry",
+  );
+  gas.carryReadExited = exitedCarrySnapshot.transaction.gasUsed.toString();
+  if (
+    exitedCarrySnapshot.values[0] !== 0n ||
+    exitedCarrySnapshot.values[1] !== 0n ||
+    exitedCarrySnapshot.values[2] !== 0n
+  ) throw new Error("zero-balance holder retained dormant carry");
+  const activeCarrySnapshot = await carrySnapshot(
+    context,
+    primaryAddress,
+    0,
+    "read redistributed active-holder carry",
+  );
+  gas.carryReadActive = activeCarrySnapshot.transaction.gasUsed.toString();
+  if (
+    activeCarrySnapshot.values[0] !== 2n ||
+    activeCarrySnapshot.values[1] !== 0n ||
+    activeCarrySnapshot.values[2] !== CARRY_RECYCLE_FEE
+  ) throw new Error("recycled carry was not redistributed exactly");
+  const carryConservation = await conservation(
+    context,
+    0,
+    "read carry-recycling conservation",
+  );
+  gas.carryConservation = carryConservation.transaction.gasUsed.toString();
+  requireConservation(
+    carryConservation.values,
+    CARRY_RECYCLE_FEE,
+    2n,
+    "carry recycling",
+  );
+  const carryBalanceBefore = await privateBalance(
+    token0Primary,
+    primary,
+    primaryAddress,
+  );
+  gas.carryClaim = (
+    await claim(context, primary, 0, "consume recycled carry claim")
+  ).gasUsed.toString();
+  if (
+    await privateBalance(token0Primary, primary, primaryAddress) !==
+      carryBalanceBefore + CARRY_RECYCLE_FEE
+  ) throw new Error("recycled carry claim was not exact");
+  gas.carryBurnPrimary = (
+    await burnShares(
+      context,
+      primary,
+      2n,
+      "burn final carry-recycling shares",
+    )
+  )!.gasUsed.toString();
+
+  const reinitInput = await encryptFor(
+    second,
+    1n,
+    phase2cSecondProbe,
+    "mintShares",
+  );
+  gas.reinitialize = (
+    await submit(
+      "reinitialize after recycled-carry generation",
+      () => phase2cSecondProbe.mintShares(reinitInput, { gasLimit: GAS_LIMIT }),
+    )
+  ).gasUsed.toString();
+  const reinitSnapshot = await carrySnapshot(
+    context,
+    secondAddress,
+    0,
+    "read reinitialized holder carry",
+  );
+  gas.reinitializeRead = reinitSnapshot.transaction.gasUsed.toString();
+  if (
+    reinitSnapshot.values[0] !== 1n ||
+    reinitSnapshot.values[1] !== 0n ||
+    reinitSnapshot.values[2] !== 0n
+  ) throw new Error("reinitialized holder inherited allocated history");
+  const reinitBurn = await burnShares(
+    context,
+    second,
+    1n,
+    "burn reinitialized carry-recycling generation",
+  );
+  gas.reinitializeBurn = reinitBurn!.gasUsed.toString();
+
+  await recoverPrivateAllowanceObligations({
+    journal: journal(),
+    wallets: [primary, second],
+    overrides: { gasLimit: GAS_LIMIT },
+    submit,
+  });
+  const [primaryToken0Final, primaryToken1Final, secondToken0Final, secondToken1Final] =
+    await Promise.all([
+      privateBalance(token0Primary, primary, primaryAddress),
+      privateBalance(token1Primary, primary, primaryAddress),
+      privateBalance(token0Second, second, secondAddress),
+      privateBalance(token1Second, second, secondAddress),
+    ]);
+  if (
+    primaryToken0Final !== primaryToken0Initial ||
+    primaryToken1Final !== primaryToken1Initial ||
+    secondToken0Final !== secondToken0Initial ||
+    secondToken1Final !== secondToken1Initial
+  ) throw new Error("Phase 2C funded private-token balances were not restored exactly");
+  const final0 = await conservation(context, 0, "read final Phase 2C token0 conservation");
+  const final1 = await conservation(context, 1, "read final Phase 2C token1 conservation");
+  gas.conservationFinal0 = final0.transaction.gasUsed.toString();
+  gas.conservationFinal1 = final1.transaction.gasUsed.toString();
+  requireConservation(final0.values, 0n, 0n, "final Phase 2C token0");
+  requireConservation(final1.values, 0n, 0n, "final Phase 2C token1");
+
+  journal().markRecovered("private-lp-accounting-probe", [reinitBurn!.hash]);
+  journal().markRun("passed");
+  const phase2cEvidence = buildSanitizedPhase2CEvidence({
+    sourceCommit,
+    chainId: Number(network.chainId),
+    context,
+    gas,
+  });
+  console.log(`phase2cFundedEvidence=${JSON.stringify(phase2cEvidence)}`);
+  return;
+  }
 
   const edgeMintPrimaryInput = await encryptFor(
     primary,
@@ -1047,7 +1296,7 @@ async function main(): Promise<void> {
 
   const block = await ethers.provider.getBlock("latest");
   if (!block) throw new Error("latest COTI testnet block is unavailable");
-  const unlockAt = BigInt(block.timestamp + LOCK_SECONDS);
+  const unlockAt = BigInt(block!.timestamp + LOCK_SECONDS);
   const lockId = ethersLibrary.keccak256(
     ethersLibrary.AbiCoder.defaultAbiCoder().encode(
       ["address", "address", "uint256"],
@@ -1270,7 +1519,7 @@ async function main(): Promise<void> {
 
   journal().markRecovered("private-lp-accounting-probe", [reinitBurn!.hash]);
   journal().markRun("passed");
-  const evidence = buildSanitizedPhase2BEvidence({
+  const evidence = buildSanitizedPhase2CEvidence({
     sourceCommit,
     chainId: Number(network.chainId),
     context,

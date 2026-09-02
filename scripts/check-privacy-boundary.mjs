@@ -20,6 +20,7 @@ const contractsDirectory = fileURLToPath(new URL("../contracts/", import.meta.ur
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const files = await solidityFiles(contractsDirectory);
 const productionSources = new Map();
+const disposablePrivacyPatternSources = new Map();
 const PRIVATE_AMOUNT_PATTERN = /amount|reserve|share|value|input|output|price|tvl/i;
 const REVIEWED_OBSERVABLE_DISCLOSURE_EVENTS = new Set([
   "eventPublicPriceObservation(uint64indexedsequence,uint256priceBucketX18,uint64observedAt,uint64publishedAt,uint32activityCount,uint256quantumX18,boolinitial);",
@@ -35,6 +36,9 @@ for (const file of files) {
   const rawSource = await readFile(file, "utf8");
   if (!file.replaceAll("\\", "/").includes("/contracts/mocks/")) {
     productionSources.set(file, rawSource);
+  }
+  if (file.replaceAll("\\", "/").endsWith("/contracts/mocks/PrivateLPAccountingProbe.sol")) {
+    disposablePrivacyPatternSources.set(file, rawSource);
   }
   const source = maskSourceCommentsAndLiterals(rawSource);
   const confidentialSurface = /(?:Confidential|IConfidential)/i.test(file);
@@ -145,6 +149,16 @@ async function sourceClosureMatches(buildInfo) {
 
 const assignments = new Map();
 let mpcCompilationCount = 0;
+const compiledPrivacySources = new Map([
+  ...productionSources,
+  ...disposablePrivacyPatternSources,
+]);
+const privacyContractFilters = new Map([
+  [
+    "contracts/mocks/PrivateLPAccountingProbe.sol",
+    new Set(["PrivateLPAccountingProbeToken"]),
+  ],
+]);
 for (const { name } of buildInfoFiles) {
   const buildInfo = JSON.parse(await readFile(join(buildInfoDirectory, name), "utf8"));
   const outputName = name.replace(/\.json$/, ".output.json");
@@ -162,7 +176,7 @@ for (const { name } of buildInfoFiles) {
     ]),
   );
   const targetPaths = [];
-  for (const [file, source] of productionSources) {
+  for (const [file, source] of compiledPrivacySources) {
     const path = relative(repositoryRoot, file).replaceAll("\\", "/");
     const compilerPath = buildInfo.userSourceNameMap?.[path] ?? `project/${path}`;
     if (
@@ -181,14 +195,18 @@ for (const { name } of buildInfoFiles) {
       ),
     );
     const count = includesMpcCore
-      ? assertCompiledPrivacyDecryptBoundary(normalizedOutputSources, targetPaths)
+      ? assertCompiledPrivacyDecryptBoundary(
+          normalizedOutputSources,
+          targetPaths,
+          privacyContractFilters,
+        )
       : 0;
     if (includesMpcCore) mpcCompilationCount += 1;
     assignments.set(`${name}:plaintext-count`, count);
   }
 }
 
-const expectedPaths = [...productionSources.keys()].map((file) =>
+const expectedPaths = [...compiledPrivacySources.keys()].map((file) =>
   relative(repositoryRoot, file).replaceAll("\\", "/")
 );
 const missingAsts = expectedPaths.filter((path) => !assignments.has(path));

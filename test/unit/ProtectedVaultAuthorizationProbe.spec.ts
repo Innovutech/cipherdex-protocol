@@ -17,6 +17,8 @@ describe("disposable protected-vault authorization probe", function () {
       { name: "issuer", type: "address" },
       { name: "vault", type: "address" },
       { name: "disposition", type: "uint8" },
+      { name: "lpRecipient", type: "address" },
+      { name: "unlockTime", type: "uint64" },
       { name: "authorizationId", type: "bytes32" },
       { name: "deadline", type: "uint64" },
     ],
@@ -43,12 +45,15 @@ describe("disposable protected-vault authorization probe", function () {
     const network = await ethers.provider.getNetwork();
     const block = await ethers.provider.getBlock("latest");
     const deadline = BigInt(block!.timestamp + 3_600);
+    const unlockTime = BigInt(block!.timestamp + 86_400);
     const terms = {
       tokenA: await protectedToken.getAddress(),
       tokenB: await pairedToken.getAddress(),
       feeBps: 30n,
       protectedToken: await protectedToken.getAddress(),
       disposition: 1,
+      lpRecipient: vault.address,
+      unlockTime,
     } as const;
     return {
       issuerOwner,
@@ -89,6 +94,8 @@ describe("disposable protected-vault authorization probe", function () {
       issuer: string;
       vault: string;
       disposition: number;
+      lpRecipient: string;
+      unlockTime: bigint;
       deadline: bigint;
     }> = {},
   ): Promise<string> {
@@ -110,6 +117,8 @@ describe("disposable protected-vault authorization probe", function () {
       issuer: overrides.issuer ?? context.issuerAddress,
       vault: overrides.vault ?? context.vault.address,
       disposition: overrides.disposition ?? context.terms.disposition,
+      lpRecipient: overrides.lpRecipient ?? context.terms.lpRecipient,
+      unlockTime: overrides.unlockTime ?? context.terms.unlockTime,
       authorizationId,
       deadline: overrides.deadline ?? context.deadline,
     });
@@ -174,7 +183,7 @@ describe("disposable protected-vault authorization probe", function () {
       .to.emit(context.probe, "StaticAuthorizationConsumed");
   });
 
-  it("binds vault, factory, mode, pair, tier, token, disposition and EIP-712 domain", async function () {
+  it("binds vault, factory, mode, pair, tier, token, complete disposition and domain", async function () {
     const context = await fixture();
     const id = ethers.id("bound-launch");
     const mutations = [
@@ -189,6 +198,8 @@ describe("disposable protected-vault authorization probe", function () {
       { protectedToken: context.terms.tokenB },
       { issuer: context.other.address },
       { disposition: 2 },
+      { lpRecipient: context.other.address },
+      { unlockTime: context.terms.unlockTime + 1n },
       { chainId: context.network.chainId + 1n },
       { verifyingContract: context.other.address },
     ] as const;
@@ -197,6 +208,56 @@ describe("disposable protected-vault authorization probe", function () {
         .to.be.revertedWithCustomError(context.probe, "InvalidIssuerAuthorization");
     }
     expect(await context.probe.consumedAuthorizationId(context.issuerAddress, id)).to.equal(false);
+  });
+
+  it("uses the signed vault recipient and timed unlock without unsigned overrides", async function () {
+    const context = await fixture();
+    const id = ethers.id("signed-timed-lock");
+    await expect(execute(context, id, await sign(context, id)))
+      .to.emit(context.probe, "StaticAuthorizationConsumed")
+      .withArgs(
+        context.issuerAddress,
+        context.vault.address,
+        context.terms.protectedToken,
+        id,
+        await context.probe.authorizationDigest(
+          context.terms,
+          context.vault.address,
+          id,
+          context.deadline,
+        ),
+        context.terms.disposition,
+        context.vault.address,
+        context.terms.unlockTime,
+      );
+
+    const alternateId = ethers.id("signed-alternate-recipient");
+    const alternateTerms = { ...context.terms, lpRecipient: context.other.address };
+    const alternateContext = { ...context, terms: alternateTerms };
+    await expect(execute(
+      alternateContext,
+      alternateId,
+      await sign(alternateContext, alternateId),
+    )).to.emit(context.probe, "StaticAuthorizationConsumed");
+  });
+
+  it("rejects incomplete or inconsistent public disposition terms", async function () {
+    const context = await fixture();
+    const id = ethers.id("invalid-disposition-terms");
+    const cases = [
+      { ...context.terms, disposition: 0, unlockTime: context.terms.unlockTime },
+      { ...context.terms, disposition: 2, unlockTime: context.terms.unlockTime },
+      { ...context.terms, disposition: 3, unlockTime: 0n },
+      { ...context.terms, lpRecipient: ethers.ZeroAddress },
+    ] as const;
+    for (const terms of cases) {
+      await expect(context.probe.authorizationDigest(
+        terms,
+        context.vault.address,
+        id,
+        context.deadline,
+      )).to.be.revertedWithCustomError(context.probe, "InvalidStaticTerms");
+    }
   });
 
   it("rejects wrong caller, zero ID, expiry and protected token outside the pair", async function () {

@@ -172,6 +172,106 @@ describe("fungible LP fee-accounting reference model", function () {
       .to.equal(audit.fractionalLiabilityScaled);
   });
 
+  it("reproduces the aggregate dormant-carry defect and eliminates it on exit", function () {
+    const holderCount = 257n;
+    const fee = holderCount - 1n;
+    const advanced = advanceFeeGrowth({
+      growth: { whole: 0n, fraction: 0n },
+      globalRemainder: 0n,
+      lifetimeAccrued: 0n,
+    }, fee, holderCount);
+    let legacyDormantCarry = 0n;
+    for (let index = 0n; index < holderCount; index += 1n) {
+      const settled = settleFeeGrowth(
+        1n,
+        { whole: 0n, fraction: 0n },
+        0n,
+        advanced.growth,
+      );
+      expect(settled.newClaim).to.equal(0n);
+      legacyDormantCarry += settled.carry;
+    }
+    expect(legacyDormantCarry + advanced.globalRemainder)
+      .to.equal(fee * FEE_GROWTH_SCALE);
+    expect(legacyDormantCarry / FEE_GROWTH_SCALE).to.be.greaterThan(1n);
+
+    const accounting = model();
+    const holders = Array.from({ length: Number(holderCount) }, (_, index) => `churn-${index}`);
+    for (const holder of holders) accounting.mint(pool, holder, 1n);
+    accounting.recordSwapFees(pool, 0, 0n, 0n, fee);
+    for (const holder of holders) accounting.burn(pool, holder, 1n);
+    for (const holder of holders) {
+      expect(accounting.balanceOf(holder)).to.equal(0n);
+      expect(accounting.carryOf(holder, 0)).to.equal(0n);
+    }
+    const audit = accounting.audit(0);
+    expect(audit.outstanding * FEE_GROWTH_SCALE + audit.unallocatedGlobalRemainder)
+      .to.equal(fee * FEE_GROWTH_SCALE);
+    expect(audit.unallocatedGlobalRemainder).to.be.lessThan(FEE_GROWTH_SCALE);
+  });
+
+  it("retains carry on partial transfer and recycles it on full transfer", function () {
+    const accounting = model();
+    accounting.mint(pool, alice, 2n);
+    accounting.mint(pool, bob, 1n);
+    accounting.recordSwapFees(pool, 0, 0n, 0n, 1n);
+
+    accounting.transfer(alice, bob, 1n);
+    expect(accounting.balanceOf(alice)).to.equal(1n);
+    expect(accounting.carryOf(alice, 0)).to.be.greaterThan(0n);
+    accounting.transfer(alice, bob, 1n);
+    expect(accounting.balanceOf(alice)).to.equal(0n);
+    expect(accounting.carryOf(alice, 0)).to.equal(0n);
+    expect(accounting.consumeClaim(pool, bob, 0)).to.equal(1n);
+    expect(accounting.audit(0).liability).to.equal(0n);
+  });
+
+  it("recycles burn carry without changing reserves, protocol fees or liability", function () {
+    const accounting = model();
+    accounting.mint(pool, alice, 2n);
+    accounting.mint(pool, bob, 1n);
+    accounting.creditPrincipal(pool, 0, 10n);
+    accounting.recordSwapFees(pool, 0, 7n, 3n, 1n);
+    const before = accounting.audit(0);
+
+    accounting.burn(pool, bob, 1n);
+    expect(accounting.carryOf(bob, 0)).to.equal(0n);
+    const after = accounting.audit(0);
+    expect(after.activeReserve).to.equal(before.activeReserve);
+    expect(after.protocolFees).to.equal(before.protocolFees);
+    expect(after.liability).to.equal(before.liability);
+    expect(accounting.consumeClaim(pool, alice, 0)).to.equal(1n);
+  });
+
+  it("does not recycle carry on claim while the holder still owns shares", function () {
+    const accounting = model();
+    accounting.mint(pool, alice, 3n);
+    accounting.recordSwapFees(pool, 0, 0n, 0n, 1n);
+    const carry = accounting.carryOf(alice, 0);
+    expect(carry).to.be.greaterThan(0n);
+    expect(accounting.consumeClaim(pool, alice, 0)).to.equal(0n);
+    expect(accounting.carryOf(alice, 0)).to.equal(carry);
+  });
+
+  it("bounds recycled value across repeated zero-supply generations", function () {
+    const accounting = model();
+    let accrued = 0n;
+    for (let generation = 0; generation < 100; generation += 1) {
+      accounting.mint(pool, alice, 2n);
+      accounting.mint(pool, bob, 1n);
+      accounting.recordSwapFees(pool, 0, 0n, 0n, 1n);
+      accrued += 1n;
+      accounting.burn(pool, bob, 1n);
+      accounting.burn(pool, alice, 2n);
+      expect(accounting.carryOf(alice, 0)).to.equal(0n);
+      expect(accounting.carryOf(bob, 0)).to.equal(0n);
+      expect(accounting.globalRemainderOf(0)).to.be.lessThan(FEE_GROWTH_SCALE);
+    }
+    const audit = accounting.audit(0);
+    expect(audit.outstanding * FEE_GROWTH_SCALE + audit.unallocatedGlobalRemainder)
+      .to.equal(accrued * FEE_GROWTH_SCALE);
+  });
+
   it("keeps liabilities outside active reserves and protocol fees", function () {
     const accounting = model();
     accounting.mint(pool, alice, 100n);
@@ -216,6 +316,27 @@ describe("fungible LP fee-accounting reference model", function () {
     );
     expect(settled.newClaim).to.equal(UINT256_MAX);
     expect(settled.carry).to.equal(FEE_GROWTH_SCALE - 1n);
+  });
+
+  it("produces identical two-limb semantics for no-borrow and borrow settlement", function () {
+    const firstFraction = FEE_GROWTH_SCALE / 3n;
+    const noBorrow = settleFeeGrowth(
+      3n,
+      { whole: 0n, fraction: 0n },
+      0n,
+      { whole: 0n, fraction: firstFraction },
+    );
+    expect(noBorrow.newClaim).to.equal(0n);
+    expect(noBorrow.carry).to.equal(FEE_GROWTH_SCALE - 1n);
+
+    const borrow = settleFeeGrowth(
+      3n,
+      noBorrow.checkpoint,
+      noBorrow.carry,
+      { whole: 1n, fraction: 0n },
+    );
+    expect(borrow.newClaim).to.equal(3n);
+    expect(borrow.carry).to.equal(0n);
   });
 
   it("fails closed at lifetime or fabricated holder-product overflow", function () {

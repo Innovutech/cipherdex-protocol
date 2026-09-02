@@ -478,7 +478,11 @@ function assertBooleanControlFlowDeclassification(path, call, ancestors) {
   assertReviewedFullExitBoolean(path, call, ancestors);
 }
 
-export function assertCompiledPrivacyDecryptBoundary(compilationSources, targetPaths) {
+export function assertCompiledPrivacyDecryptBoundary(
+  compilationSources,
+  targetPaths,
+  contractFilters = new Map(),
+) {
   for (const path of targetPaths) {
     const ast = compilationSources[path]?.ast;
     if (!ast) throw new Error(`${path}: compiled Solidity AST is unavailable`);
@@ -489,6 +493,8 @@ export function assertCompiledPrivacyDecryptBoundary(compilationSources, targetP
   for (const path of targetPaths) {
     const ast = compilationSources[path]?.ast;
     walk(ast, (node, ancestors) => {
+      const filter = contractFilters.get(path);
+      if (filter && !filter.has(nearest(ancestors, "ContractDefinition")?.name)) return;
       if (!decryptIds.has(node.referencedDeclaration)) return;
       const parent = ancestors.at(-1);
       if (parent?.nodeType !== "FunctionCall" || parent.expression !== node) {
@@ -498,6 +504,8 @@ export function assertCompiledPrivacyDecryptBoundary(compilationSources, targetP
       }
     });
     walk(ast, (node, ancestors) => {
+      const filter = contractFilters.get(path);
+      if (filter && !filter.has(nearest(ancestors, "ContractDefinition")?.name)) return;
       if (
         node.nodeType !== "FunctionCall" ||
         !decryptIds.has(node.expression?.referencedDeclaration)

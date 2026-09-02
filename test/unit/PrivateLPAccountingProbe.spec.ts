@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { Interface } from "ethers";
+import { readFileSync } from "node:fs";
 
 import { artifacts, ethers } from "../../hardhat/runtime.js";
 
@@ -49,6 +50,12 @@ describe("disposable private LP-accounting probe", function () {
       probeInterface.getFunction("requestDiagnosticSnapshot"),
     ).to.not.equal(null);
     expect(
+      probeInterface.getFunction("requestCarrySnapshot"),
+    ).to.not.equal(null);
+    expect(
+      probeInterface.getEvent("PrivateLPAccountingCarrySnapshot"),
+    ).to.not.equal(null);
+    expect(
       probeInterface.getFunction("diagnoseLockedTransfer"),
     ).to.not.equal(null);
     expect(
@@ -72,5 +79,19 @@ describe("disposable private LP-accounting probe", function () {
     const tokenInterface = new Interface(tokenArtifact.abi);
     expect(tokenInterface.getFunction("onLPTransfer")).to.equal(null);
     expect(tokenInterface.getFunction("beforeTokenTransfer")).to.equal(null);
+  });
+
+  it("uses mux instead of amount-derived successful settlement branching", function () {
+    const source = readFileSync(
+      new URL("../../contracts/mocks/PrivateLPAccountingProbe.sol", import.meta.url),
+      "utf8",
+    );
+    expect(source).to.include("gtBool noBorrow = MpcCore.ge(currentFraction, previousFraction)");
+    expect(source).to.include("wholeDelta = MpcCore.mux(");
+    expect(source).to.include("fractionDelta = _selectFractionDelta(");
+    expect(source).to.include("return MpcCore.mux(");
+    expect(source).not.to.match(
+      /if\s*\(\s*MpcCore\.decrypt\(MpcCore\.ge\(currentFraction,\s*previousFraction\)\)\s*\)/u,
+    );
   });
 });

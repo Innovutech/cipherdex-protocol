@@ -143,8 +143,13 @@ It is consumed in the execution transaction and binds:
 
 `chainId, protectedInitializer, factory, protocolVersion, privacyMode, poolKind,
 ordered pair, feeBps, protectedToken, issuer, vault, LP disposition,
-issuer-chosen `authorizationId`,
-deadline`.
+LP recipient, timed-lock unlockTime, issuer-chosen authorizationId, deadline`.
+
+Direct and permanent dispositions require `unlockTime = 0`. A timed lock requires a
+future issuer-signed `unlockTime`. LP ownership defaults to the authorized caller;
+an alternate nonzero recipient is allowed only when that exact recipient is signed.
+The initializer consumes these signed terms directly and accepts no unsigned public
+disposition override.
 
 The signature does not bind future transaction-scoped GT values. At execution the
 authorized vault creates, supplies and funds its own GT. CipherDEX pulls only from
@@ -267,6 +272,11 @@ accrual that balance is no greater than total supply, so its whole entitlement i
 no greater than cumulative accrued fees. A fabricated unreachable product fails
 closed. The lifetime counter and whole accumulator use checked uint256 additions;
 new accrual stops before wrap, while transfer, burn and claim remain available.
+Modes 1/2 compute the fractional borrow predicate as encrypted MPC state and select
+both valid arithmetic outcomes with `MpcCore.mux`. They do not decrypt an
+amount-derived predicate to choose successful control flow or gas. Decryption is
+limited to a fail-closed impossible-state check: a borrow with no whole growth must
+revert.
 
 Minted shares checkpoint at current growth and cannot capture history. Sender and
 receiver settle before a transfer; accrued fees remain with the sender and future
@@ -279,25 +289,36 @@ no special fee account. Public growth, claims and amount events may be plaintext
 Modes 1/2 keep growth, checkpoints, claimable balances and claim amounts encrypted,
 offer owner-readable ciphertext results, and emit no plaintext amount event.
 
-Holder carry is allocated, owner-bound fractional entitlement and remains with that
-owner across transfer, burn and zero supply. Global remainder is unallocated. Keep
-one rolling global scalar across ordinary supply changes and zero-supply generations;
-do not create retired arrays or buckets. Because `globalRemainder < totalShares <=
-SCALE - 1` after every accrual, the historical unallocated amount is always strictly
-less than one raw token unit. A later LP may receive part of that sub-unit remainder,
-but can never capture allocated/claimable historical fees. This is the precise scope
-of the no-historical-capture guarantee.
+Holder carry is owner-bound only while the holder has a nonzero LP balance. Settle
+whole claims before every transfer or burn. If the operation leaves the holder at
+zero balance, set both holder carries to zero and add their scaled value to the one
+global unallocated accumulator. No zero-balance address retains dormant fractional
+entitlement.
+
+When supply remains positive, divide the global accumulator by current supply and
+add the quotient to cumulative fractional growth; retain only the division remainder.
+This redistributes recycled value without iterating holders. When supply reaches
+zero, convert any whole raw units in the accumulator into claimable fees for the
+final exiting holder and retain `globalUnallocated % SCALE`. On the first later mint,
+fold that retained sub-unit value into growth over the newly minted supply. Do not
+create retired arrays, beneficiary sweeps or launchpad-specific paths.
+
+The accumulator is below current supply after positive-supply redistribution and
+strictly below `SCALE` at zero supply. Therefore repeated churn or supply generations
+cannot create an unclaimable whole-token liability. New LPs cannot capture allocated
+or claimable history, but the first new generation may receive part of less than one
+raw unit of globally unallocated history.
 
 Exact conservation after settling known holders is:
 
 `(lpFeeLiability - wholeClaimable) * SCALE = sum(holderCarry) + globalRemainder`.
 
-Rolling the sub-unit global remainder is selected over an immutable vault/burn close:
-the latter would assign LP-owned value elsewhere, requires a terminal-state trigger,
-and still cannot transfer a fractional raw token. Owner carries are not swept or
-retired; they may mature when that owner later holds shares. This creates no
-unbounded storage and no unowned whole-token bucket. Integer-token granularity still
-means one dormant owner may hold less than one raw unit until future growth.
+The maximum terminal fairness deviation is one raw token unit per exit-to-zero: the
+final holder may receive at most one whole raw unit assembled from unallocated
+fractions, while strictly less than one raw unit may pass to a later generation. For
+an 18-decimal token this is below `1e-18` token for the inherited remainder; for a
+zero-decimal token one raw unit is one whole token, so this limitation must be shown
+explicitly in integrations. No value enters active reserves or protocol fees.
 
 Locks leave shares in the owner's LP balance. The pool instructs the LP token to
 record locked principal; the LP token enforces
@@ -509,13 +530,13 @@ explicit migration, continued-support or deprecation decision before deployment.
 | --- | --- |
 | Identity/binding | All dependency address/codehash/interface/mode/version checks; one-time finalization; wrong bundle rejection; no pools before finalization. |
 | Standard initialization | Mode 0 EOA/contract and Modes 1/2 EOA-IT/vault-GT; both directions, mixed decimals, ratio bounds, exact deltas, rollback and reinitialization after full exit. |
-| Protected issuer/vault | Explicit protected token in pair/key; unsupported token rejection; direct issuer; authorized vault; EOA and ERC-1271; independent authorization IDs in any order; wrong vault/token/mode/factory/chain/version/kind/pair/tier/ID/deadline; replay; failed execution does not consume. |
+| Protected issuer/vault | Explicit protected token in pair/key; unsupported token rejection; direct issuer; authorized vault; EOA and ERC-1271; independent authorization IDs in any order; signed disposition/recipient/timed unlock; wrong vault/token/mode/factory/chain/version/kind/pair/tier/recipient/unlock/ID/deadline; replay; failed execution does not consume. |
 | Anti-squatting/atomicity | Arbitrary protected create/reserve attempts fail; every failure leaves no pool, consumed auth, escrow, approval or commitment; standard key remains usable. |
 | IT/GT parity | Identical transition outputs and reverts for IT and GT; IT endpoint/selector/caller replay; GT actual-caller funding only; no arbitrary `from`; zero residual allowances. |
 | Swap accounting | Both directions and tiers; total fee split; active reserves exclude both liabilities; quote/settlement parity; minOut; tiny trades; rounding; transfer-tax/rebase rejection policy. |
 | LP fee growth | No historical capture; claim once; repeated claim; mint/burn/transfer checkpoints; sender keeps accrued fees; future fees follow shares; aggregate claims never exceed liability. |
 | LP locks | Timed/permanent principal restrictions; owner balance retained; locked shares earn and claim; transfer/withdraw cannot exceed unlocked amount; unlock does not duplicate shares or fees. |
-| Full exit/dust/loss | Active reserves only on exit; old claims survive; new shares get no allocated history; two-limb carry conservation; rolling sub-unit global remainder across supply generations; no retired arrays; unsolicited surplus segregation; accounting deficit fails closed. |
+| Full exit/dust/loss | Active reserves only on exit; old claims survive; zero-balance carry is recycled; positive-supply redistribution has no holder loop; terminal whole unit goes to final holder; global value remains sub-unit across generations; no retired arrays; unsolicited surplus segregation; accounting deficit fails closed. |
 | Mode isolation | Mode/router/factory/pool cross-calls fail; Mode 1 emits no price; Mode 2 preserves initial reference, 50-bps observations and encrypted authoritative minOut; future mode is untrusted. |
 | Routing | Canonical derivation only; explicit mode/kind; absent/uninitialized/invalid candidates; deterministic ties; request replay; funded candidate/gas ceilings per mode. |
 | Deployment | Exact source/clean tree, compiler input, manifest digest, constructor/binding receipts, codehash readback, failed/uncertain transaction recovery and zero temporary resources. |
@@ -590,9 +611,11 @@ evidence for deprecated contracts.
   and `14,405,762`-gas aggregate snapshot.
 - **Arithmetic integration:** Phase 2B local and funded COTI proofs support
   `SCALE = 2^128`, `2^128 - 1` share, reserve and per-fee operands,
-  quotient/remainder growth and a rolling sub-unit global remainder. Production code
-  must retain these checked bounds and receive implementation/security review; the
-  evidence does not authorize silently relaxing them.
+  quotient/remainder growth. Phase 2C local proofs replace dormant zero-balance carry
+  with bounded global recycling and branchless MPC settlement; focused COTI evidence
+  is required before adopting that correction. Production code must retain the
+  checked bounds and receive implementation/security review; the evidence does not
+  authorize silently relaxing them.
 - **Confidential limit orders:** feasibility and keeper liveness remain unproven and
   require their own funded lifecycle; the Phase 2B private LP proof does not cover
   them. They are not part of the initial deployment.

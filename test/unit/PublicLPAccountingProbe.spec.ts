@@ -95,6 +95,54 @@ describe("disposable public LP-accounting probe", function () {
     expect(await token.globalRemainder(0)).to.equal(0n);
   });
 
+  it("retains carry on partial transfer and recycles it on full transfer", async function () {
+    const { alice, bob, probe, token } = await fixture();
+    await probe.connect(alice).mint(2);
+    await probe.connect(bob).mint(1);
+    await probe.accrue(0, 0, 0, 1);
+
+    await token.connect(alice).transfer(bob.address, 1);
+    expect(await token.holderCarry(alice.address, 0)).to.be.greaterThan(0n);
+    await token.connect(alice).transfer(bob.address, 1);
+    expect(await token.balanceOf(alice.address)).to.equal(0n);
+    expect(await token.holderCarry(alice.address, 0)).to.equal(0n);
+    expect(await token.previewClaim(bob.address, 0)).to.equal(1n);
+    await probe.connect(bob).claim(0);
+    expect(await probe.lpFeeLiability(0)).to.equal(0n);
+  });
+
+  it("recycles carry on burn and keeps zero-balance holders empty", async function () {
+    const { alice, bob, probe, token } = await fixture();
+    await probe.connect(alice).mint(2);
+    await probe.connect(bob).mint(1);
+    await probe.accrue(0, 7, 3, 1);
+    const reserve = await probe.activeReserve(0);
+    const protocol = await probe.protocolFees(0);
+    const liability = await probe.lpFeeLiability(0);
+
+    await probe.connect(bob).burn(1);
+    expect(await token.balanceOf(bob.address)).to.equal(0n);
+    expect(await token.holderCarry(bob.address, 0)).to.equal(0n);
+    expect(await probe.activeReserve(0)).to.equal(reserve);
+    expect(await probe.protocolFees(0)).to.equal(protocol);
+    expect(await probe.lpFeeLiability(0)).to.equal(liability);
+    expect(await token.previewClaim(alice.address, 0)).to.equal(1n);
+  });
+
+  it("bounds global unallocated value through zero supply and reinitialization", async function () {
+    const { alice, bob, probe, token } = await fixture();
+    for (let generation = 0; generation < 10; generation += 1) {
+      await probe.connect(alice).mint(2);
+      await probe.connect(bob).mint(1);
+      await probe.accrue(0, 0, 0, 1);
+      await probe.connect(bob).burn(1);
+      await probe.connect(alice).burn(2);
+      expect(await token.holderCarry(alice.address, 0)).to.equal(0n);
+      expect(await token.holderCarry(bob.address, 0)).to.equal(0n);
+      expect(await token.globalRemainder(0)).to.be.lessThan(await token.SCALE());
+    }
+  });
+
   it("accepts the proved maximum share and per-operation fee operands", async function () {
     const { alice, probe, token } = await fixture();
     const maximum = (1n << 128n) - 1n;
