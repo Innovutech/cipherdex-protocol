@@ -30,12 +30,12 @@ truncating them.
 
 | Operation | Current IT | Proven minimum IT | Proposed fixed layout | Trade-off/status | Funded gas difference |
 | --- | ---: | ---: | --- | --- | ---: |
-| Exact-input swap | 2 | 1 | `amountIn[255:128] | minimumOut[127:0]` | Accepted; both operands are bounded to 128 bits. | Pending |
-| Remove liquidity | 3 | 2 | `shares` plus `minimumAmount0[255:128] | minimumAmount1[127:0]` | Accepted; preserves both independent minimums and full-exit/lock checks. | Pending |
-| Existing-pool add | 5 | 4 | packed amount maxima, `minimumShares`, full-width encrypted `minimumPriceX18`, full-width encrypted `maximumPriceX18` | Accepted compatibility-preserving minimum. | Pending |
+| Exact-input swap | 2 | 1 | `amountIn[255:128] | minimumOut[127:0]` | Accepted; both operands are bounded to 128 bits. | Packed `+618,593` gas |
+| Remove liquidity | 3 | 2 | `shares` plus `minimumAmount0[255:128] | minimumAmount1[127:0]` | Accepted; preserves both independent minimums and full-exit/lock checks. | Pair decode `+601,246`; complete removal not funded |
+| Existing-pool add | 5 | 4 | packed amount maxima, `minimumShares`, full-width encrypted `minimumPriceX18`, full-width encrypted `maximumPriceX18` | Accepted compatibility-preserving minimum. | Packed pair call `+618,229` gas |
 | Existing-pool add, symmetric endpoint | 5 | 3 | packed amount maxima, `minimumShares`, full-width encrypted `expectedPriceX18`; public `maximumDeviationBps` | Safe only as an additional constrained API; cannot express arbitrary asymmetric/one-sided bounds. | Not funded in this phase |
-| Standard first initialization | 5 | 1 | `amount0[255:128] | amount1[127:0]` | Accepted for atomic proven-uninitialized initialization. | Packing primitive covered |
-| Protected first initialization | 5 | 1 | same packed amount pair | Accepted; issuer authorization is separate and GT amounts remain vault-funded. | Packing primitive covered |
+| Standard first initialization | 5 | 1 | `amount0[255:128] | amount1[127:0]` | Accepted for atomic proven-uninitialized initialization. | Pair primitive covered; complete initialization not funded |
+| Protected first initialization | 5 | 1 | same packed amount pair | Accepted; issuer authorization is separate and GT amounts remain vault-funded. | Pair primitive covered; complete initialization not funded |
 | Exact-input quote | 1 | 1 | unchanged amount IT | No redesign. | N/A |
 | Add-liquidity quote | 1 | 1 | unchanged specified-amount IT | No redesign. | N/A |
 | LP-share lock | 1 | 1 | unchanged share IT | No redesign. | N/A |
@@ -134,11 +134,28 @@ wallet encryption.
 - Full `npm run verify`: passed. It reported `431` Mocha tests (`430` active
   passing and the existing funded integration test pending), `6` passing Cotiscan
   tests, matching SDK distribution and zero production/operational audit findings.
-- Funded COTI testnet proof: **not run** pending a clean committed source.
-- Sanitized evidence: pending funded execution.
+- Funded COTI testnet proof: **passed** on chain `7082400` from exact clean source
+  commit `ca460cb92e7c060e38ca890a18d686067bc2090d`.
+- Sanitized evidence:
+  `evidence/coti-testnet-phase2d-private-it-packing-ca460cb92e7c060e38ca890a18d686067bc2090d.json`.
+- `18` receipts were recorded: `11` successful controls and `7` expected mined
+  failures. Total measured gas was `16,476,002`.
+- Separate validation/decode used `539,626` gas; one packed validation plus MPC
+  division/remainder used `1,140,872`, an increase of `601,246` gas.
+- Complete swap-like separate/packed calls used `1,298,487` / `1,917,080`, so
+  packing added `618,593` gas.
+- Complete liquidity-like separate/packed calls used `607,137` / `1,225,366`, so
+  packing added `618,229` gas.
+- Mode 2 packed swap used `1,917,109` gas and preserved the same encrypted result
+  semantics as Mode 1.
+- Wrong selector, caller and target; tampered signature; exact replay; arithmetic
+  underflow and overflow all mined with status `0`. Reusing the same request ID after
+  underflow succeeded, proving transaction rollback.
+- Both probe addresses ended with zero native custody. No approvals or token custody
+  existed, and both authenticated recovery resources were closed.
 
-No funded pass or gas saving is inferred before authenticated execution and a
-source-bound evidence record.
+Packing is therefore a wallet-signature/UX optimization, not a COTI gas optimization.
+Production gas budgets must include the measured MPC unpacking premium.
 
 ## Remaining gates
 

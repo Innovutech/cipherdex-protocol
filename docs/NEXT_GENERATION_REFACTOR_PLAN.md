@@ -187,6 +187,11 @@ caller-supplied ciphertext or add per-field replay records. Router-packed IT is
 validated at the exact router selector before unpacked GT is forwarded to a bound
 pool. Direct-pool IT remains pool-bound.
 
+Funded Phase 2D evidence shows this reduces wallet IT signatures but increases COTI
+gas: packed decode cost `601,246` more gas, packed swap-like execution `618,593`
+more and packed liquidity-like execution `618,229` more. Treat packing as an explicit
+UX/gas trade-off and retain measured headroom in each production endpoint.
+
 An optional three-IT existing-add endpoint may use encrypted full-width expected
 price plus public bounded deviation. It is not a replacement for the four-IT API:
 the symmetric form cannot express arbitrary asymmetric or one-sided price bounds.
