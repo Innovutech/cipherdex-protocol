@@ -582,16 +582,20 @@ evidence for deprecated contracts.
 - **Issuer interface:** no current universal token issuer signal exists. Review and
   test the actual partner launch-token/factory implementation before freezing
   `ICipherDEXLaunchTokenIssuer`; unsupported tokens remain standard-only.
-- **Private LP production gas:** the Phase 2A funded probe passed without a callback,
-  but its lock rejection used non-authoritative `eth_call`. Phase 2B requires paid
-  exact-selector diagnostics plus before/after encrypted state evidence. Production
-  storage must then be optimized and remeasured against the selected two-limb math.
-- **Arithmetic integration:** Phase 2B selects `SCALE = 2^128`, `2^128 - 1` share,
-  reserve and per-fee operands, quotient/remainder growth and a rolling sub-unit
-  global remainder. The reference/public/private probes must pass full local and
-  funded COTI evidence before these constants move into production code.
-- **Confidential limit orders:** feasibility and keeper liveness remain unproven until
-  the funded lifecycle above passes. They are not part of the initial deployment.
+- **Private LP production gas:** Phase 2B transaction-backed COTI diagnostics reached
+  the real private LP `_update` path and proved exact `LockedPrivatePrincipal()`
+  selectors plus unchanged encrypted state. The proof implementation is intentionally
+  audit-oriented; production storage must still be optimized and remeasured against
+  the observed `13,581,177`-gas transfer diagnostic, `6,788,943`-gas burn diagnostic
+  and `14,405,762`-gas aggregate snapshot.
+- **Arithmetic integration:** Phase 2B local and funded COTI proofs support
+  `SCALE = 2^128`, `2^128 - 1` share, reserve and per-fee operands,
+  quotient/remainder growth and a rolling sub-unit global remainder. Production code
+  must retain these checked bounds and receive implementation/security review; the
+  evidence does not authorize silently relaxing them.
+- **Confidential limit orders:** feasibility and keeper liveness remain unproven and
+  require their own funded lifecycle; the Phase 2B private LP proof does not cover
+  them. They are not part of the initial deployment.
 - **Mainnet value:** exact private amounts are not publicly inventoryable. Treat any
   ambiguous confidential activity as value-bearing and require an explicit decision.
 - **Legal parameters:** Licensor, rights, release date and license wording are unknown

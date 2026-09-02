@@ -116,18 +116,27 @@ Focused Phase 2B tests: `31 passing`.
 - `npm run verify`: passed. It reported `410` Mocha tests (`409` active and
   the existing funded integration test pending), `6` passing Cotiscan tests and
   zero npm-audit vulnerabilities.
-- Corrected funded COTI lifecycle: **not run** pending a clean committed source.
-- Sanitized evidence record: pending funded execution.
-
-No funded success is inferred before the authenticated run and committed evidence
-record exist.
+- Corrected funded COTI lifecycle: **passed** on COTI testnet chain `7082400` from
+  exact clean source commit `9fc974533e0ecfa44df89c0b0fa40bcd9104f8cc`.
+- Sanitized evidence record:
+  `evidence/coti-testnet-phase2b-private-lp-accounting-9fc974533e0ecfa44df89c0b0fa40bcd9104f8cc.json`.
+- Both transaction-backed lock diagnostics returned exact
+  `LockedPrivatePrincipal()` selector `0x750c1c38`; the transfer diagnostic used
+  `13,581,177` gas and the burn diagnostic used `6,788,943` gas.
+- The encrypted pre/post diagnostic snapshot used `14,405,762` gas per read and
+  proved balances, shares, locks, fee claims, allowance and lock metadata unchanged.
+- Direct and delegated transfers used `13,859,395` and `14,425,823` gas. Full exit
+  used `7,608,227` gas. The funded remainder edge created and later resolved a
+  nonzero global remainder across mint and burn.
+- Cleanup restored exact funded token balances and left zero probe custody, total
+  shares, fee liability and residual allowances. The authenticated recovery resource
+  is closed. All `49` recorded receipts have status `1`; total measured lifecycle gas
+  was `265,961,110` across deployments, writes, paid encrypted reads and cleanup.
 
 ## Remaining gates
 
 - Review the real partner launch-token/factory source and select or reject the
   candidate issuer signal. Unsupported tokens remain standard-only.
-- Complete transaction-backed COTI selector diagnostics, arithmetic edge, cleanup,
-  gas measurement and sanitized journal-bound evidence.
 - Optimize and remeasure the eventual production encrypted storage layout; proof
   contracts intentionally prioritize auditability over gas.
 - Run production security/confidentiality review only after licensed production
