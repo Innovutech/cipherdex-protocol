@@ -337,6 +337,17 @@ contract PrivateLPAccountingProbe {
     error PrivateTransferAmountMismatch();
     error PrivateLiabilityUnderflow();
 
+    event PrivateLPAccountingConservationResult(
+        address indexed caller,
+        uint8 indexed side,
+        ctUint256 rawBalance,
+        ctUint256 activeReserve,
+        ctUint256 protocolFees,
+        ctUint256 lpFeeLiability,
+        ctUint256 totalShares,
+        ctUint256 retiredRemainder
+    );
+
     constructor(address token0_, address token1_) {
         if (
             token0_ == address(0) ||
@@ -434,6 +445,16 @@ contract PrivateLPAccountingProbe {
         );
         totalShares = lpToken.requestTotalShares(msg.sender);
         retiredRemainder = lpToken.requestRetiredRemainder(side, msg.sender);
+        emit PrivateLPAccountingConservationResult(
+            msg.sender,
+            side,
+            rawBalance,
+            activeReserve,
+            protocolFees,
+            lpFeeLiability,
+            totalShares,
+            retiredRemainder
+        );
     }
 
     function _validateAndConsume(

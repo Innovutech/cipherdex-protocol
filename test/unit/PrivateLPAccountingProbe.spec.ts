@@ -35,6 +35,12 @@ describe("disposable private LP-accounting probe", function () {
     expect(tokenInterface.getFunction("transferGT")).to.not.equal(null);
     expect(tokenInterface.getFunction("transferFromGT")).to.not.equal(null);
 
+    const probeArtifact = await artifacts.readArtifact("PrivateLPAccountingProbe");
+    const probeInterface = new Interface(probeArtifact.abi);
+    expect(
+      probeInterface.getEvent("PrivateLPAccountingConservationResult"),
+    ).to.not.equal(null);
+
     const spenderArtifact = await artifacts.readArtifact(
       "PrivateLPAccountingDelegatedSpenderProbe",
     );

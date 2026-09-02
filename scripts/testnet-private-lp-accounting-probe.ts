@@ -61,6 +61,11 @@ type Deployment = Readonly<{
   transaction: Submitted;
 }>;
 
+type ConservationEvidence = Readonly<{
+  values: readonly [bigint, bigint, bigint, bigint, bigint, bigint];
+  transaction: Submitted;
+}>;
+
 type ProbeContext = Readonly<{
   probe: Contract;
   probeAddress: string;
@@ -316,16 +321,35 @@ async function expectRejected(label: string, operation: () => Promise<unknown>):
 async function conservation(
   context: ProbeContext,
   side: 0 | 1,
-): Promise<readonly [bigint, bigint, bigint, bigint, bigint, bigint]> {
-  const values = await context.probe.requestConservation.staticCall(side);
-  return Promise.all([
-    decryptPrivateValue256(context.primary, values[0]),
-    decryptPrivateValue256(context.primary, values[1]),
-    decryptPrivateValue256(context.primary, values[2]),
-    decryptPrivateValue256(context.primary, values[3]),
-    decryptPrivateValue256(context.primary, values[4]),
-    decryptPrivateValue256(context.primary, values[5]),
-  ]) as Promise<readonly [bigint, bigint, bigint, bigint, bigint, bigint]>;
+  label: string,
+): Promise<ConservationEvidence> {
+  const transaction = await submit(label, () => context.probe.requestConservation(
+    side,
+    { gasLimit: GAS_LIMIT },
+  ));
+  const matches = transaction.receipt.logs.flatMap((log) => {
+    if (log.address.toLowerCase() !== context.probeAddress.toLowerCase()) return [];
+    try {
+      const parsed = context.probe.interface.parseLog(log);
+      return parsed?.name === "PrivateLPAccountingConservationResult" ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  }).filter((event) =>
+    String(event.args.caller).toLowerCase() === context.primaryAddress.toLowerCase() &&
+    Number(event.args.side) === side
+  );
+  if (matches.length !== 1) throw new Error(`${label} event is missing or ambiguous`);
+  const event = matches[0]!;
+  const values = await Promise.all([
+    decryptPrivateValue256(context.primary, event.args.rawBalance),
+    decryptPrivateValue256(context.primary, event.args.activeReserve),
+    decryptPrivateValue256(context.primary, event.args.protocolFees),
+    decryptPrivateValue256(context.primary, event.args.lpFeeLiability),
+    decryptPrivateValue256(context.primary, event.args.totalShares),
+    decryptPrivateValue256(context.primary, event.args.retiredRemainder),
+  ]) as readonly [bigint, bigint, bigint, bigint, bigint, bigint];
+  return Object.freeze({ values, transaction });
 }
 
 function requireConservation(
@@ -462,9 +486,9 @@ async function recoverActiveProbe(): Promise<void> {
       "recover primary LP shares",
     );
     if (burned) recoveryHashes.push(burned.hash);
-    for (const [tokenPrimary, tokenSecond, initialKey, label] of [
-      [context.token0Primary, context.token0Second, "secondToken0Initial", "token0"],
-      [context.token1Primary, context.token1Second, "secondToken1Initial", "token1"],
+    for (const [tokenSecond, initialKey, label] of [
+      [context.token0Second, "secondToken0Initial", "token0"],
+      [context.token1Second, "secondToken1Initial", "token1"],
     ] as const) {
       const initial = BigInt(String(resource.metadata[initialKey] ?? "0"));
       const current = await privateBalance(tokenSecond, second, context.secondAddress);
@@ -478,8 +502,14 @@ async function recoverActiveProbe(): Promise<void> {
         );
         if (restored) recoveryHashes.push(restored.hash);
       }
-      const probeBalance = await privateBalance(tokenPrimary, primary, context.probeAddress);
-      if (probeBalance !== 0n) throw new Error(`recovery left ${label} in the probe`);
+      const side = label === "token0" ? 0 : 1;
+      const evidence = await conservation(
+        context,
+        side,
+        `recover ${label} conservation`,
+      );
+      recoveryHashes.push(evidence.transaction.hash);
+      requireConservation(evidence.values, 0n, 0n, `recovered ${label}`);
     }
     recoveryJournal.markRecovered(
       resource.id,
@@ -728,8 +758,12 @@ async function main(): Promise<void> {
     () => context.probe.burnShares.staticCall(blockedBurnInput),
   );
 
-  requireConservation(await conservation(context, 0), FEE0_TOTAL, TOTAL_SHARES, "token0");
-  requireConservation(await conservation(context, 1), FEE1_TOTAL, TOTAL_SHARES, "token1");
+  const beforeClaims0 = await conservation(context, 0, "read token0 conservation");
+  const beforeClaims1 = await conservation(context, 1, "read token1 conservation");
+  gas.conservationBeforeClaims0 = beforeClaims0.transaction.gasUsed.toString();
+  gas.conservationBeforeClaims1 = beforeClaims1.transaction.gasUsed.toString();
+  requireConservation(beforeClaims0.values, FEE0_TOTAL, TOTAL_SHARES, "token0");
+  requireConservation(beforeClaims1.values, FEE1_TOTAL, TOTAL_SHARES, "token1");
 
   const primary0BeforeClaim = await privateBalance(token0Primary, primary, primaryAddress);
   const second0BeforeClaim = await privateBalance(token0Second, second, secondAddress);
@@ -751,7 +785,9 @@ async function main(): Promise<void> {
   if (await privateBalance(token0Primary, primary, primaryAddress) !== repeatBalance) {
     throw new Error("repeated claim double-paid token0 fees");
   }
-  requireConservation(await conservation(context, 0), 0n, TOTAL_SHARES, "claimed token0");
+  const claimed0 = await conservation(context, 0, "read claimed token0 conservation");
+  gas.conservationClaimed0 = claimed0.transaction.gasUsed.toString();
+  requireConservation(claimed0.values, 0n, TOTAL_SHARES, "claimed token0");
 
   await waitUntilUnlock(unlockAt);
   const unlocked = await submit(
@@ -774,7 +810,9 @@ async function main(): Promise<void> {
     "burn all private LP shares",
   );
   gas.fullExit = fullExit!.gasUsed.toString();
-  requireConservation(await conservation(context, 1), FEE1_TOTAL, 0n, "post-exit token1");
+  const postExit1 = await conservation(context, 1, "read post-exit token1 conservation");
+  gas.conservationPostExit1 = postExit1.transaction.gasUsed.toString();
+  requireConservation(postExit1.values, FEE1_TOTAL, 0n, "post-exit token1");
 
   const primary1BeforeClaim = await privateBalance(token1Primary, primary, primaryAddress);
   const second1BeforeClaim = await privateBalance(token1Second, second, secondAddress);
@@ -800,9 +838,11 @@ async function main(): Promise<void> {
     ),
   );
   gas.reinitialize = reinitialized.gasUsed.toString();
-  const reinitConservation0 = await conservation(context, 0);
-  const reinitConservation1 = await conservation(context, 1);
-  if (reinitConservation0[5] !== 0n || reinitConservation1[5] !== 0n) {
+  const reinitConservation0 = await conservation(context, 0, "read reinitialized token0 conservation");
+  const reinitConservation1 = await conservation(context, 1, "read reinitialized token1 conservation");
+  gas.conservationReinitialized0 = reinitConservation0.transaction.gasUsed.toString();
+  gas.conservationReinitialized1 = reinitConservation1.transaction.gasUsed.toString();
+  if (reinitConservation0.values[5] !== 0n || reinitConservation1.values[5] !== 0n) {
     throw new Error("an exact prior generation unexpectedly retired nonzero remainder");
   }
   const reinitBurn = await burnShares(
@@ -849,8 +889,12 @@ async function main(): Promise<void> {
     secondToken0Final !== secondToken0Initial ||
     secondToken1Final !== secondToken1Initial
   ) throw new Error("funded private-token balances were not restored exactly");
-  requireConservation(await conservation(context, 0), 0n, 0n, "final token0");
-  requireConservation(await conservation(context, 1), 0n, 0n, "final token1");
+  const final0 = await conservation(context, 0, "read final token0 conservation");
+  const final1 = await conservation(context, 1, "read final token1 conservation");
+  gas.conservationFinal0 = final0.transaction.gasUsed.toString();
+  gas.conservationFinal1 = final1.transaction.gasUsed.toString();
+  requireConservation(final0.values, 0n, 0n, "final token0");
+  requireConservation(final1.values, 0n, 0n, "final token1");
 
   journal().markRecovered("private-lp-accounting-probe", [reinitBurn!.hash]);
   journal().markRun("passed");
@@ -866,6 +910,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch(async (error: unknown) => {
+  const failedStage = stage;
   if (error instanceof UnknownBroadcastOutcomeError) {
     recoveryJournal?.markRun("failed");
     console.error(
@@ -895,7 +940,7 @@ void main().catch(async (error: unknown) => {
     );
   }
   console.error(
-    `Private LP accounting funded probe failed: stage=${stage} ` +
+    `Private LP accounting funded probe failed: stage=${failedStage} ` +
       safeTestnetErrorSummary(reportedError),
   );
   process.exitCode = 1;
