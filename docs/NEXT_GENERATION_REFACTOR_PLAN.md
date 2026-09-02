@@ -532,10 +532,11 @@ evidence for deprecated contracts.
 - **Issuer interface:** no current universal token issuer signal exists. Review and
   test the actual partner launch-token/factory implementation before freezing
   `ICipherDEXLaunchTokenIssuer`; unsupported tokens remain standard-only.
-- **Private LP token internals:** `PrivateERC20._update` is virtual and the disposable
-  probe compiles without a token-to-pool callback. Encrypted lock enforcement,
-  checkpoint ordering, exact claims and gas still require the recorded funded-COTI
-  result before production implementation.
+- **Private LP token internals:** the funded COTI probe passed without a token-to-pool
+  callback, including direct/delegated transfer ordering, locks, claims, full exit,
+  reinitialization and exact conservation. Production storage and arithmetic still
+  require optimization and remeasurement: the disposable direct/delegated transfers
+  used about `9.47M`/`10.28M` gas and claims used about `5.67M` gas.
 - **Fee-growth scale:** the Phase 2A model proves the formulas and a bounded
   zero-supply rule for configurable `SCALE` with `totalShares <= SCALE`; it does not
   select Q128 or a production scale. Prove concrete public and COTI MPC overflow

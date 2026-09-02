@@ -87,19 +87,52 @@ Focused local command:
 
 Result: `23 passing`.
 
-Additional local gates completed before the first results commit:
+Additional local gates:
 
 - `npm run typecheck`: passed.
 - `npm run compile`: passed.
-- `npm run verify`: passed (`402` Mocha tests reported: `401` active and the
-  existing funded integration test pending; `6` Cotiscan tests passed; both npm
-  audit reports contained zero vulnerabilities).
+- `npm run verify`: passed before and after the funded-read correction. The final
+  run reported `402` Mocha tests (`401` active and the existing funded integration
+  test pending), `6` passing Cotiscan tests and zero npm-audit vulnerabilities.
 
-Funded COTI private probe status: **not run**. The runner requires a clean committed
-source revision and the existing authenticated external funded configuration. If
-that configuration is available after the first results commit, the exact status
-and measured transaction gas will replace this paragraph in a follow-up results
-commit. No funded success is inferred.
+### Funded COTI result
+
+Status: **passed** on COTI testnet chain `7082400` from exact source commit
+`0285edd549a8dd54cda78d9941ff90d672e801fa`.
+
+The authenticated run proved mint, fee accrual on both sides, direct transfer,
+delegated transfer, timed lock, blocked transfer/burn simulations, fees earned while
+locked, exact claim consumption, no double payment, timed unlock, full exit with
+surviving claims, reinitialization checkpoint isolation, encrypted conservation and
+zero final custody/liabilities/shares. Both funded wallets' private-token balances
+were restored exactly and all temporary allowances were cleared.
+
+Measured gas:
+
+| Operation | Gas |
+| --- | ---: |
+| Probe / delegated-spender deployment | 4,837,441 / 216,126 |
+| Underlying approvals (each) / LP delegated approval | 458,470 / 459,296 |
+| Mint / reinitialize | 4,836,626 / 5,335,370 |
+| First-holder fee accrual | 3,924,101 |
+| Multi-holder fee accrual | 4,209,282-4,209,294 |
+| Direct / delegated LP transfer | 9,471,985 / 10,277,131 |
+| Lock / timed unlock | 5,002,830 / 321,876 |
+| LP claim, including zero repeated claim | 5,667,954-5,667,978 |
+| Conservation read with active supply | 988,620-988,633 |
+| Conservation read after exit/reinitialization | 1,058,683-1,058,696 |
+| Full exit / reinitialized-generation burn | 6,265,383 / 6,267,082 |
+| Share consolidation | 9,899,015 |
+| Funded token-balance restoration | 886,865-886,901 |
+
+The first funded attempt at commit
+`b868e66de5b19a8ca38c0823b554512844a98565` failed because its proof runner tried
+to onboard encrypted state through `eth_call`. Its authenticated recovery claimed
+both fee sides, consolidated and burned all shares, and restored both funded token
+allocations, but the final recovery check repeated the same invalid static MPC read,
+leaving stale nonterminal recovery metadata for that disposable source commit. The
+corrected probe emits only owner-encrypted conservation ciphertexts from a paid
+transaction; the final run passed and left no assets or allowances.
 
 ## Remaining gates
 
@@ -108,10 +141,9 @@ commit. No funded success is inferred.
   then freeze the production issuer ABI. Unsupported tokens remain standard-only.
 - Select `SCALE` only after checked public and COTI MPC overflow bounds cover maximum
   shares, fee products, cumulative growth, carry and lifetime accrual.
-- Complete the funded COTI lifecycle: mint, both fee sides, direct and delegated
-  transfer, timed lock, blocked transfer/burn, claim consumption, timed unlock,
-  full exit, reinitialization, exact encrypted conservation, exact funded-balance
-  restoration and measured gas.
+- Optimize the private LP storage/settlement path and remeasure production code.
+  The proof establishes feasibility, but direct/delegated transfers cost about
+  `9.47M`/`10.28M` gas and claims cost about `5.67M` gas in the disposable design.
 - Define the final deterministic treatment of retired sub-unit LP dust. It must stay
   bounded and cannot enter reserves, protocol fees or a later LP generation.
 - Run production-focused reentrancy, token-delta, external-loss and confidentiality
