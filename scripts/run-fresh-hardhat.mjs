@@ -269,6 +269,15 @@ const ALLOWED_TARGETS = new Map([
       "COTI_TOKEN1",
     ],
   }],
+  ["scripts/testnet-private-it-packing-probe.ts", {
+    arguments: ["--network", "cotiTestnet"],
+    funded: true,
+    environment: [
+      "COTI_AES_KEY",
+      "COTI_SECOND_LP_PRIVATE_KEY",
+      "COTI_SECOND_LP_AES_KEY",
+    ],
+  }],
   ["scripts/testnet-launchpad.ts", {
     arguments: ["--network", "cotiTestnet"],
     funded: true,
