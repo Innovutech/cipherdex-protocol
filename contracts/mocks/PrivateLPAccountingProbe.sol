@@ -10,7 +10,8 @@ import "@coti-io/coti-contracts/contracts/utils/mpc/MpcCore.sol";
  *         internal to the token by overriding PrivateERC20._update.
  */
 contract PrivateLPAccountingProbeToken is PrivateERC20 {
-    uint256 public constant SCALE = 1e18;
+    uint256 public constant SCALE = 1 << 128;
+    uint256 public constant MAX_OPERAND = SCALE - 1;
 
     struct LockRecord {
         address owner;
@@ -22,10 +23,12 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
 
     address public immutable pool;
     ctUint256 private accountingTotalSharesState;
-    ctUint256[2] private feeGrowthState;
+    ctUint256[2] private feeGrowthWholeState;
+    ctUint256[2] private feeGrowthFractionState;
     ctUint256[2] private globalRemainderState;
-    ctUint256[2] private retiredRemainderState;
-    mapping(address => ctUint256[2]) private checkpointState;
+    ctUint256[2] private lifetimeAccruedState;
+    mapping(address => ctUint256[2]) private checkpointWholeState;
+    mapping(address => ctUint256[2]) private checkpointFractionState;
     mapping(address => ctUint256[2]) private holderCarryState;
     mapping(address => ctUint256[2]) private claimableState;
     mapping(address => ctUint256) private lockedPrincipalState;
@@ -54,7 +57,7 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
     }
 
     function supplyCap() public pure override returns (uint256) {
-        return SCALE;
+        return MAX_OPERAND;
     }
 
     function mintFromPool(address owner, gtUint256 amount) external onlyPool {
@@ -70,16 +73,43 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
         gtUint256 supply = _read(accountingTotalSharesState);
         _requirePositive(supply);
         _requirePositive(lpFee);
-        gtUint256 globalNumerator = _addChecked(
-            _mulChecked(lpFee, MpcCore.setPublic256(SCALE)),
+        if (!MpcCore.decrypt(MpcCore.le(lpFee, MAX_OPERAND))) {
+            revert InvalidPrivateAccountingAmount();
+        }
+        gtUint256 feeWhole = MpcCore.div(lpFee, supply);
+        gtUint256 feeRemainder = MpcCore.rem(lpFee, supply);
+        gtUint256 fractionalNumerator = _addChecked(
+            _mulChecked(feeRemainder, MpcCore.setPublic256(SCALE)),
             _read(globalRemainderState[side])
         );
-        gtUint256 growthDelta = MpcCore.div(globalNumerator, supply);
-        gtUint256 remainder = MpcCore.rem(globalNumerator, supply);
-        feeGrowthState[side] = MpcCore.offBoard(
-            _addChecked(_read(feeGrowthState[side]), growthDelta)
+        gtUint256 fractionIncrement = MpcCore.div(
+            fractionalNumerator,
+            supply
         );
-        globalRemainderState[side] = MpcCore.offBoard(remainder);
+        globalRemainderState[side] = MpcCore.offBoard(
+            MpcCore.rem(fractionalNumerator, supply)
+        );
+        gtUint256 combinedFraction = _addChecked(
+            _read(feeGrowthFractionState[side]),
+            fractionIncrement
+        );
+        gtUint256 wholeCarry = MpcCore.div(combinedFraction, SCALE);
+        feeGrowthFractionState[side] = MpcCore.offBoard(
+            MpcCore.rem(combinedFraction, SCALE)
+        );
+        gtUint256 nextWhole = _addChecked(
+            _addChecked(_read(feeGrowthWholeState[side]), feeWhole),
+            wholeCarry
+        );
+        gtUint256 nextLifetime = _addChecked(
+            _read(lifetimeAccruedState[side]),
+            lpFee
+        );
+        if (!MpcCore.decrypt(MpcCore.le(nextWhole, nextLifetime))) {
+            revert InvalidPrivateAccountingAmount();
+        }
+        feeGrowthWholeState[side] = MpcCore.offBoard(nextWhole);
+        lifetimeAccruedState[side] = MpcCore.offBoard(nextLifetime);
     }
 
     function lockFromPool(
@@ -150,6 +180,23 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
         );
     }
 
+    function diagnosticHolderState(address owner)
+        external
+        onlyPool
+        returns (
+            gtUint256 balance,
+            gtUint256 locked,
+            gtUint256 claim0,
+            gtUint256 claim1
+        )
+    {
+        _settle(owner);
+        balance = _getBalance(owner);
+        locked = _read(lockedPrincipalState[owner]);
+        claim0 = _read(claimableState[owner][0]);
+        claim1 = _read(claimableState[owner][1]);
+    }
+
     function lockInfo(bytes32 lockId)
         external
         view
@@ -175,14 +222,14 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
         );
     }
 
-    function requestRetiredRemainder(uint8 side, address recipient)
+    function requestGlobalRemainder(uint8 side, address recipient)
         external
         onlyPool
         returns (ctUint256 memory)
     {
         if (side > 1) revert InvalidPrivateAccountingAmount();
         return MpcCore.offBoardToUser(
-            _read(retiredRemainderState[side]),
+            _read(globalRemainderState[side]),
             recipient
         );
     }
@@ -204,43 +251,56 @@ contract PrivateLPAccountingProbeToken is PrivateERC20 {
         super._update(from, to, amount);
         accountingTotalSharesState = MpcCore.offBoard(nextSupply);
 
-        if (
-            to == address(0) &&
-            MpcCore.decrypt(MpcCore.eq(nextSupply, uint256(0)))
-        ) {
-            for (uint8 side = 0; side < 2; side++) {
-                retiredRemainderState[side] = MpcCore.offBoard(
-                    _addChecked(
-                        _read(retiredRemainderState[side]),
-                        _read(globalRemainderState[side])
-                    )
-                );
-                globalRemainderState[side] = MpcCore.offBoard(
-                    MpcCore.setPublic256(uint256(0))
-                );
-            }
-        }
     }
 
     function _settle(address owner) internal {
         gtUint256 ownerBalance = _getBalance(owner);
         for (uint8 side = 0; side < 2; side++) {
-            gtUint256 growth = _read(feeGrowthState[side]);
-            gtUint256 delta = _subChecked(
-                growth,
-                _read(checkpointState[owner][side])
+            gtUint256 currentWhole = _read(feeGrowthWholeState[side]);
+            gtUint256 currentFraction = _read(
+                feeGrowthFractionState[side]
             );
-            gtUint256 holderNumerator = _addChecked(
-                _mulChecked(ownerBalance, delta),
+            gtUint256 previousWhole = _read(
+                checkpointWholeState[owner][side]
+            );
+            gtUint256 previousFraction = _read(
+                checkpointFractionState[owner][side]
+            );
+            gtUint256 wholeDelta = _subChecked(currentWhole, previousWhole);
+            gtUint256 fractionDelta;
+            if (MpcCore.decrypt(MpcCore.ge(currentFraction, previousFraction))) {
+                fractionDelta = MpcCore.sub(
+                    currentFraction,
+                    previousFraction
+                );
+            } else {
+                wholeDelta = _subChecked(
+                    wholeDelta,
+                    MpcCore.setPublic256(uint256(1))
+                );
+                fractionDelta = _subChecked(
+                    _addChecked(MpcCore.setPublic256(SCALE), currentFraction),
+                    previousFraction
+                );
+            }
+            gtUint256 fractionalNumerator = _addChecked(
+                _mulChecked(ownerBalance, fractionDelta),
                 _read(holderCarryState[owner][side])
             );
-            gtUint256 newClaim = MpcCore.div(holderNumerator, SCALE);
-            gtUint256 carry = MpcCore.rem(holderNumerator, SCALE);
+            gtUint256 newClaim = _addChecked(
+                _mulChecked(ownerBalance, wholeDelta),
+                MpcCore.div(fractionalNumerator, SCALE)
+            );
             claimableState[owner][side] = MpcCore.offBoard(
                 _addChecked(_read(claimableState[owner][side]), newClaim)
             );
-            holderCarryState[owner][side] = MpcCore.offBoard(carry);
-            checkpointState[owner][side] = MpcCore.offBoard(growth);
+            holderCarryState[owner][side] = MpcCore.offBoard(
+                MpcCore.rem(fractionalNumerator, SCALE)
+            );
+            checkpointWholeState[owner][side] = MpcCore.offBoard(currentWhole);
+            checkpointFractionState[owner][side] = MpcCore.offBoard(
+                currentFraction
+            );
         }
     }
 
@@ -323,6 +383,10 @@ contract PrivateLPAccountingDelegatedSpenderProbe {
  * @notice Disposable custody/accounting peer for the private LP token.
  */
 contract PrivateLPAccountingProbe {
+    bytes4 public constant LOCKED_PRIVATE_PRINCIPAL_SELECTOR =
+        bytes4(keccak256("LockedPrivatePrincipal()"));
+    uint8 public constant LOCK_DIAGNOSTIC_TRANSFER = 0;
+    uint8 public constant LOCK_DIAGNOSTIC_BURN = 1;
     address public immutable token0;
     address public immutable token1;
     PrivateLPAccountingProbeToken public immutable lpToken;
@@ -336,6 +400,8 @@ contract PrivateLPAccountingProbe {
     error InputAlreadyConsumed();
     error PrivateTransferAmountMismatch();
     error PrivateLiabilityUnderflow();
+    error LockedDiagnosticUnexpectedSuccess();
+    error LockedDiagnosticUnexpectedError(bytes4 actualSelector);
 
     event PrivateLPAccountingConservationResult(
         address indexed caller,
@@ -345,7 +411,32 @@ contract PrivateLPAccountingProbe {
         ctUint256 protocolFees,
         ctUint256 lpFeeLiability,
         ctUint256 totalShares,
-        ctUint256 retiredRemainder
+        ctUint256 globalRemainder
+    );
+
+    event PrivateLPAccountingDiagnosticSnapshot(
+        address indexed caller,
+        address indexed otherHolder,
+        bytes32 indexed lockId,
+        bool lockActive,
+        uint64 unlockAt,
+        bool permanent,
+        ctUint256 callerBalance,
+        ctUint256 otherBalance,
+        ctUint256 totalShares,
+        ctUint256 callerLocked,
+        ctUint256 callerClaim0,
+        ctUint256 callerClaim1,
+        ctUint256 otherClaim0,
+        ctUint256 otherClaim1,
+        ctUint256 callerAllowance
+    );
+
+    event LockedPrivatePrincipalDiagnostic(
+        address indexed caller,
+        uint8 indexed operation,
+        bytes4 errorSelector,
+        bytes32 revertDataHash
     );
 
     constructor(address token0_, address token1_) {
@@ -407,6 +498,89 @@ contract PrivateLPAccountingProbe {
         lpToken.unlockFromPool(lockId, msg.sender);
     }
 
+    function diagnoseLockedTransfer(
+        address recipient,
+        itUint256 calldata amount
+    ) external returns (bytes4 errorSelector, bytes32 revertDataHash) {
+        gtUint256 value = _validateAndConsume(amount, 0);
+        (bool success, bytes memory revertData) = address(lpToken).call(
+            abi.encodeWithSelector(
+                IPrivateERC20.transferFromGT.selector,
+                msg.sender,
+                recipient,
+                gtUint256.unwrap(value)
+            )
+        );
+        return _recordLockedDiagnostic(
+            LOCK_DIAGNOSTIC_TRANSFER,
+            success,
+            revertData
+        );
+    }
+
+    function diagnoseLockedBurn(
+        itUint256 calldata amount
+    ) external returns (bytes4 errorSelector, bytes32 revertDataHash) {
+        gtUint256 value = _validateAndConsume(amount, 0);
+        (bool success, bytes memory revertData) = address(lpToken).call(
+            abi.encodeWithSelector(
+                PrivateLPAccountingProbeToken.burnFromPool.selector,
+                msg.sender,
+                gtUint256.unwrap(value)
+            )
+        );
+        return _recordLockedDiagnostic(
+            LOCK_DIAGNOSTIC_BURN,
+            success,
+            revertData
+        );
+    }
+
+    function requestDiagnosticSnapshot(address otherHolder, bytes32 lockId)
+        external
+    {
+        (
+            gtUint256 callerBalance,
+            gtUint256 callerLocked,
+            gtUint256 callerClaim0,
+            gtUint256 callerClaim1
+        ) = lpToken.diagnosticHolderState(msg.sender);
+        (
+            gtUint256 otherBalance,
+            ,
+            gtUint256 otherClaim0,
+            gtUint256 otherClaim1
+        ) = lpToken.diagnosticHolderState(otherHolder);
+        gtUint256 callerAllowance = IPrivateERC20(address(lpToken)).allowance(
+            msg.sender,
+            true
+        );
+        (
+            address lockOwner,
+            uint64 unlockAt,
+            bool permanent,
+            bool active
+        ) = lpToken.lockInfo(lockId);
+        if (lockOwner != msg.sender) revert InvalidTokenPair();
+        emit PrivateLPAccountingDiagnosticSnapshot(
+            msg.sender,
+            otherHolder,
+            lockId,
+            active,
+            unlockAt,
+            permanent,
+            MpcCore.offBoardToUser(callerBalance, msg.sender),
+            MpcCore.offBoardToUser(otherBalance, msg.sender),
+            lpToken.requestTotalShares(msg.sender),
+            MpcCore.offBoardToUser(callerLocked, msg.sender),
+            MpcCore.offBoardToUser(callerClaim0, msg.sender),
+            MpcCore.offBoardToUser(callerClaim1, msg.sender),
+            MpcCore.offBoardToUser(otherClaim0, msg.sender),
+            MpcCore.offBoardToUser(otherClaim1, msg.sender),
+            MpcCore.offBoardToUser(callerAllowance, msg.sender)
+        );
+    }
+
     function claim(uint8 side) external returns (ctUint256 memory amount) {
         if (side > 1) revert InvalidTokenPair();
         gtUint256 value = lpToken.consumeClaimFromPool(msg.sender, side);
@@ -425,7 +599,7 @@ contract PrivateLPAccountingProbe {
             ctUint256 memory protocolFees,
             ctUint256 memory lpFeeLiability,
             ctUint256 memory totalShares,
-            ctUint256 memory retiredRemainder
+            ctUint256 memory globalRemainder
         )
     {
         if (side > 1) revert InvalidTokenPair();
@@ -444,7 +618,7 @@ contract PrivateLPAccountingProbe {
             msg.sender
         );
         totalShares = lpToken.requestTotalShares(msg.sender);
-        retiredRemainder = lpToken.requestRetiredRemainder(side, msg.sender);
+        globalRemainder = lpToken.requestGlobalRemainder(side, msg.sender);
         emit PrivateLPAccountingConservationResult(
             msg.sender,
             side,
@@ -453,7 +627,7 @@ contract PrivateLPAccountingProbe {
             protocolFees,
             lpFeeLiability,
             totalShares,
-            retiredRemainder
+            globalRemainder
         );
     }
 
@@ -475,6 +649,29 @@ contract PrivateLPAccountingProbe {
         if (consumedInputs[digest]) revert InputAlreadyConsumed();
         value = MpcCore.validateCiphertext(input);
         consumedInputs[digest] = true;
+    }
+
+    function _recordLockedDiagnostic(
+        uint8 operation,
+        bool success,
+        bytes memory revertData
+    ) internal returns (bytes4 errorSelector, bytes32 revertDataHash) {
+        if (success) revert LockedDiagnosticUnexpectedSuccess();
+        if (revertData.length >= 4) {
+            assembly ("memory-safe") {
+                errorSelector := mload(add(revertData, 0x20))
+            }
+        }
+        if (errorSelector != LOCKED_PRIVATE_PRINCIPAL_SELECTOR) {
+            revert LockedDiagnosticUnexpectedError(errorSelector);
+        }
+        revertDataHash = keccak256(revertData);
+        emit LockedPrivatePrincipalDiagnostic(
+            msg.sender,
+            operation,
+            errorSelector,
+            revertDataHash
+        );
     }
 
     function _privateBalance(address token) internal returns (gtUint256) {

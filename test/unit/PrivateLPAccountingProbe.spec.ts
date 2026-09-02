@@ -21,7 +21,7 @@ describe("disposable private LP-accounting probe", function () {
     );
 
     expect(await lpToken.pool()).to.equal(await probe.getAddress());
-    expect(await lpToken.SCALE()).to.equal(10n ** 18n);
+    expect(await lpToken.SCALE()).to.equal(1n << 128n);
     expect(await ethers.provider.getCode(lpTokenAddress)).to.not.equal("0x");
 
     const tokenArtifact = await artifacts.readArtifact(
@@ -36,9 +36,23 @@ describe("disposable private LP-accounting probe", function () {
     expect(tokenInterface.getFunction("transferFromGT")).to.not.equal(null);
 
     const probeArtifact = await artifacts.readArtifact("PrivateLPAccountingProbe");
+    expect((probeArtifact.deployedBytecode.length - 2) / 2).to.be.at.most(24_576);
+    expect((probeArtifact.bytecode.length - 2) / 2).to.be.at.most(49_152);
     const probeInterface = new Interface(probeArtifact.abi);
     expect(
       probeInterface.getEvent("PrivateLPAccountingConservationResult"),
+    ).to.not.equal(null);
+    expect(
+      probeInterface.getEvent("LockedPrivatePrincipalDiagnostic"),
+    ).to.not.equal(null);
+    expect(
+      probeInterface.getFunction("requestDiagnosticSnapshot"),
+    ).to.not.equal(null);
+    expect(
+      probeInterface.getFunction("diagnoseLockedTransfer"),
+    ).to.not.equal(null);
+    expect(
+      probeInterface.getFunction("diagnoseLockedBurn"),
     ).to.not.equal(null);
 
     const spenderArtifact = await artifacts.readArtifact(

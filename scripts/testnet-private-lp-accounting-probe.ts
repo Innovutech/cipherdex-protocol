@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 
 import { Contract, type BaseContract, type TransactionReceipt } from "ethers";
@@ -43,12 +45,15 @@ const TOTAL_SHARES = 1_000n;
 const DIRECT_TRANSFER = 300n;
 const DELEGATED_TRANSFER = 200n;
 const LOCKED_SHARES = 400n;
-const FEE0_TOTAL = 3_000n;
+const MAIN_FEE0_TOTAL = 3_000n;
 const FEE1_TOTAL = 3_000n;
+const REMAINDER_EDGE_FEE_TOTAL = 3n;
+const FEE0_TOTAL = MAIN_FEE0_TOTAL + REMAINDER_EDGE_FEE_TOTAL;
 
 let stage = "configuration";
 let recoveryJournal: FundedRecoveryJournal | undefined;
 let recoveryWallets: readonly [FundedCotiWallet, FundedCotiWallet] | undefined;
+const submittedTransactions: SanitizedTransaction[] = [];
 
 type Submitted = Readonly<{
   receipt: TransactionReceipt;
@@ -63,6 +68,31 @@ type Deployment = Readonly<{
 
 type ConservationEvidence = Readonly<{
   values: readonly [bigint, bigint, bigint, bigint, bigint, bigint];
+  transaction: Submitted;
+}>;
+
+type SanitizedTransaction = Readonly<{
+  label: string;
+  transactionHash: string;
+  blockNumber: number;
+  receiptStatus: number;
+  gasUsed: string;
+}>;
+
+type DiagnosticSnapshot = Readonly<{
+  values: readonly bigint[];
+  lockActive: boolean;
+  unlockAt: bigint;
+  permanent: boolean;
+  transaction: Submitted;
+}>;
+
+type LockDiagnostic = Readonly<{
+  operation: "transfer" | "burn";
+  operationCode: number;
+  expectedSelector: string;
+  actualSelector: string;
+  revertDataHash: string;
   transaction: Submitted;
 }>;
 
@@ -162,6 +192,16 @@ async function submit(
       "mined-success",
       evidence.receipt.blockNumber,
     );
+    if (Number(evidence.receipt.status) !== 1) {
+      throw new Error(`${label} receipt status is not successful`);
+    }
+    submittedTransactions.push(Object.freeze({
+      label,
+      transactionHash: evidence.transactionHash,
+      blockNumber: evidence.receipt.blockNumber,
+      receiptStatus: Number(evidence.receipt.status),
+      gasUsed: evidence.receipt.gasUsed.toString(),
+    }));
     console.log(
       `${label}: tx=${evidence.transactionHash} gas=${evidence.receipt.gasUsed.toString()}`,
     );
@@ -309,15 +349,6 @@ async function waitUntilUnlock(unlockAt: bigint): Promise<void> {
   }
 }
 
-async function expectRejected(label: string, operation: () => Promise<unknown>): Promise<void> {
-  try {
-    await operation();
-  } catch {
-    return;
-  }
-  throw new Error(`${label} unexpectedly succeeded`);
-}
-
 async function conservation(
   context: ProbeContext,
   side: 0 | 1,
@@ -347,9 +378,104 @@ async function conservation(
     decryptPrivateValue256(context.primary, event.args.protocolFees),
     decryptPrivateValue256(context.primary, event.args.lpFeeLiability),
     decryptPrivateValue256(context.primary, event.args.totalShares),
-    decryptPrivateValue256(context.primary, event.args.retiredRemainder),
+    decryptPrivateValue256(context.primary, event.args.globalRemainder),
   ]) as readonly [bigint, bigint, bigint, bigint, bigint, bigint];
   return Object.freeze({ values, transaction });
+}
+
+async function diagnosticSnapshot(
+  context: ProbeContext,
+  lockId: string,
+  label: string,
+): Promise<DiagnosticSnapshot> {
+  const transaction = await submit(label, () => context.probe.requestDiagnosticSnapshot(
+    context.secondAddress,
+    lockId,
+    { gasLimit: GAS_LIMIT },
+  ));
+  const matches = transaction.receipt.logs.flatMap((log) => {
+    if (log.address.toLowerCase() !== context.probeAddress.toLowerCase()) return [];
+    try {
+      const parsed = context.probe.interface.parseLog(log);
+      return parsed?.name === "PrivateLPAccountingDiagnosticSnapshot" ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  }).filter((event) =>
+    String(event.args.caller).toLowerCase() === context.primaryAddress.toLowerCase() &&
+    String(event.args.otherHolder).toLowerCase() === context.secondAddress.toLowerCase() &&
+    String(event.args.lockId).toLowerCase() === lockId.toLowerCase()
+  );
+  if (matches.length !== 1) throw new Error(`${label} event is missing or ambiguous`);
+  const event = matches[0]!;
+  const values = await Promise.all([
+    decryptPrivateValue256(context.primary, event.args.callerBalance),
+    decryptPrivateValue256(context.primary, event.args.otherBalance),
+    decryptPrivateValue256(context.primary, event.args.totalShares),
+    decryptPrivateValue256(context.primary, event.args.callerLocked),
+    decryptPrivateValue256(context.primary, event.args.callerClaim0),
+    decryptPrivateValue256(context.primary, event.args.callerClaim1),
+    decryptPrivateValue256(context.primary, event.args.otherClaim0),
+    decryptPrivateValue256(context.primary, event.args.otherClaim1),
+    decryptPrivateValue256(context.primary, event.args.callerAllowance),
+  ]);
+  return Object.freeze({
+    values: Object.freeze(values),
+    lockActive: Boolean(event.args.lockActive),
+    unlockAt: BigInt(event.args.unlockAt),
+    permanent: Boolean(event.args.permanent),
+    transaction,
+  });
+}
+
+async function lockedDiagnostic(
+  context: ProbeContext,
+  operation: "transfer" | "burn",
+  amount: bigint,
+  label: string,
+): Promise<LockDiagnostic> {
+  const functionName = operation === "transfer"
+    ? "diagnoseLockedTransfer"
+    : "diagnoseLockedBurn";
+  const input = await encryptFor(context.primary, amount, context.probe, functionName);
+  const transaction = await submit(label, () => operation === "transfer"
+    ? context.probe.diagnoseLockedTransfer(
+      context.secondAddress,
+      input,
+      { gasLimit: GAS_LIMIT },
+    )
+    : context.probe.diagnoseLockedBurn(input, { gasLimit: GAS_LIMIT }));
+  const matches = transaction.receipt.logs.flatMap((log) => {
+    if (log.address.toLowerCase() !== context.probeAddress.toLowerCase()) return [];
+    try {
+      const parsed = context.probe.interface.parseLog(log);
+      return parsed?.name === "LockedPrivatePrincipalDiagnostic" ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  }).filter((event) =>
+    String(event.args.caller).toLowerCase() === context.primaryAddress.toLowerCase()
+  );
+  if (matches.length !== 1) throw new Error(`${label} event is missing or ambiguous`);
+  const event = matches[0]!;
+  const operationCode = Number(event.args.operation);
+  const expectedOperationCode = operation === "transfer" ? 0 : 1;
+  const expectedSelector = ethersLibrary.id("LockedPrivatePrincipal()").slice(0, 10);
+  const actualSelector = String(event.args.errorSelector);
+  const revertDataHash = String(event.args.revertDataHash);
+  if (
+    operationCode !== expectedOperationCode ||
+    actualSelector.toLowerCase() !== expectedSelector.toLowerCase() ||
+    !/^0x[0-9a-f]{64}$/iu.test(revertDataHash)
+  ) throw new Error(`${label} did not prove the exact locked-principal error`);
+  return Object.freeze({
+    operation,
+    operationCode,
+    expectedSelector,
+    actualSelector,
+    revertDataHash,
+    transaction,
+  });
 }
 
 function requireConservation(
@@ -357,15 +483,139 @@ function requireConservation(
   expectedLiability: bigint,
   expectedShares: bigint,
   label: string,
+  expectedGlobalRemainder = 0n,
 ): void {
-  const [rawBalance, activeReserve, protocolFees, lpFeeLiability, totalShares] = actual;
+  const [
+    rawBalance,
+    activeReserve,
+    protocolFees,
+    lpFeeLiability,
+    totalShares,
+    globalRemainder,
+  ] = actual;
   if (
     rawBalance !== expectedLiability ||
     activeReserve !== 0n ||
     protocolFees !== 0n ||
     lpFeeLiability !== expectedLiability ||
-    totalShares !== expectedShares
+    totalShares !== expectedShares ||
+    globalRemainder !== expectedGlobalRemainder
   ) throw new Error(`${label} conservation diverged`);
+}
+
+function buildSanitizedPhase2BEvidence(input: Readonly<{
+  sourceCommit: string;
+  chainId: number;
+  context: ProbeContext;
+  transferDiagnostic: LockDiagnostic;
+  burnDiagnostic: LockDiagnostic;
+  gas: Readonly<Record<string, string>>;
+}>): Readonly<Record<string, unknown>> {
+  if (
+    journal().runStatus !== "passed" ||
+    journal().activeResources.length !== 0 ||
+    journal().activeAllowanceObligations.length !== 0
+  ) throw new Error("Phase 2B evidence requires terminal journal cleanup");
+  const journalTransactions = journal().transactions;
+  if (
+    journalTransactions.length !== submittedTransactions.length ||
+    submittedTransactions.some((transaction, index) => {
+      const recorded = journalTransactions[index];
+      return !recorded ||
+        recorded.hash.toLowerCase() !== transaction.transactionHash.toLowerCase() ||
+        recorded.status !== "mined-success" ||
+        recorded.blockNumber !== transaction.blockNumber;
+    })
+  ) throw new Error("Phase 2B evidence diverges from the authenticated recovery journal");
+  const journalProjection = {
+    runner: journal().identity.runner,
+    sourceCommit: journal().identity.sourceCommit,
+    chainId: journal().identity.chainId,
+    deployment: journal().identity.deployment,
+    transactions: journalTransactions.map((transaction) => ({
+      label: transaction.label,
+      hash: transaction.hash,
+      status: transaction.status,
+      blockNumber: transaction.blockNumber,
+    })),
+    resources: journal().resources.map((resource) => ({
+      id: resource.id,
+      kind: resource.kind,
+      address: resource.address,
+      creationTransactionHash: resource.creationTransactionHash,
+      recovered: resource.recovered,
+      recoveryTransactionHashes: resource.recoveryTransactionHashes,
+    })),
+    allowanceObligations: journal().allowanceObligations.map((obligation) => ({
+      id: obligation.id,
+      token: obligation.token,
+      spender: obligation.spender,
+      active: obligation.active,
+      cleanupTransactionHashes: obligation.cleanupTransactionHashes,
+    })),
+    runStatus: journal().runStatus,
+  };
+  const journalBinding = ethersLibrary.keccak256(
+    ethersLibrary.toUtf8Bytes(JSON.stringify(journalProjection)),
+  );
+  const evidence = Object.freeze({
+    schema: "cipherdex.phase2b-private-lp-funded-evidence/v1",
+    runner: "phase2b-private-lp-accounting",
+    sourceCommit: input.sourceCommit,
+    chainId: input.chainId,
+    runnerSourceSha256: createHash("sha256")
+      .update(readFileSync(new URL(import.meta.url)))
+      .digest("hex"),
+    journalBinding,
+    contracts: Object.freeze({
+      probe: input.context.probeAddress,
+      lpToken: input.context.lpTokenAddress,
+      delegatedSpender: input.context.spenderAddress,
+      underlyingToken0: input.context.token0Address,
+      underlyingToken1: input.context.token1Address,
+    }),
+    transactions: Object.freeze([...submittedTransactions]),
+    lockRejections: Object.freeze([
+      Object.freeze({
+        operation: input.transferDiagnostic.operation,
+        transactionHash: input.transferDiagnostic.transaction.hash,
+        expectedSelector: input.transferDiagnostic.expectedSelector,
+        actualSelector: input.transferDiagnostic.actualSelector,
+        revertDataHash: input.transferDiagnostic.revertDataHash,
+      }),
+      Object.freeze({
+        operation: input.burnDiagnostic.operation,
+        transactionHash: input.burnDiagnostic.transaction.hash,
+        expectedSelector: input.burnDiagnostic.expectedSelector,
+        actualSelector: input.burnDiagnostic.actualSelector,
+        revertDataHash: input.burnDiagnostic.revertDataHash,
+      }),
+    ]),
+    assertions: Object.freeze({
+      exactLockedPrincipalSelector: true,
+      diagnosticStateUnchanged: true,
+      nonzeroGlobalRemainderObserved: true,
+      rollingGlobalRemainderResolved: true,
+      directAndDelegatedTransfersSettled: true,
+      feesWhileLockedClaimed: true,
+      postExitClaimsPreserved: true,
+      reinitializationCheckpointIsolated: true,
+      exactFundedBalancesRestored: true,
+      zeroFinalCustody: true,
+      zeroFinalShares: true,
+      zeroFinalFeeLiability: true,
+      zeroResidualAllowances: true,
+      recoveryResourceClosed: true,
+    }),
+    gas: Object.freeze({ ...input.gas }),
+    generatedAt: new Date().toISOString(),
+  });
+  const serialized = JSON.stringify(evidence);
+  if (
+    /"(?:privateKey|aesKey|signedTransaction|ciphertext|encryptedInput|decryptedAmount|privateBalance)"\s*:/iu
+      .test(serialized)
+  ) throw new Error("Phase 2B evidence contains a forbidden private field");
+  return evidence;
 }
 
 async function buildContext(
@@ -652,6 +902,83 @@ async function main(): Promise<void> {
     probeDeployment: probeDeployment.transaction.gasUsed.toString(),
     spenderDeployment: spenderDeployment.transaction.gasUsed.toString(),
   };
+
+  const edgeMintPrimaryInput = await encryptFor(
+    primary,
+    3n,
+    context.probe,
+    "mintShares",
+  );
+  gas.remainderEdgeMintPrimary = (
+    await submit(
+      "mint remainder-edge primary shares",
+      () => context.probe.mintShares(
+        edgeMintPrimaryInput,
+        { gasLimit: GAS_LIMIT },
+      ),
+    )
+  ).gasUsed.toString();
+  gas.remainderEdgeAccrueOne = (
+    await accrue(context, 0, 1n, "accrue nonzero global remainder")
+  ).gasUsed.toString();
+  const edgeNonzero = await conservation(
+    context,
+    0,
+    "read nonzero global remainder",
+  );
+  gas.remainderEdgeReadNonzero = edgeNonzero.transaction.gasUsed.toString();
+  requireConservation(edgeNonzero.values, 1n, 3n, "nonzero remainder edge", 1n);
+
+  const secondProbe = context.probe.connect(second) as Contract;
+  const edgeMintSecondInput = await encryptFor(
+    second,
+    3n,
+    secondProbe,
+    "mintShares",
+  );
+  gas.remainderEdgeMintSecond = (
+    await submit(
+      "mint remainder-edge second shares",
+      () => secondProbe.mintShares(
+        edgeMintSecondInput,
+        { gasLimit: GAS_LIMIT },
+      ),
+    )
+  ).gasUsed.toString();
+  gas.remainderEdgeBurnSecond = (
+    await burnShares(
+      context,
+      second,
+      3n,
+      "burn remainder-edge second shares",
+    )
+  )!.gasUsed.toString();
+  gas.remainderEdgeAccrueTwo = (
+    await accrue(context, 0, 2n, "resolve rolling global remainder")
+  ).gasUsed.toString();
+  const edgeClaim = await claim(
+    context,
+    primary,
+    0,
+    "consume resolved remainder-edge claim",
+  );
+  gas.remainderEdgeClaim = edgeClaim.gasUsed.toString();
+  gas.remainderEdgeBurnPrimary = (
+    await burnShares(
+      context,
+      primary,
+      3n,
+      "burn remainder-edge primary shares",
+    )
+  )!.gasUsed.toString();
+  const edgeResolved = await conservation(
+    context,
+    0,
+    "read resolved global remainder",
+  );
+  gas.remainderEdgeReadResolved = edgeResolved.transaction.gasUsed.toString();
+  requireConservation(edgeResolved.values, 0n, 0n, "resolved remainder edge");
+
   const mintInput = await encryptFor(primary, TOTAL_SHARES, context.probe, "mintShares");
   const mint = await submit(
     "mint private LP probe shares",
@@ -747,22 +1074,67 @@ async function main(): Promise<void> {
     await accrue(context, 1, 1_000n, "accrue token1 fees while principal is locked")
   ).gasUsed.toString();
 
-  const blockedTransferInput = await encryptFor(primary, 101n, lpPrimary, "transfer");
-  await expectRejected(
-    "locked principal transfer",
-    () => lpPrimary.transfer.staticCall(secondAddress, blockedTransferInput),
+  await setRecoverablePrivateAllowance({
+    journal: journal(),
+    wallet: primary,
+    token: lpPrimary,
+    tokenAddress: context.lpTokenAddress,
+    spender: probeAddress,
+    amount: 101n,
+    label: "private LP lock-diagnostic approval",
+    overrides: { gasLimit: GAS_LIMIT },
+    submit,
+  });
+  const diagnosticBefore = await diagnosticSnapshot(
+    context,
+    lockId,
+    "read pre-diagnostic private LP state",
   );
-  const blockedBurnInput = await encryptFor(primary, 101n, context.probe, "burnShares");
-  await expectRejected(
-    "locked principal burn",
-    () => context.probe.burnShares.staticCall(blockedBurnInput),
+  gas.diagnosticSnapshotBefore = diagnosticBefore.transaction.gasUsed.toString();
+  const transferDiagnostic = await lockedDiagnostic(
+    context,
+    "transfer",
+    101n,
+    "diagnose locked private LP transfer",
   );
+  const burnDiagnostic = await lockedDiagnostic(
+    context,
+    "burn",
+    101n,
+    "diagnose locked private LP burn",
+  );
+  gas.lockedTransferDiagnostic = transferDiagnostic.transaction.gasUsed.toString();
+  gas.lockedBurnDiagnostic = burnDiagnostic.transaction.gasUsed.toString();
+  const diagnosticAfter = await diagnosticSnapshot(
+    context,
+    lockId,
+    "read post-diagnostic private LP state",
+  );
+  gas.diagnosticSnapshotAfter = diagnosticAfter.transaction.gasUsed.toString();
+  if (
+    diagnosticBefore.lockActive !== diagnosticAfter.lockActive ||
+    diagnosticBefore.unlockAt !== diagnosticAfter.unlockAt ||
+    diagnosticBefore.permanent !== diagnosticAfter.permanent ||
+    diagnosticBefore.values.length !== diagnosticAfter.values.length ||
+    diagnosticBefore.values.some((value, index) => value !== diagnosticAfter.values[index])
+  ) throw new Error("locked-operation diagnostics changed private LP state");
+  await setRecoverablePrivateAllowance({
+    journal: journal(),
+    wallet: primary,
+    token: lpPrimary,
+    tokenAddress: context.lpTokenAddress,
+    spender: probeAddress,
+    amount: 0n,
+    label: "private LP lock-diagnostic cleanup",
+    overrides: { gasLimit: GAS_LIMIT },
+    submit,
+  });
 
   const beforeClaims0 = await conservation(context, 0, "read token0 conservation");
   const beforeClaims1 = await conservation(context, 1, "read token1 conservation");
   gas.conservationBeforeClaims0 = beforeClaims0.transaction.gasUsed.toString();
   gas.conservationBeforeClaims1 = beforeClaims1.transaction.gasUsed.toString();
-  requireConservation(beforeClaims0.values, FEE0_TOTAL, TOTAL_SHARES, "token0");
+  requireConservation(beforeClaims0.values, MAIN_FEE0_TOTAL, TOTAL_SHARES, "token0");
   requireConservation(beforeClaims1.values, FEE1_TOTAL, TOTAL_SHARES, "token1");
 
   const primary0BeforeClaim = await privateBalance(token0Primary, primary, primaryAddress);
@@ -843,7 +1215,7 @@ async function main(): Promise<void> {
   gas.conservationReinitialized0 = reinitConservation0.transaction.gasUsed.toString();
   gas.conservationReinitialized1 = reinitConservation1.transaction.gasUsed.toString();
   if (reinitConservation0.values[5] !== 0n || reinitConservation1.values[5] !== 0n) {
-    throw new Error("an exact prior generation unexpectedly retired nonzero remainder");
+    throw new Error("a resolved prior generation unexpectedly retained global remainder");
   }
   const reinitBurn = await burnShares(
     context,
@@ -898,15 +1270,15 @@ async function main(): Promise<void> {
 
   journal().markRecovered("private-lp-accounting-probe", [reinitBurn!.hash]);
   journal().markRun("passed");
-  console.log(`privateLpAccountingProbeResult=${JSON.stringify({
+  const evidence = buildSanitizedPhase2BEvidence({
     sourceCommit,
-    chainId: network.chainId.toString(),
-    probe: probeAddress,
-    lpToken: context.lpTokenAddress,
-    delegatedSpender: spenderAddress,
-    exactFundedBalancesRestored: true,
+    chainId: Number(network.chainId),
+    context,
+    transferDiagnostic,
+    burnDiagnostic,
     gas,
-  })}`);
+  });
+  console.log(`phase2bFundedEvidence=${JSON.stringify(evidence)}`);
 }
 
 void main().catch(async (error: unknown) => {

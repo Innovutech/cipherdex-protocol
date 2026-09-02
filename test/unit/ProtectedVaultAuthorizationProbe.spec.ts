@@ -17,16 +17,15 @@ describe("disposable protected-vault authorization probe", function () {
       { name: "issuer", type: "address" },
       { name: "vault", type: "address" },
       { name: "disposition", type: "uint8" },
-      { name: "nonce", type: "uint256" },
+      { name: "authorizationId", type: "bytes32" },
       { name: "deadline", type: "uint64" },
     ],
   };
 
   async function fixture(useContractIssuer = false) {
-    const [issuerOwner, vault, other, factory] = await ethers.getSigners();
+    const [issuerOwner, vault, secondVault, other, factory] = await ethers.getSigners();
     const issuer = useContractIssuer
-      ? await (await ethers.getContractFactory("MockERC1271Wallet"))
-        .deploy(issuerOwner.address)
+      ? await (await ethers.getContractFactory("MockERC1271Wallet")).deploy(issuerOwner.address)
       : undefined;
     if (issuer) await issuer.waitForDeployment();
     const issuerAddress = issuer ? await issuer.getAddress() : issuerOwner.address;
@@ -55,6 +54,7 @@ describe("disposable protected-vault authorization probe", function () {
       issuerOwner,
       issuerAddress,
       vault,
+      secondVault,
       other,
       factory,
       protectedToken,
@@ -74,6 +74,7 @@ describe("disposable protected-vault authorization probe", function () {
 
   async function sign(
     context: Awaited<ReturnType<typeof fixture>>,
+    authorizationId: string,
     overrides: Partial<{
       chainId: bigint;
       verifyingContract: string;
@@ -88,18 +89,16 @@ describe("disposable protected-vault authorization probe", function () {
       issuer: string;
       vault: string;
       disposition: number;
-      nonce: bigint;
       deadline: bigint;
     }> = {},
   ): Promise<string> {
     const [token0, token1] = ordered(context.terms.tokenA, context.terms.tokenB);
-    const domain = {
+    return context.issuerOwner.signTypedData({
       name: "CipherDEX Phase2A Vault Authorization Probe",
       version: "1",
       chainId: overrides.chainId ?? context.network.chainId,
       verifyingContract: overrides.verifyingContract ?? await context.probe.getAddress(),
-    };
-    const value = {
+    }, types, {
       factory: overrides.factory ?? context.factory.address,
       protocolVersion: overrides.protocolVersion ?? 2n,
       privacyMode: overrides.privacyMode ?? 1,
@@ -111,104 +110,75 @@ describe("disposable protected-vault authorization probe", function () {
       issuer: overrides.issuer ?? context.issuerAddress,
       vault: overrides.vault ?? context.vault.address,
       disposition: overrides.disposition ?? context.terms.disposition,
-      nonce: overrides.nonce ?? 0n,
+      authorizationId,
       deadline: overrides.deadline ?? context.deadline,
-    };
-    return context.issuerOwner.signTypedData(domain, types, value);
+    });
   }
 
-  it("accepts EOA issuer authorization while leaving execution values unsigned", async function () {
-    const context = await fixture();
-    const signature = await sign(context);
-    const firstTag = ethers.id("transaction-scoped-gt-values-a");
-    const secondTag = ethers.id("transaction-scoped-gt-values-b");
-
-    await expect(context.probe.connect(context.vault).authorizeVaultExecution(
+  async function execute(
+    context: Awaited<ReturnType<typeof fixture>>,
+    authorizationId: string,
+    signature: string,
+    failAfterConsumption = false,
+  ) {
+    return context.probe.connect(context.vault).authorizeVaultExecution(
       context.terms,
       context.vault.address,
-      0,
+      authorizationId,
       context.deadline,
       signature,
-      firstTag,
-      true,
-    )).to.be.revertedWithCustomError(context.probe, "ExecutionFailed");
-    expect(await context.probe.nextNonce(context.issuerAddress)).to.equal(0n);
-    expect(await context.probe.executionCount()).to.equal(0n);
-
-    await expect(context.probe.connect(context.vault).authorizeVaultExecution(
-      context.terms,
-      context.vault.address,
-      0,
-      context.deadline,
-      signature,
-      secondTag,
-      false,
-    )).to.emit(context.probe, "StaticAuthorizationConsumed");
-    expect(await context.probe.nextNonce(context.issuerAddress)).to.equal(1n);
-    expect(await context.probe.executionCount()).to.equal(1n);
-  });
-
-  it("accepts ERC-1271 issuer authorization of one vault", async function () {
-    const context = await fixture(true);
-    const signature = await sign(context);
-    await expect(context.probe.connect(context.vault).authorizeVaultExecution(
-      context.terms,
-      context.vault.address,
-      0,
-      context.deadline,
-      signature,
-      ethers.id("vault-funded-gt"),
-      false,
-    )).to.emit(context.probe, "StaticAuthorizationConsumed")
-      .withArgs(
-        context.issuerAddress,
-        context.vault.address,
-        context.terms.protectedToken,
-        0,
-      );
-  });
-
-  it("rejects replay, wrong caller and expired authorization", async function () {
-    const context = await fixture();
-    const signature = await sign(context);
-    const call = () => context.probe.connect(context.vault).authorizeVaultExecution(
-      context.terms,
-      context.vault.address,
-      0,
-      context.deadline,
-      signature,
-      ethers.id("gt"),
-      false,
+      ethers.id(`unsigned-gt:${authorizationId}`),
+      failAfterConsumption,
     );
-    await call();
-    await expect(call()).to.be.revertedWithCustomError(context.probe, "InvalidNonce");
-    await expect(context.probe.connect(context.other).authorizeVaultExecution(
-      context.terms,
-      context.vault.address,
-      1,
-      context.deadline,
-      await sign(context, { nonce: 1n }),
-      ethers.id("gt"),
-      false,
-    )).to.be.revertedWithCustomError(context.probe, "VaultOnly");
+  }
 
-    const block = await ethers.provider.getBlock("latest");
-    const expired = BigInt(block!.timestamp - 1);
-    await expect(context.probe.connect(context.vault).authorizeVaultExecution(
-      context.terms,
-      context.vault.address,
-      1,
-      expired,
-      await sign(context, { nonce: 1n, deadline: expired }),
-      ethers.id("gt"),
-      false,
-    )).to.be.revertedWithCustomError(context.probe, "AuthorizationExpired");
+  it("executes independent issuer authorizations in any order", async function () {
+    const context = await fixture();
+    const ids = [ethers.id("launch-a"), ethers.id("launch-b"), ethers.id("launch-c")];
+    const signatures = await Promise.all(ids.map((id) => sign(context, id)));
+    expect(await context.probe.consumedAuthorizationId(context.issuerAddress, ids[0])).to.equal(false);
+    await execute(context, ids[2], signatures[2]!);
+    await execute(context, ids[0], signatures[0]!);
+    await execute(context, ids[1], signatures[1]!);
+    for (const id of ids) {
+      expect(await context.probe.consumedAuthorizationId(context.issuerAddress, id)).to.equal(true);
+    }
+    expect(await context.probe.executionCount()).to.equal(3n);
   });
 
-  it("binds every static factory/mode/pair/token/fee/disposition field", async function () {
+  it("does not consume an authorization when atomic execution fails", async function () {
     const context = await fixture();
-    const [token0, token1] = ordered(context.terms.tokenA, context.terms.tokenB);
+    const id = ethers.id("retryable-launch");
+    const signature = await sign(context, id);
+    await expect(execute(context, id, signature, true))
+      .to.be.revertedWithCustomError(context.probe, "ExecutionFailed");
+    expect(await context.probe.consumedAuthorizationId(context.issuerAddress, id)).to.equal(false);
+    expect(await context.probe.executionCount()).to.equal(0n);
+    await expect(execute(context, id, signature)).to.emit(context.probe, "StaticAuthorizationConsumed");
+  });
+
+  it("rejects exact replay without installing preauthorization", async function () {
+    const context = await fixture();
+    const id = ethers.id("one-use-launch");
+    const signature = await sign(context, id);
+    expect(await context.probe.consumedAuthorizationId(context.issuerAddress, id)).to.equal(false);
+    await execute(context, id, signature);
+    await expect(execute(context, id, signature))
+      .to.be.revertedWithCustomError(context.probe, "AuthorizationAlreadyConsumed");
+  });
+
+  it("accepts an ERC-1271 issuer-selected authorization ID", async function () {
+    const context = await fixture(true);
+    const id = ethers.id("erc1271-launch");
+    await expect(execute(context, id, await sign(context, id)))
+      .to.emit(context.probe, "StaticAuthorizationConsumed");
+  });
+
+  it("binds vault, factory, mode, pair, tier, token, disposition and EIP-712 domain", async function () {
+    const context = await fixture();
+    const id = ethers.id("bound-launch");
     const mutations = [
+      { vault: context.secondVault.address },
       { factory: context.other.address },
       { protocolVersion: 3n },
       { privacyMode: 2 },
@@ -218,44 +188,58 @@ describe("disposable protected-vault authorization probe", function () {
       { feeBps: 100n },
       { protectedToken: context.terms.tokenB },
       { issuer: context.other.address },
-      { vault: context.other.address },
       { disposition: 2 },
       { chainId: context.network.chainId + 1n },
       { verifyingContract: context.other.address },
     ] as const;
-
     for (const mutation of mutations) {
-      const signature = await sign(context, mutation);
-      await expect(context.probe.connect(context.vault).authorizeVaultExecution(
-        context.terms,
-        context.vault.address,
-        0,
-        context.deadline,
-        signature,
-        ethers.id(`gt:${JSON.stringify(mutation, (_, value) =>
-          typeof value === "bigint" ? value.toString() : value)}`),
-        false,
-      )).to.be.revertedWithCustomError(context.probe, "InvalidIssuerAuthorization");
+      await expect(execute(context, id, await sign(context, id, mutation)))
+        .to.be.revertedWithCustomError(context.probe, "InvalidIssuerAuthorization");
     }
-
-    expect(token0).to.not.equal(token1);
-    expect(await context.probe.nextNonce(context.issuerAddress)).to.equal(0n);
+    expect(await context.probe.consumedAuthorizationId(context.issuerAddress, id)).to.equal(false);
   });
 
-  it("requires the explicit protected token to be in the pair", async function () {
+  it("rejects wrong caller, zero ID, expiry and protected token outside the pair", async function () {
     const context = await fixture();
+    const id = ethers.id("caller-bound-launch");
+    await expect(context.probe.connect(context.secondVault).authorizeVaultExecution(
+      context.terms,
+      context.vault.address,
+      id,
+      context.deadline,
+      await sign(context, id),
+      ethers.id("gt"),
+      false,
+    )).to.be.revertedWithCustomError(context.probe, "VaultOnly");
+    await expect(context.probe.connect(context.vault).authorizeVaultExecution(
+      context.terms,
+      context.vault.address,
+      ethers.ZeroHash,
+      context.deadline,
+      "0x",
+      ethers.id("gt"),
+      false,
+    )).to.be.revertedWithCustomError(context.probe, "InvalidAuthorizationId");
+    const block = await ethers.provider.getBlock("latest");
+    const expired = BigInt(block!.timestamp - 1);
+    await expect(context.probe.connect(context.vault).authorizeVaultExecution(
+      context.terms,
+      context.vault.address,
+      id,
+      expired,
+      await sign(context, id, { deadline: expired }),
+      ethers.id("gt"),
+      false,
+    )).to.be.revertedWithCustomError(context.probe, "AuthorizationExpired");
+
     const unrelated = await (
       await ethers.getContractFactory("MockPhase2ALaunchIssuerToken")
     ).deploy(context.issuerAddress);
     await unrelated.waitForDeployment();
-    const invalidTerms = {
-      ...context.terms,
-      protectedToken: await unrelated.getAddress(),
-    };
     await expect(context.probe.authorizationDigest(
-      invalidTerms,
+      { ...context.terms, protectedToken: await unrelated.getAddress() },
       context.vault.address,
-      0,
+      id,
       context.deadline,
     )).to.be.revertedWithCustomError(context.probe, "InvalidStaticTerms");
   });

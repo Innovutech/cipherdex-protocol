@@ -79,20 +79,29 @@ describe("disposable public LP-accounting probe", function () {
     await expect(token.connect(alice).transfer(bob.address, 80)).to.not.revert(ethers);
   });
 
-  it("preserves claims and retires global remainder across full exit/reinitialization", async function () {
+  it("rolls only unallocated sub-unit remainder across supply changes", async function () {
     const { alice, bob, probe, token } = await fixture();
     await probe.connect(alice).mint(3);
     await probe.accrue(0, 0, 0, 1);
-    await probe.connect(alice).burn(3);
-
-    expect(await token.totalSupply()).to.equal(0n);
-    expect(await token.retiredRemainder(0)).to.equal(1n);
-    const aliceClaim = await token.previewClaim(alice.address, 0);
-
     await probe.connect(bob).mint(3);
     expect(await token.previewClaim(bob.address, 0)).to.equal(0n);
-    expect(await token.retiredRemainder(0)).to.equal(1n);
-    expect(await token.previewClaim(alice.address, 0)).to.equal(aliceClaim);
+    expect(await token.globalRemainder(0)).to.equal(1n);
+    await probe.connect(bob).burn(3);
+    await probe.accrue(0, 0, 0, 2);
+    expect(await token.globalRemainder(0)).to.equal(0n);
+    expect(await token.previewClaim(alice.address, 0)).to.equal(3n);
+    await probe.connect(alice).burn(3);
+    expect(await token.totalSupply()).to.equal(0n);
+    expect(await token.globalRemainder(0)).to.equal(0n);
+  });
+
+  it("accepts the proved maximum share and per-operation fee operands", async function () {
+    const { alice, probe, token } = await fixture();
+    const maximum = (1n << 128n) - 1n;
+    expect(await token.SCALE()).to.equal(1n << 128n);
+    await probe.connect(alice).mint(maximum);
+    await probe.accrue(0, 0, 0, maximum);
+    expect(await token.previewClaim(alice.address, 0)).to.equal(maximum);
   });
 
   it("never credits LP fee liabilities into reserves or protocol fees", async function () {
@@ -105,6 +114,9 @@ describe("disposable public LP-accounting probe", function () {
     await probe.connect(alice).claim(0);
     expect(await probe.activeReserve(0)).to.equal(997n);
     expect(await probe.protocolFees(0)).to.equal(1n);
+    expect(await probe.lpFeeLiability(0)).to.equal(1n);
+    await probe.accrue(0, 0, 0, 95);
+    await probe.connect(alice).claim(0);
     expect(await probe.lpFeeLiability(0)).to.equal(0n);
   });
 });

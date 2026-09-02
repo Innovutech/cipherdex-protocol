@@ -8,7 +8,8 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  *         fungible LP token without a token-to-pool transfer callback.
  */
 contract PublicLPAccountingProbeToken is ERC20 {
-    uint256 public constant SCALE = 1e18;
+    uint256 public constant SCALE = 1 << 128;
+    uint256 public constant MAX_OPERAND = SCALE - 1;
 
     struct LockRecord {
         address owner;
@@ -19,10 +20,12 @@ contract PublicLPAccountingProbeToken is ERC20 {
     }
 
     address public immutable pool;
-    uint256[2] public feeGrowth;
+    uint256[2] public feeGrowthWhole;
+    uint256[2] public feeGrowthFraction;
     uint256[2] public globalRemainder;
-    uint256[2] public retiredRemainder;
-    mapping(address => uint256[2]) public checkpoint;
+    uint256[2] public lifetimeAccrued;
+    mapping(address => uint256[2]) public checkpointWhole;
+    mapping(address => uint256[2]) public checkpointFraction;
     mapping(address => uint256[2]) public holderCarry;
     mapping(address => uint256[2]) public claimable;
     mapping(address => uint256) public lockedPrincipal;
@@ -44,14 +47,32 @@ contract PublicLPAccountingProbeToken is ERC20 {
     }
 
     function recordFees(uint8 side, uint256 lpFee) external onlyPool {
-        if (side > 1 || lpFee == 0 || totalSupply() == 0) revert InvalidAmount();
-        uint256 globalNumerator = lpFee * SCALE + globalRemainder[side];
-        feeGrowth[side] += globalNumerator / totalSupply();
-        globalRemainder[side] = globalNumerator % totalSupply();
+        uint256 supply = totalSupply();
+        if (
+            side > 1 ||
+            lpFee == 0 ||
+            lpFee > MAX_OPERAND ||
+            supply == 0 ||
+            supply > MAX_OPERAND
+        ) revert InvalidAmount();
+        uint256 feeWhole = lpFee / supply;
+        uint256 feeRemainder = lpFee % supply;
+        uint256 fractionalNumerator =
+            feeRemainder * SCALE + globalRemainder[side];
+        uint256 fractionIncrement = fractionalNumerator / supply;
+        globalRemainder[side] = fractionalNumerator % supply;
+        uint256 combinedFraction =
+            feeGrowthFraction[side] + fractionIncrement;
+        feeGrowthWhole[side] += feeWhole + combinedFraction / SCALE;
+        feeGrowthFraction[side] = combinedFraction % SCALE;
+        lifetimeAccrued[side] += lpFee;
+        if (feeGrowthWhole[side] > lifetimeAccrued[side]) {
+            revert InvalidAmount();
+        }
     }
 
     function mintFromPool(address owner, uint256 amount) external onlyPool {
-        if (amount == 0 || totalSupply() + amount > SCALE) revert InvalidAmount();
+        if (amount == 0 || totalSupply() + amount > MAX_OPERAND) revert InvalidAmount();
         _mint(owner, amount);
     }
 
@@ -101,10 +122,12 @@ contract PublicLPAccountingProbeToken is ERC20 {
 
     function previewClaim(address owner, uint8 side) external view returns (uint256) {
         if (side > 1) revert InvalidAmount();
-        uint256 numerator =
-            balanceOf(owner) * (feeGrowth[side] - checkpoint[owner][side]) +
-            holderCarry[owner][side];
-        return claimable[owner][side] + numerator / SCALE;
+        (uint256 wholeDelta, uint256 fractionDelta) = _growthDelta(owner, side);
+        uint256 fractionalNumerator =
+            balanceOf(owner) * fractionDelta + holderCarry[owner][side];
+        return claimable[owner][side] +
+            balanceOf(owner) * wholeDelta +
+            fractionalNumerator / SCALE;
     }
 
     function _update(address from, address to, uint256 amount) internal override {
@@ -116,24 +139,37 @@ contract PublicLPAccountingProbeToken is ERC20 {
         ) revert LockedPrincipal();
 
         super._update(from, to, amount);
-
-        if (to == address(0) && totalSupply() == 0) {
-            for (uint8 side = 0; side < 2; side++) {
-                retiredRemainder[side] += globalRemainder[side];
-                globalRemainder[side] = 0;
-            }
-        }
     }
 
     function _settle(address owner) internal {
         uint256 ownerBalance = balanceOf(owner);
         for (uint8 side = 0; side < 2; side++) {
-            uint256 delta = feeGrowth[side] - checkpoint[owner][side];
-            uint256 holderNumerator =
-                ownerBalance * delta + holderCarry[owner][side];
-            claimable[owner][side] += holderNumerator / SCALE;
-            holderCarry[owner][side] = holderNumerator % SCALE;
-            checkpoint[owner][side] = feeGrowth[side];
+            (uint256 wholeDelta, uint256 fractionDelta) =
+                _growthDelta(owner, side);
+            uint256 fractionalNumerator =
+                ownerBalance * fractionDelta + holderCarry[owner][side];
+            claimable[owner][side] +=
+                ownerBalance * wholeDelta + fractionalNumerator / SCALE;
+            holderCarry[owner][side] = fractionalNumerator % SCALE;
+            checkpointWhole[owner][side] = feeGrowthWhole[side];
+            checkpointFraction[owner][side] = feeGrowthFraction[side];
+        }
+    }
+
+    function _growthDelta(address owner, uint8 side)
+        internal
+        view
+        returns (uint256 wholeDelta, uint256 fractionDelta)
+    {
+        wholeDelta = feeGrowthWhole[side] - checkpointWhole[owner][side];
+        uint256 currentFraction = feeGrowthFraction[side];
+        uint256 previousFraction = checkpointFraction[owner][side];
+        if (currentFraction >= previousFraction) {
+            fractionDelta = currentFraction - previousFraction;
+        } else {
+            if (wholeDelta == 0) revert InvalidAmount();
+            wholeDelta -= 1;
+            fractionDelta = SCALE + currentFraction - previousFraction;
         }
     }
 }

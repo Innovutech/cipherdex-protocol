@@ -7,11 +7,13 @@ Reviewed repository: `Innovutech/cipherdex-protocol`
 Topology source reviewed: upstream `main` at
 `9e66e8f424d242013326a9c408a16e371ce35342`. Phase 2A corrections and proof
 work start from its plan commit
-`52685e3bb5b117b1322dcd3ff2e637a67b27a9e8`.
+`52685e3bb5b117b1322dcd3ff2e637a67b27a9e8`. Phase 2B proof work starts from
+upstream `main` at `59b3de345d9c63fd6d02249bb681a9b17aefae08`.
 
 Source, tests and committed deployment records at that SHA are the authority for
-this plan. Phase 2A changes only this plan and disposable proof artifacts; it does
-not change production contracts, SDK, deployment code, manifests or deployments.
+this plan. Phases 2A/2B change only this plan, result documents and disposable proof
+artifacts; they do not change production contracts, SDK, deployment code, manifests,
+licenses or deployments.
 
 ## Current topology and gaps
 
@@ -52,7 +54,12 @@ Keep three isolated bundles:
 
 Use the same identity fields and ordering rules in every factory:
 
-`chainId, factory, protocolVersion, privacyMode, poolKind, ordered pair, feeBps, protectedToken`
+`ordered pair, feeBps, protocolVersion, privacyMode, poolKind, protectedToken`
+
+This key is local to one immutable factory, so it does not redundantly encode chain
+ID or factory address. Chain ID and factory remain mandatory in EIP-712 signatures,
+domain separation and deployment manifests. Add either field to CREATE2/mapping
+identity only if a concrete cross-factory collision requirement is later proven.
 
 `STANDARD` uses `protectedToken = address(0)`. `PROTECTED` requires the explicit
 protected token to be one member of the pair. Standard and protected keys are
@@ -135,13 +142,20 @@ EOA/ERC-1271 issuer signature authorizes only that vault and the static launch t
 It is consumed in the execution transaction and binds:
 
 `chainId, protectedInitializer, factory, protocolVersion, privacyMode, poolKind,
-ordered pair, feeBps, protectedToken, issuer, vault, LP disposition, nonce,
+ordered pair, feeBps, protectedToken, issuer, vault, LP disposition,
+issuer-chosen `authorizationId`,
 deadline`.
 
 The signature does not bind future transaction-scoped GT values. At execution the
 authorized vault creates, supplies and funds its own GT. CipherDEX pulls only from
 that vault and enforces exact transfer deltas, pool identity, price/slippage checks
 and LP disposition. There is no arbitrary `from`.
+
+Authorization replay state is `consumedAuthorizationId[issuer][authorizationId]`.
+Independent IDs may execute in any order. The exact ID is marked consumed only in
+the successful atomic execution; a revert restores it to unused. Sequential issuer
+nonces are rejected because one abandoned signature would otherwise block unrelated
+launches. No mutable preauthorization record is installed.
 
 The caller must be the named issuer or vault. `SignatureValidation` provides EOA
 and ERC-1271 verification. No authorization is installed ahead of time. Protected
@@ -208,24 +222,51 @@ liabilities and pays claims. The LP token settles affected holders internally
 before every mint, burn, direct transfer or delegated transfer. No LP-token to pool
 callback occurs during transfer.
 
-Use one reviewed integer `SCALE`, selected only after public and MPC overflow bounds
-and measured gas are proven. Do not assume Q128. For each fee side:
+Use the Phase 2B quotient/remainder representation:
 
-`globalNumerator = lpFee * SCALE + globalRemainder`
+- `SCALE = 2^128`;
+- `MAX_TOTAL_SHARES = 2^128 - 1`;
+- `MAX_RESERVE_OPERAND = 2^128 - 1` per active reserve;
+- `MAX_LP_FEE_OPERAND = 2^128 - 1` per accrual;
+- checked `uint256` lifetime LP-fee accrual per token.
 
-`growthDelta = floor(globalNumerator / totalShares)`
+These caps align with the actual full-range share formula
+`min(amount0 * scale0, amount1 * scale1)` and the existing supported decimals
+`0..18`. With reserves and shares below `2^128`, reserve multiplication and
+`shares * reserve` are below `2^256`. The worst normalization product is
+`reserve * 10^18 * 10^18 < 2^248`, so it also fits public and COTI MPC uint256.
 
-`globalRemainder = globalNumerator % totalShares`
+Store cumulative per-share growth as `(growthWhole, growthFraction)` with
+`growthFraction < SCALE`. For each fee accrual:
 
-For each settled holder:
+`feeWhole = floor(lpFee / totalShares)`
 
-`holderNumerator = balance * growthDelta + holderCarry`
+`feeRemainder = lpFee % totalShares`
 
-`newClaim = floor(holderNumerator / SCALE)`
+`fractionalNumerator = feeRemainder * SCALE + globalRemainder`
 
-`holderCarry = holderNumerator % SCALE`
+`fractionIncrement = floor(fractionalNumerator / totalShares)`
 
-`claimable += newClaim`
+`globalRemainder = fractionalNumerator % totalShares`
+
+Normalize `growthFraction + fractionIncrement` into the two growth limbs. This
+avoids the single-accumulator design's full `lpFee * SCALE` and prevents a scaled
+lifetime accumulator from overflowing after only `2^128` fee units. Its largest
+product is `(totalShares - 1) * SCALE + (SCALE - 1) < 2^256`.
+
+For settlement, subtract the holder's two-limb checkpoint with one fractional
+borrow, then calculate:
+
+`newClaim = balance * wholeDelta + floor((balance * fractionDelta + holderCarry) / SCALE)`
+
+`holderCarry = (balance * fractionDelta + holderCarry) % SCALE`
+
+The fractional product is below `2^256`. The whole product is also bounded for every
+reachable holder: balance is constant between checkpoints, and for every included
+accrual that balance is no greater than total supply, so its whole entitlement is
+no greater than cumulative accrued fees. A fabricated unreachable product fails
+closed. The lifetime counter and whole accumulator use checked uint256 additions;
+new accrual stops before wrap, while transfer, burn and claim remain available.
 
 Minted shares checkpoint at current growth and cannot capture history. Sender and
 receiver settle before a transfer; accrued fees remain with the sender and future
@@ -238,16 +279,25 @@ no special fee account. Public growth, claims and amount events may be plaintext
 Modes 1/2 keep growth, checkpoints, claimable balances and claim amounts encrypted,
 offer owner-readable ciphertext results, and emit no plaintext amount event.
 
-Global and per-holder fractional dust remains segregated as LP-fee accounting and
-rolls forward within one share-supply generation; it is never added to reserves,
-protocol fees or a new holder's checkpoint. When total shares reaches zero, the
-old global remainder is moved to a generation-scoped retired-dust bucket and the
-active remainder is reset before any later mint. A later LP generation cannot
-inherit it. Retired dust remains part of LP-fee liability and has no beneficiary or
-reserve path. The reference proof requires `totalShares <= SCALE`, accounts retired
-dust explicitly and bounds active global, retired global and per-holder carry dust.
-Production share bounds, the final scale and a deterministic terminal dust policy
-remain arithmetic/MPC proof gates.
+Holder carry is allocated, owner-bound fractional entitlement and remains with that
+owner across transfer, burn and zero supply. Global remainder is unallocated. Keep
+one rolling global scalar across ordinary supply changes and zero-supply generations;
+do not create retired arrays or buckets. Because `globalRemainder < totalShares <=
+SCALE - 1` after every accrual, the historical unallocated amount is always strictly
+less than one raw token unit. A later LP may receive part of that sub-unit remainder,
+but can never capture allocated/claimable historical fees. This is the precise scope
+of the no-historical-capture guarantee.
+
+Exact conservation after settling known holders is:
+
+`(lpFeeLiability - wholeClaimable) * SCALE = sum(holderCarry) + globalRemainder`.
+
+Rolling the sub-unit global remainder is selected over an immutable vault/burn close:
+the latter would assign LP-owned value elsewhere, requires a terminal-state trigger,
+and still cannot transfer a fractional raw token. Owner carries are not swept or
+retired; they may mature when that owner later holds shares. This creates no
+unbounded storage and no unowned whole-token bucket. Integer-token granularity still
+means one dormant owner may hold less than one raw unit until future growth.
 
 Locks leave shares in the owner's LP balance. The pool instructs the LP token to
 record locked principal; the LP token enforces
@@ -459,13 +509,13 @@ explicit migration, continued-support or deprecation decision before deployment.
 | --- | --- |
 | Identity/binding | All dependency address/codehash/interface/mode/version checks; one-time finalization; wrong bundle rejection; no pools before finalization. |
 | Standard initialization | Mode 0 EOA/contract and Modes 1/2 EOA-IT/vault-GT; both directions, mixed decimals, ratio bounds, exact deltas, rollback and reinitialization after full exit. |
-| Protected issuer/vault | Explicit protected token in pair/key; unsupported token rejection; direct issuer; authorized vault; EOA and ERC-1271; wrong vault/token/mode/factory/chain/version/kind/pair/tier/nonce/deadline; replay. |
+| Protected issuer/vault | Explicit protected token in pair/key; unsupported token rejection; direct issuer; authorized vault; EOA and ERC-1271; independent authorization IDs in any order; wrong vault/token/mode/factory/chain/version/kind/pair/tier/ID/deadline; replay; failed execution does not consume. |
 | Anti-squatting/atomicity | Arbitrary protected create/reserve attempts fail; every failure leaves no pool, consumed auth, escrow, approval or commitment; standard key remains usable. |
 | IT/GT parity | Identical transition outputs and reverts for IT and GT; IT endpoint/selector/caller replay; GT actual-caller funding only; no arbitrary `from`; zero residual allowances. |
 | Swap accounting | Both directions and tiers; total fee split; active reserves exclude both liabilities; quote/settlement parity; minOut; tiny trades; rounding; transfer-tax/rebase rejection policy. |
 | LP fee growth | No historical capture; claim once; repeated claim; mint/burn/transfer checkpoints; sender keeps accrued fees; future fees follow shares; aggregate claims never exceed liability. |
 | LP locks | Timed/permanent principal restrictions; owner balance retained; locked shares earn and claim; transfer/withdraw cannot exceed unlocked amount; unlock does not duplicate shares or fees. |
-| Full exit/dust/loss | Active reserves only on exit; old claims survive; new shares get no history; selected-SCALE carry conservation; retired zero-supply remainder isolation; bounded dust; unsolicited surplus segregation; accounting deficit fails closed. |
+| Full exit/dust/loss | Active reserves only on exit; old claims survive; new shares get no allocated history; two-limb carry conservation; rolling sub-unit global remainder across supply generations; no retired arrays; unsolicited surplus segregation; accounting deficit fails closed. |
 | Mode isolation | Mode/router/factory/pool cross-calls fail; Mode 1 emits no price; Mode 2 preserves initial reference, 50-bps observations and encrypted authoritative minOut; future mode is untrusted. |
 | Routing | Canonical derivation only; explicit mode/kind; absent/uninitialized/invalid candidates; deterministic ties; request replay; funded candidate/gas ceilings per mode. |
 | Deployment | Exact source/clean tree, compiler input, manifest digest, constructor/binding receipts, codehash readback, failed/uncertain transaction recovery and zero temporary resources. |
@@ -532,15 +582,14 @@ evidence for deprecated contracts.
 - **Issuer interface:** no current universal token issuer signal exists. Review and
   test the actual partner launch-token/factory implementation before freezing
   `ICipherDEXLaunchTokenIssuer`; unsupported tokens remain standard-only.
-- **Private LP token internals:** the funded COTI probe passed without a token-to-pool
-  callback, including direct/delegated transfer ordering, locks, claims, full exit,
-  reinitialization and exact conservation. Production storage and arithmetic still
-  require optimization and remeasurement: the disposable direct/delegated transfers
-  used about `9.47M`/`10.28M` gas and claims used about `5.67M` gas.
-- **Fee-growth scale:** the Phase 2A model proves the formulas and a bounded
-  zero-supply rule for configurable `SCALE` with `totalShares <= SCALE`; it does not
-  select Q128 or a production scale. Prove concrete public and COTI MPC overflow
-  bounds, aggregate liability conservation and gas before selecting the scale.
+- **Private LP production gas:** the Phase 2A funded probe passed without a callback,
+  but its lock rejection used non-authoritative `eth_call`. Phase 2B requires paid
+  exact-selector diagnostics plus before/after encrypted state evidence. Production
+  storage must then be optimized and remeasured against the selected two-limb math.
+- **Arithmetic integration:** Phase 2B selects `SCALE = 2^128`, `2^128 - 1` share,
+  reserve and per-fee operands, quotient/remainder growth and a rolling sub-unit
+  global remainder. The reference/public/private probes must pass full local and
+  funded COTI evidence before these constants move into production code.
 - **Confidential limit orders:** feasibility and keeper liveness remain unproven until
   the funded lifecycle above passes. They are not part of the initial deployment.
 - **Mainnet value:** exact private amounts are not publicly inventoryable. Treat any

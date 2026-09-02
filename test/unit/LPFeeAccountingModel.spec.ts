@@ -1,6 +1,15 @@
 import { expect } from "chai";
 
-import { FungibleLpFeeModel } from "../../scripts/lp-fee-accounting-model";
+import {
+  advanceFeeGrowth,
+  FEE_GROWTH_SCALE,
+  FungibleLpFeeModel,
+  MAX_LP_FEE_OPERAND,
+  MAX_RESERVE_OPERAND,
+  MAX_TOTAL_SHARES,
+  settleFeeGrowth,
+  UINT256_MAX,
+} from "../../scripts/lp-fee-accounting-model";
 
 describe("fungible LP fee-accounting reference model", function () {
   const pool = "pool";
@@ -8,72 +17,55 @@ describe("fungible LP fee-accounting reference model", function () {
   const bob = "bob";
   const carol = "carol";
 
-  function model(scale = 1_000_000n): FungibleLpFeeModel {
-    return new FungibleLpFeeModel(scale, pool);
+  function model(): FungibleLpFeeModel {
+    return new FungibleLpFeeModel(pool);
   }
 
-  it("prevents historical-fee capture on mint", function () {
+  function expectAtomic(
+    accounting: FungibleLpFeeModel,
+    operation: () => unknown,
+    message: string,
+  ): void {
+    const before = accounting.inspect();
+    expect(operation).to.throw(message);
+    expect(accounting.inspect()).to.deep.equal(before);
+  }
+
+  it("prevents allocated historical-fee capture on mint", function () {
     const accounting = model();
     accounting.mint(pool, alice, 100n);
     accounting.recordSwapFees(pool, 0, 1_000n, 10n, 100n);
     accounting.mint(pool, bob, 100n);
-
     expect(accounting.claimableOf(alice, 0)).to.equal(100n);
     expect(accounting.claimableOf(bob, 0)).to.equal(0n);
-
     accounting.recordSwapFees(pool, 0, 2_000n, 20n, 200n);
     expect(accounting.consumeClaim(pool, alice, 0)).to.equal(200n);
     expect(accounting.consumeClaim(pool, bob, 0)).to.equal(100n);
   });
 
-  it("settles before direct transfer so the sender keeps history", function () {
+  it("settles direct and delegated transfers before balances change", function () {
     const accounting = model();
     accounting.mint(pool, alice, 100n);
     accounting.recordSwapFees(pool, 0, 0n, 0n, 100n);
-    accounting.transfer(alice, bob, 50n);
-
-    expect(accounting.claimableOf(alice, 0)).to.equal(100n);
-    expect(accounting.claimableOf(bob, 0)).to.equal(0n);
-
+    accounting.transfer(alice, bob, 40n);
     accounting.recordSwapFees(pool, 0, 0n, 0n, 100n);
-    expect(accounting.consumeClaim(pool, alice, 0)).to.equal(150n);
-    expect(accounting.consumeClaim(pool, bob, 0)).to.equal(50n);
+    accounting.approve(alice, carol, 10n);
+    accounting.transferFrom(carol, alice, bob, 10n);
+    expect(accounting.claimableOf(alice, 0)).to.equal(160n);
+    expect(accounting.claimableOf(bob, 0)).to.equal(40n);
+    accounting.recordSwapFees(pool, 0, 0n, 0n, 100n);
+    expect(accounting.consumeClaim(pool, alice, 0)).to.equal(210n);
+    expect(accounting.consumeClaim(pool, bob, 0)).to.equal(90n);
   });
 
-  it("applies the same ordering to delegated transfer", function () {
-    const accounting = model();
-    accounting.mint(pool, alice, 100n);
-    accounting.recordSwapFees(pool, 1, 0n, 0n, 100n);
-    accounting.approve(alice, carol, 40n);
-    accounting.transferFrom(carol, alice, bob, 40n);
-
-    expect(accounting.allowance(alice, carol)).to.equal(0n);
-    expect(accounting.claimableOf(alice, 1)).to.equal(100n);
-    expect(accounting.claimableOf(bob, 1)).to.equal(0n);
-
-    accounting.recordSwapFees(pool, 1, 0n, 0n, 100n);
-    expect(accounting.consumeClaim(pool, alice, 1)).to.equal(160n);
-    expect(accounting.consumeClaim(pool, bob, 1)).to.equal(40n);
-  });
-
-  it("cannot double-pay repeated claims", function () {
+  it("cannot double-pay and preserves claims through full exit", function () {
     const accounting = model();
     accounting.mint(pool, alice, 10n);
     accounting.recordSwapFees(pool, 0, 0n, 0n, 30n);
+    accounting.burn(pool, alice, 10n);
     expect(accounting.consumeClaim(pool, alice, 0)).to.equal(30n);
     expect(accounting.consumeClaim(pool, alice, 0)).to.equal(0n);
     expect(accounting.audit(0).paid).to.equal(30n);
-  });
-
-  it("preserves accrued claims across burn and a full exit", function () {
-    const accounting = model();
-    accounting.mint(pool, alice, 100n);
-    accounting.recordSwapFees(pool, 0, 0n, 0n, 100n);
-    accounting.burn(pool, alice, 100n);
-
-    expect(accounting.totalShares()).to.equal(0n);
-    expect(accounting.claimableOf(alice, 0)).to.equal(100n);
-    expect(accounting.consumeClaim(pool, alice, 0)).to.equal(100n);
   });
 
   it("keeps locked and unlocked shares economically identical", function () {
@@ -83,94 +75,179 @@ describe("fungible LP fee-accounting reference model", function () {
     accounting.lock(pool, "alice-lock", alice, 100n, 50n, false);
     accounting.recordSwapFees(pool, 0, 0n, 0n, 200n);
     accounting.recordSwapFees(pool, 1, 0n, 0n, 400n);
-
     expect(accounting.consumeClaim(pool, alice, 0)).to.equal(100n);
     expect(accounting.consumeClaim(pool, bob, 0)).to.equal(100n);
     expect(accounting.consumeClaim(pool, alice, 1)).to.equal(200n);
     expect(accounting.consumeClaim(pool, bob, 1)).to.equal(200n);
   });
 
-  it("blocks locked principal and makes unlock change transferability only", function () {
+  it("makes failed direct transfer transaction-atomic", function () {
     const accounting = model();
     accounting.mint(pool, alice, 100n);
-    accounting.lock(pool, "timed", alice, 80n, 50n, false);
-    accounting.recordSwapFees(pool, 0, 0n, 0n, 100n);
-    const claimBeforeUnlock = accounting.claimableOf(alice, 0);
-
-    expect(() => accounting.transfer(alice, bob, 21n)).to.throw("locked principal");
-    expect(() => accounting.burn(pool, alice, 21n)).to.throw("locked principal");
-    expect(() => accounting.unlock(pool, "timed", 49n)).to.throw("not matured");
-
-    accounting.unlock(pool, "timed", 50n);
-    expect(accounting.claimableOf(alice, 0)).to.equal(claimBeforeUnlock);
-    accounting.transfer(alice, bob, 80n);
-    expect(accounting.balanceOf(bob)).to.equal(80n);
-
-    accounting.lock(pool, "permanent", bob, 80n, 0n, true);
-    expect(() => accounting.unlock(pool, "permanent", 1_000n)).to.throw("permanent");
+    accounting.lock(pool, "locked", alice, 90n, 10n, false);
+    accounting.recordSwapFees(pool, 0, 0n, 0n, 7n);
+    expectAtomic(accounting, () => accounting.transfer(alice, bob, 11n), "locked principal");
   });
 
-  it("quarantines an old zero-supply remainder from reinitialization", function () {
-    const accounting = model(1_000n);
+  it("restores allowance and settlement state after failed delegated transfer", function () {
+    const accounting = model();
+    accounting.mint(pool, alice, 100n);
+    accounting.lock(pool, "locked", alice, 90n, 10n, false);
+    accounting.recordSwapFees(pool, 0, 0n, 0n, 7n);
+    accounting.approve(alice, carol, 11n);
+    expectAtomic(
+      accounting,
+      () => accounting.transferFrom(carol, alice, bob, 11n),
+      "locked principal",
+    );
+    expect(accounting.allowance(alice, carol)).to.equal(11n);
+  });
+
+  it("makes failed burn, lock, unlock and claim transaction-atomic", function () {
+    const accounting = model();
+    accounting.mint(pool, alice, 100n);
+    accounting.lock(pool, "timed", alice, 90n, 50n, false);
+    accounting.recordSwapFees(pool, 0, 0n, 0n, 7n);
+    expectAtomic(accounting, () => accounting.burn(pool, alice, 11n), "locked principal");
+    expectAtomic(
+      accounting,
+      () => accounting.lock(pool, "second", alice, 11n, 60n, false),
+      "locked principal",
+    );
+    expectAtomic(accounting, () => accounting.unlock(pool, "timed", 49n), "not matured");
+    expectAtomic(
+      accounting,
+      () => accounting.consumeClaim("not-pool", alice, 0),
+      "pool authority",
+    );
+  });
+
+  it("rolls a sub-unit global remainder across mint, burn, transfer and zero supply", function () {
+    const accounting = model();
     accounting.mint(pool, alice, 3n);
     accounting.recordSwapFees(pool, 0, 0n, 0n, 1n);
-    accounting.burn(pool, alice, 3n);
-
-    expect(accounting.retiredRemainders(0)).to.deep.equal([{
-      generation: 0n,
-      numerator: 1n,
-      denominator: 1_000n,
-    }]);
-
+    expect(accounting.globalRemainderOf(0)).to.equal(1n);
+    expect(accounting.claimableOf(alice, 0)).to.equal(0n);
     accounting.mint(pool, bob, 3n);
+    accounting.transfer(bob, carol, 1n);
+    accounting.burn(pool, bob, 2n);
+    accounting.burn(pool, carol, 1n);
+    expect(accounting.totalShares()).to.equal(3n);
+    expect(accounting.globalRemainderOf(0)).to.equal(1n);
     expect(accounting.claimableOf(bob, 0)).to.equal(0n);
-    expect(accounting.carryOf(bob, 0)).to.equal(0n);
-
-    accounting.recordSwapFees(pool, 0, 0n, 0n, 1n);
-    expect(accounting.claimableOf(bob, 0)).to.equal(0n);
-    expect(accounting.carryOf(bob, 0)).to.equal(999n);
-    expect(accounting.retiredRemainders(0)[0]?.numerator).to.equal(1n);
+    expect(accounting.claimableOf(carol, 0)).to.equal(0n);
+    accounting.recordSwapFees(pool, 0, 0n, 0n, 2n);
+    expect(accounting.globalRemainderOf(0)).to.equal(0n);
+    expect(accounting.consumeClaim(pool, alice, 0)).to.equal(3n);
+    accounting.burn(pool, alice, 3n);
+    expect(accounting.totalShares()).to.equal(0n);
+    expect(accounting.generationId()).to.equal(1n);
   });
 
-  it("keeps LP liabilities outside active reserves and protocol fees", function () {
+  it("uses one rolling remainder across repeated zero-supply generations", function () {
+    const accounting = model();
+    for (let generation = 0; generation < 100; generation += 1) {
+      accounting.mint(pool, alice, 3n);
+      accounting.recordSwapFees(pool, 0, 0n, 0n, 1n);
+      accounting.recordSwapFees(pool, 0, 0n, 0n, 2n);
+      accounting.burn(pool, alice, 3n);
+    }
+    expect(accounting.generationId()).to.equal(100n);
+    expect(accounting.globalRemainderOf(0)).to.equal(0n);
+    expect(accounting.consumeClaim(pool, alice, 0)).to.equal(300n);
+    expect(accounting.audit(0).liability).to.equal(0n);
+  });
+
+  it("exactly conserves many owner carries and out-of-order claims", function () {
+    const accounting = model();
+    const holders = Array.from({ length: 257 }, (_, index) => `holder-${index}`);
+    for (const holder of holders) accounting.mint(pool, holder, 1n);
+    for (let fee = 1n; fee <= 513n; fee += 1n) {
+      accounting.recordSwapFees(pool, 0, 0n, 0n, fee);
+    }
+    for (const holder of [...holders].reverse()) accounting.consumeClaim(pool, holder, 0);
+    const audit = accounting.audit(0);
+    expect(audit.paid + audit.liability).to.equal(audit.accrued);
+    expect(audit.ownerCarryScaled + audit.unallocatedGlobalRemainder)
+      .to.equal(audit.fractionalLiabilityScaled);
+  });
+
+  it("keeps liabilities outside active reserves and protocol fees", function () {
     const accounting = model();
     accounting.mint(pool, alice, 100n);
     accounting.creditPrincipal(pool, 0, 10_000n);
     accounting.recordSwapFees(pool, 0, 997n, 1n, 5n);
-    const beforeClaim = accounting.audit(0);
-
-    expect(beforeClaim.activeReserve).to.equal(10_997n);
-    expect(beforeClaim.protocolFees).to.equal(1n);
-    expect(beforeClaim.liability).to.equal(5n);
-    expect(beforeClaim.custody).to.equal(11_003n);
-
-    expect(accounting.consumeClaim(pool, alice, 0)).to.equal(5n);
-    const afterClaim = accounting.audit(0);
-    expect(afterClaim.activeReserve).to.equal(10_997n);
-    expect(afterClaim.protocolFees).to.equal(1n);
-    expect(afterClaim.liability).to.equal(0n);
+    const before = accounting.audit(0);
+    expect(before.activeReserve).to.equal(10_997n);
+    expect(before.protocolFees).to.equal(1n);
+    expect(before.liability).to.equal(5n);
+    accounting.consumeClaim(pool, alice, 0);
+    const after = accounting.audit(0);
+    expect(after.activeReserve).to.equal(10_997n);
+    expect(after.protocolFees).to.equal(1n);
   });
 
-  it("maintains conservation under deterministic mixed operations", function () {
-    const accounting = model(1_000_000_000n);
-    const accounts = [alice, bob, carol];
-    accounting.mint(pool, alice, 1_000n);
-    accounting.mint(pool, bob, 1_000n);
-    accounting.mint(pool, carol, 1_000n);
-    let seed = 0xC1F3D3n;
+  it("accepts the concrete extreme per-operation share, reserve and fee bounds", function () {
+    const accounting = model();
+    accounting.mint(pool, alice, MAX_TOTAL_SHARES);
+    accounting.creditPrincipal(pool, 0, MAX_RESERVE_OPERAND);
+    accounting.recordSwapFees(pool, 1, 0n, 0n, MAX_LP_FEE_OPERAND);
+    expect(accounting.consumeClaim(pool, alice, 1)).to.equal(MAX_LP_FEE_OPERAND);
+    expect(accounting.audit(1).liability).to.equal(0n);
+  });
 
-    for (let step = 0; step < 500; step += 1) {
+  it("proves quotient/remainder operation bounds at maximum operands", function () {
+    const advanced = advanceFeeGrowth({
+      growth: { whole: 0n, fraction: FEE_GROWTH_SCALE - 1n },
+      globalRemainder: FEE_GROWTH_SCALE - 1n,
+      lifetimeAccrued: 0n,
+    }, MAX_LP_FEE_OPERAND, MAX_TOTAL_SHARES);
+    expect(advanced.growth.whole <= MAX_LP_FEE_OPERAND).to.equal(true);
+    expect(advanced.growth.fraction < FEE_GROWTH_SCALE).to.equal(true);
+    expect(advanced.globalRemainder < MAX_TOTAL_SHARES).to.equal(true);
+  });
+
+  it("settles the maximum reachable dormant-holder lifetime without wrap", function () {
+    const settled = settleFeeGrowth(
+      1n,
+      { whole: 0n, fraction: 0n },
+      0n,
+      { whole: UINT256_MAX, fraction: FEE_GROWTH_SCALE - 1n },
+    );
+    expect(settled.newClaim).to.equal(UINT256_MAX);
+    expect(settled.carry).to.equal(FEE_GROWTH_SCALE - 1n);
+  });
+
+  it("fails closed at lifetime or fabricated holder-product overflow", function () {
+    expect(() => advanceFeeGrowth({
+      growth: { whole: 0n, fraction: 0n },
+      globalRemainder: 0n,
+      lifetimeAccrued: UINT256_MAX,
+    }, 1n, 1n)).to.throw("lifetime accrued fees overflow");
+    expect(() => settleFeeGrowth(
+      2n,
+      { whole: 0n, fraction: 0n },
+      0n,
+      { whole: UINT256_MAX, fraction: 0n },
+    )).to.throw("holder whole claim overflow");
+  });
+
+  it("maintains exact conservation under deterministic mixed operations", function () {
+    const accounting = model();
+    const accounts = [alice, bob, carol];
+    for (const account of accounts) accounting.mint(pool, account, 1_000n);
+    let seed = 0xC1F3D3n;
+    for (let step = 0; step < 1_000; step += 1) {
       seed = (seed * 1_103_515_245n + 12_345n) % 2_147_483_648n;
       const side = Number(seed & 1n) as 0 | 1;
       const first = accounts[Number(seed % 3n)]!;
       const second = accounts[(Number(seed % 2n) + accounts.indexOf(first) + 1) % 3]!;
       const action = Number((seed / 7n) % 5n);
-
       if (action === 0) {
-        accounting.recordSwapFees(pool, side, seed % 100n, seed % 7n, seed % 31n);
-      } else if (action === 1 && accounting.balanceOf(first) > 1n) {
-        accounting.transfer(first, second, 1n + seed % (accounting.balanceOf(first) / 2n));
-      } else if (action === 2 && accounting.totalShares() < accounting.scale - 10n) {
+        accounting.recordSwapFees(pool, side, seed % 100n, seed % 7n, 1n + seed % 31n);
+      } else if (action === 1 && accounting.unlockedOf(first) > 1n) {
+        accounting.transfer(first, second, 1n + seed % (accounting.unlockedOf(first) / 2n));
+      } else if (action === 2 && accounting.totalShares() < MAX_TOTAL_SHARES - 10n) {
         accounting.mint(pool, first, 1n + seed % 10n);
       } else if (action === 3 && accounting.unlockedOf(first) > 1n) {
         accounting.burn(pool, first, 1n);
@@ -178,12 +255,11 @@ describe("fungible LP fee-accounting reference model", function () {
       } else {
         accounting.consumeClaim(pool, first, side);
       }
-
       for (const auditSide of [0, 1] as const) {
         const audit = accounting.audit(auditSide);
-        expect(audit.paid + audit.outstanding + audit.explicitDust)
-          .to.equal(audit.accrued);
-        expect(audit.explicitDust).to.be.at.most(audit.dustUpperBound);
+        expect(audit.paid + audit.liability).to.equal(audit.accrued);
+        expect(audit.ownerCarryScaled + audit.unallocatedGlobalRemainder)
+          .to.equal(audit.fractionalLiabilityScaled);
         expect(audit.custody).to.equal(
           audit.activeReserve + audit.protocolFees + audit.liability,
         );
@@ -191,12 +267,13 @@ describe("fungible LP fee-accounting reference model", function () {
     }
   });
 
-  it("rejects non-pool accounting authority", function () {
+  it("rejects non-pool accounting authority atomically", function () {
     const accounting = model();
-    expect(() => accounting.mint(alice, alice, 1n)).to.throw("pool authority");
-    expect(() => accounting.recordSwapFees(alice, 0, 0n, 0n, 1n))
-      .to.throw("pool authority");
-    expect(() => accounting.lock(alice, "x", alice, 1n, 0n, false))
-      .to.throw("pool authority");
+    expectAtomic(accounting, () => accounting.mint(alice, alice, 1n), "pool authority");
+    expectAtomic(
+      accounting,
+      () => accounting.recordSwapFees(alice, 0, 0n, 0n, 1n),
+      "pool authority",
+    );
   });
 });
