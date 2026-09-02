@@ -4,12 +4,14 @@
 
 Reviewed repository: `Innovutech/cipherdex-protocol`
 
-Reviewed branch and SHA: upstream `main` at
-`9e66e8f424d242013326a9c408a16e371ce35342`.
+Topology source reviewed: upstream `main` at
+`9e66e8f424d242013326a9c408a16e371ce35342`. Phase 2A corrections and proof
+work start from its plan commit
+`52685e3bb5b117b1322dcd3ff2e637a67b27a9e8`.
 
 Source, tests and committed deployment records at that SHA are the authority for
-this plan. This is Phase 1 only: no contract, SDK, deployment-code or deployment
-change is included.
+this plan. Phase 2A changes only this plan and disposable proof artifacts; it does
+not change production contracts, SDK, deployment code, manifests or deployments.
 
 ## Current topology and gaps
 
@@ -63,9 +65,9 @@ bundle and manifest entry; existing bundles do not trust it automatically.
 
 ### Sealed bundle and binding rules
 
-Each mode receives its own pool, factory, protocol-fee vault, protected initializer
-and best router. Modes 1/2 also receive separate pool deployers. A factory is not
-usable until one-time configuration is finalized.
+Each mode receives its own pool, factory, protocol-fee vault and protected
+initializer. Modes 1/2 also receive separate pool deployers and best routers. A
+factory is not usable until one-time configuration is finalized.
 
 Mode 0 may deploy pools directly from its factory because that path introduces no
 trusted intermediary; its creation/runtime hashes still belong in the manifest.
@@ -79,7 +81,7 @@ The deployment sequence is:
 2. Deploy each factory with exact dependency addresses, runtime codehashes,
    interface IDs, mode and protocol version.
 3. Bind each deployer and fee vault back to exactly one factory.
-4. Deploy one protected initializer and one best router per mode; bind each once
+4. Deploy each protected initializer and the Mode 1/2 best routers; bind each once
    after checking address, runtime codehash, interface, factory, mode and version.
 5. Finalize each factory. Pool creation is disabled before finalization.
 6. Deploy replaceable ordinary periphery, validate its immutable dependencies and
@@ -88,24 +90,34 @@ The deployment sequence is:
 
 Pools store their factory, mode, version, pool kind, protected token, fee vault and
 LP token immutably or through a factory-only one-time initialization performed in
-the creation transaction. Privileged GT, protected initialization, LP mint/burn or
-transfer hooks, and fee-liability movement are accepted only from the receiving
-core's bound component. No privileged function accepts caller-selected factory,
-pool, payer or fee destination addresses.
+the creation transaction. Protected initialization, forwarded GT, LP mint/burn,
+and fee-liability movement are accepted only from the receiving core's bound
+component. No privileged function accepts caller-selected factory, pool, payer or
+fee destination addresses.
+
+Public swap, best-execution, native and liquidity routers and the public limit-order
+book are ordinary periphery while they only escrow their own assets and call
+canonical user paths. They authenticate immutable factory/router/WCOTI dependencies
+and appear in the reviewed manifest, but the core does not reverse-bind them merely
+for symmetry. A public protected initializer is privileged and core-bound. Mode 1/2
+best routers remain core-bound because their pools accept forwarded GT only from
+the configured router.
 
 The current strategy registries, launch strategies and migrators are not carried
 forward. The two fixed pool kinds do not need a strategy plugin layer.
 
 ### Protected-pool issuer proof
 
-The smallest fail-closed v1 proof is a new MIT integration interface implemented
-by the explicit protected token:
+The candidate smallest fail-closed proof is an explicit issuer signal implemented
+by the protected token:
 
 `ICipherDEXLaunchTokenIssuer.cipherDEXLaunchIssuer() -> address`
 
-The interface must be detected explicitly (ERC-165 or an equally strict reviewed
-selector check). The protected initializer reads it from `protectedToken`, not from
-the paired asset or token ordering. Generic `owner()`, admin roles,
+`ICipherDEXLaunchTokenIssuer` remains a candidate ABI, not a production ABI, until
+the actual launch-token and factory source is reviewed. If selected, the interface
+must be detected explicitly (ERC-165 or an equally strict reviewed selector check).
+The protected initializer reads it from `protectedToken`, not from the paired asset
+or token ordering. Generic `owner()`, admin roles,
 `DEFAULT_ADMIN_ROLE`, `MINTER_ROLE`, balances, `tx.origin`, deployment guesses and
 frontend attestations are not issuer proofs.
 
@@ -118,12 +130,18 @@ semantic. Arbitrary public ERC-20s likewise expose no universal issuer. Therefor
   immutability, token-to-issuer record and runtime codehash are reviewed and tested;
 - all other tokens get standard pools only.
 
-The issuer may initialize directly, or authorize one vault for one launch. The
-vault authorization is EIP-712 data consumed in the same transaction and binds:
+The issuer may initialize directly, or authorize one vault for one launch. A prior
+EOA/ERC-1271 issuer signature authorizes only that vault and the static launch terms.
+It is consumed in the execution transaction and binds:
 
 `chainId, protectedInitializer, factory, protocolVersion, privacyMode, poolKind,
-ordered pair, feeBps, protectedToken, issuer, vault, initialization terms, nonce,
+ordered pair, feeBps, protectedToken, issuer, vault, LP disposition, nonce,
 deadline`.
+
+The signature does not bind future transaction-scoped GT values. At execution the
+authorized vault creates, supplies and funds its own GT. CipherDEX pulls only from
+that vault and enforces exact transfer deltas, pool identity, price/slippage checks
+and LP disposition. There is no arbitrary `from`.
 
 The caller must be the named issuer or vault. `SignatureValidation` provides EOA
 and ERC-1271 verification. No authorization is installed ahead of time. Protected
@@ -137,14 +155,19 @@ Modes 1/2 expose paired endpoints with identical accounting:
 
 - `initializeStandardIT`: user IT is generated for and validated by that exact
   pool endpoint.
-- `initializeStandardGT`: a calling contract supplies transaction-scoped GT; the
-  pool pulls assets only from `msg.sender`.
+- `initializeStandardGT`: any calling contract may supply transaction-scoped GT;
+  the pool pulls assets only from `msg.sender`. This permissionless self-funded
+  path is not a trusted-router path and requires no reverse binding.
 - `initializeProtectedIT`: the bound initializer validates IT generated for that
   exact initializer endpoint, escrows from `msg.sender`, and atomically creates and
   initializes the protected pool.
-- `initializeProtectedGT`: the issuer/vault calls with transaction-scoped GT; the
-  initializer escrows only from `msg.sender` and forwards through its bound core
-  path. There is no arbitrary `from` parameter.
+- `initializeProtectedGT`: the authorized issuer/vault calls with transaction-scoped
+  GT; the initializer escrows only from `msg.sender` and forwards through its bound
+  core path. This forwarding authority is privileged. There is no arbitrary `from`
+  parameter.
+
+Only a forwarded GT path, or any path receiving authority over funds/state beyond
+the actual caller's own funds, is privileged and core-bound.
 
 IT and GT use one internal transition for transfer-delta checks, fee accounting,
 price bounds, slippage, LP minting and initialization state. Both standard and
@@ -176,16 +199,39 @@ The total swap fee and one-sixth protocol split remain unchanged. A swap credits
 `netInput` to the active reserve, the protocol share to protocol liability, and
 the LP share to LP liability. LP fees do not become active reserves.
 
-Use Q128 cumulative growth, subject to a pre-implementation overflow proof and
-explicit bounds on reserves, total shares and fee products. Settle a holder before
-every mint, burn or transfer:
+The pool-bound LP token owns fee-growth and lock bookkeeping. For each token it
+stores global fee growth and global remainder; for each holder it stores a growth
+checkpoint, fractional carry, claimable balance and locked principal. The pool
+alone may record newly accrued LP fees, mint/burn, lock/unlock principal and
+atomically consume claim amounts. The pool retains the underlying reserves and fee
+liabilities and pays claims. The LP token settles affected holders internally
+before every mint, burn, direct transfer or delegated transfer. No LP-token to pool
+callback occurs during transfer.
 
-`claimable += floor((balance * growthDelta + holderCarry) / 2^128)`
+Use one reviewed integer `SCALE`, selected only after public and MPC overflow bounds
+and measured gas are proven. Do not assume Q128. For each fee side:
 
-and retain the fractional remainder as `holderCarry`. Minted shares checkpoint at
-current growth and cannot capture history. Sender and receiver settle before a
-transfer; accrued fees remain with the sender and future fees follow transferred
-shares. Claims debit only LP-fee liability and use exact token-delta checks.
+`globalNumerator = lpFee * SCALE + globalRemainder`
+
+`growthDelta = floor(globalNumerator / totalShares)`
+
+`globalRemainder = globalNumerator % totalShares`
+
+For each settled holder:
+
+`holderNumerator = balance * growthDelta + holderCarry`
+
+`newClaim = floor(holderNumerator / SCALE)`
+
+`holderCarry = holderNumerator % SCALE`
+
+`claimable += newClaim`
+
+Minted shares checkpoint at current growth and cannot capture history. Sender and
+receiver settle before a transfer; accrued fees remain with the sender and future
+fees follow transferred shares. Claims debit only LP-fee liability and use exact
+token-delta checks. The sum of paid claims must never exceed total accrued LP-fee
+liability.
 
 LP-token ownership alone determines entitlement; protected launch provenance adds
 no special fee account. Public growth, claims and amount events may be plaintext.
@@ -193,16 +239,22 @@ Modes 1/2 keep growth, checkpoints, claimable balances and claim amounts encrypt
 offer owner-readable ciphertext results, and emit no plaintext amount event.
 
 Global and per-holder fractional dust remains segregated as LP-fee accounting and
-rolls forward; it is never added to reserves, protocol fees or a new holder's
-checkpoint. No rescue or beneficiary sweep may redirect it. The arithmetic review
-must prove aggregate paid claims cannot exceed aggregate LP liability and quantify
-the maximum permanently sub-unit remainder.
+rolls forward within one share-supply generation; it is never added to reserves,
+protocol fees or a new holder's checkpoint. When total shares reaches zero, the
+old global remainder is moved to a generation-scoped retired-dust bucket and the
+active remainder is reset before any later mint. A later LP generation cannot
+inherit it. Retired dust remains part of LP-fee liability and has no beneficiary or
+reserve path. The reference proof requires `totalShares <= SCALE`, accounts retired
+dust explicitly and bounds active global, retired global and per-holder carry dust.
+Production share bounds, the final scale and a deterministic terminal dust policy
+remain arithmetic/MPC proof gates.
 
-Locks leave shares in the owner's LP balance. The pool records locked principal;
-the LP token's transfer hook and pool withdrawals enforce
-`requested <= balance - locked`. Locked shares therefore continue to receive and
-claim fees. Timed unlock changes transferability only. Permanent locks never regain
-principal transfer or withdrawal rights but retain normal fee claims.
+Locks leave shares in the owner's LP balance. The pool instructs the LP token to
+record locked principal; the LP token enforces
+`requested <= balance - locked` during transfer and burn. Locked shares therefore
+continue to receive and claim fees. Timed unlock changes transferability only.
+Permanent locks never regain principal transfer or withdrawal rights but retain
+normal fee claims.
 
 A full exit distributes active reserves only. Protocol and LP-fee liabilities stay
 segregated and claimable; reinitialization checkpoints new shares at current growth.
@@ -289,10 +341,13 @@ safe headroom under the observed COTI block limit.
   `CipherDEXObservableConfidentialProtectedInitializer.sol`,
   `CipherDEXObservableConfidentialBestExecutionRouter.sol`.
 
-Add matching MIT interfaces under `contracts/interfaces/` using `I` plus the exact
-deployable name for every externally called component above. Also add the shared
-MIT interfaces `ICipherDEXPoolIdentity.sol`, `ICipherDEXLaunchTokenIssuer.sol` and
-`ICipherDEXLPTransferHook.sol`. Generic function/event/error names remain unchanged.
+After Phase 2A approval, add matching MIT interfaces under `contracts/interfaces/`
+using `I` plus the exact deployable name for every externally called component
+above. Also add the shared MIT interface `ICipherDEXPoolIdentity.sol`. Keep
+`ICipherDEXLaunchTokenIssuer.sol` as a candidate until the real launch-token/factory
+source gate is resolved. Do not add `ICipherDEXLPTransferHook.sol`; the smaller
+token-internal accounting design is sufficient in the reference and public probes.
+Generic function/event/error names remain unchanged.
 
 The concrete interface set is:
 
@@ -410,7 +465,7 @@ explicit migration, continued-support or deprecation decision before deployment.
 | Swap accounting | Both directions and tiers; total fee split; active reserves exclude both liabilities; quote/settlement parity; minOut; tiny trades; rounding; transfer-tax/rebase rejection policy. |
 | LP fee growth | No historical capture; claim once; repeated claim; mint/burn/transfer checkpoints; sender keeps accrued fees; future fees follow shares; aggregate claims never exceed liability. |
 | LP locks | Timed/permanent principal restrictions; owner balance retained; locked shares earn and claim; transfer/withdraw cannot exceed unlocked amount; unlock does not duplicate shares or fees. |
-| Full exit/dust/loss | Active reserves only on exit; old claims survive; new shares get no history; Q128 carry conservation; bounded dust; unsolicited surplus segregation; accounting deficit fails closed. |
+| Full exit/dust/loss | Active reserves only on exit; old claims survive; new shares get no history; selected-SCALE carry conservation; retired zero-supply remainder isolation; bounded dust; unsolicited surplus segregation; accounting deficit fails closed. |
 | Mode isolation | Mode/router/factory/pool cross-calls fail; Mode 1 emits no price; Mode 2 preserves initial reference, 50-bps observations and encrypted authoritative minOut; future mode is untrusted. |
 | Routing | Canonical derivation only; explicit mode/kind; absent/uninitialized/invalid candidates; deterministic ties; request replay; funded candidate/gas ceilings per mode. |
 | Deployment | Exact source/clean tree, compiler input, manifest digest, constructor/binding receipts, codehash readback, failed/uncertain transaction recovery and zero temporary resources. |
@@ -429,13 +484,15 @@ evidence for deprecated contracts.
 1. **Inventory/legal gate:** run the read-only Mainnet inventory; confirm Licensor,
    ownership/relicensing rights, release date and approved license wording; review the
    actual launch-token/factory source that will implement issuer proof.
-2. **Identity and accounting core:** implement shared identities, fixed fee policy,
-   LP issuers, Q128 growth/checkpoints/locks and public reference math. Complete
-   arithmetic/fuzz/invariant review before adding routers.
+2. **Identity and accounting core:** after Phase 2A approval, implement shared
+   identities, fixed fee policy, LP issuers, proven growth/checkpoints/locks and
+   public reference math. Complete scale/bounds/fuzz/invariant review before adding
+   routers.
 3. **Mode 0:** implement standard/protected public pools and ordinary periphery.
 4. **Modes 1/2:** implement separate sealed bundles, IT/GT parity and protected
-   initializer paths. Run focused COTI MPC probes for transfer hooks, encrypted growth,
-   claims and exact-delta callbacks before broad integration.
+   initializer paths. Run focused COTI MPC probes for token-internal transfer
+   settlement, encrypted growth, claims and exact-delta custody before broad
+   integration.
 5. **Routers and SDK:** add per-mode routers, explicit SDK mode/kind APIs and generated
    ABIs. Measure each populated candidate set; do not inherit current gas ceilings.
 6. **Limit-order investigation:** isolated token-only full-fill prototype and funded
@@ -475,14 +532,14 @@ evidence for deprecated contracts.
 - **Issuer interface:** no current universal token issuer signal exists. Review and
   test the actual partner launch-token/factory implementation before freezing
   `ICipherDEXLaunchTokenIssuer`; unsupported tokens remain standard-only.
-- **Private LP transfer hooks:** `PrivateERC20._update` is virtual, but encrypted lock
-  enforcement, pool callbacks, claim checkpoints, reentrancy ordering and gas are not
-  funded-COTI proven. Build a disposable token/pool probe covering transfer, mint,
-  burn, lock and claim before adopting the hook.
-- **Q128 arithmetic:** prove overflow bounds and aggregate liability conservation in
-  public and MPC arithmetic, fuzz extreme decimals/supply/fees, and measure COTI gas.
-  If Q128 cannot satisfy checked bounds, select the largest proven power-of-two scale
-  before implementation; do not silently reduce precision.
+- **Private LP token internals:** `PrivateERC20._update` is virtual and the disposable
+  probe compiles without a token-to-pool callback. Encrypted lock enforcement,
+  checkpoint ordering, exact claims and gas still require the recorded funded-COTI
+  result before production implementation.
+- **Fee-growth scale:** the Phase 2A model proves the formulas and a bounded
+  zero-supply rule for configurable `SCALE` with `totalShares <= SCALE`; it does not
+  select Q128 or a production scale. Prove concrete public and COTI MPC overflow
+  bounds, aggregate liability conservation and gas before selecting the scale.
 - **Confidential limit orders:** feasibility and keeper liveness remain unproven until
   the funded lifecycle above passes. They are not part of the initial deployment.
 - **Mainnet value:** exact private amounts are not publicly inventoryable. Treat any

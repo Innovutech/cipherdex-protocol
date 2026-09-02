@@ -96,6 +96,9 @@ export default defineConfig({
       "contracts/mocks/MpcObservablePriceProbe.sol": compilerSettings(208),
       "contracts/mocks/MpcBestExecutionPoolProbe.sol": compilerSettings(209),
       "contracts/mocks/MpcBestExecutionRouterProbe.sol": compilerSettings(210),
+      "contracts/mocks/PublicLPAccountingProbe.sol": compilerSettings(1, false),
+      "contracts/mocks/PrivateLPAccountingProbe.sol": compilerSettings(1),
+      "contracts/mocks/ProtectedVaultAuthorizationProbe.sol": compilerSettings(1),
     },
   },
   networks: {
