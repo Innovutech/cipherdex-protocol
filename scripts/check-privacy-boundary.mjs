@@ -37,7 +37,10 @@ for (const file of files) {
   if (!file.replaceAll("\\", "/").includes("/contracts/mocks/")) {
     productionSources.set(file, rawSource);
   }
-  if (file.replaceAll("\\", "/").endsWith("/contracts/mocks/PrivateLPAccountingProbe.sol")) {
+  if ([
+    "/contracts/mocks/PrivateLPAccountingProbe.sol",
+    "/contracts/mocks/PrivateITPackingProbe.sol",
+  ].some((suffix) => file.replaceAll("\\", "/").endsWith(suffix))) {
     disposablePrivacyPatternSources.set(file, rawSource);
   }
   const source = maskSourceCommentsAndLiterals(rawSource);
@@ -157,6 +160,10 @@ const privacyContractFilters = new Map([
   [
     "contracts/mocks/PrivateLPAccountingProbe.sol",
     new Set(["PrivateLPAccountingProbeToken"]),
+  ],
+  [
+    "contracts/mocks/PrivateITPackingProbe.sol",
+    new Set(["PrivateITPackingProbe"]),
   ],
 ]);
 for (const { name } of buildInfoFiles) {

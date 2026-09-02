@@ -170,6 +170,29 @@ An arbitrary caller cannot create or reserve a protected key.
 
 ### EOA IT and contract GT initialization
 
+Use Phase 2D fixed-layout packing only inside ordinary COTI `itUint256` values:
+
+- `FIELD_BITS = 128`, `FIELD_MASK = 2^128 - 1`;
+- swap packs `amountIn | minimumOut` into one IT;
+- removal uses one shares IT plus one packed `minimumAmount0 | minimumAmount1` IT;
+- existing addition packs the two amount maxima and retains separate minimum-shares
+  and two full-width price-bound IT values, for four IT total;
+- first initialization uses one packed `amount0 | amount1` IT because the atomic
+  uninitialized transition deterministically derives shares and price from those
+  exact signed amounts.
+
+Validate the packed IT once at its exact endpoint and unpack with MPC division and
+remainder. Do not decrypt fields, accept unsigned ciphertext, directly onboard
+caller-supplied ciphertext or add per-field replay records. Router-packed IT is
+validated at the exact router selector before unpacked GT is forwarded to a bound
+pool. Direct-pool IT remains pool-bound.
+
+An optional three-IT existing-add endpoint may use encrypted full-width expected
+price plus public bounded deviation. It is not a replacement for the four-IT API:
+the symmetric form cannot express arbitrary asymmetric or one-sided price bounds.
+Derive its limits with overflow-safe quotient/remainder arithmetic and never from
+the same pool state being checked.
+
 Modes 1/2 expose paired endpoints with identical accounting:
 
 - `initializeStandardIT`: user IT is generated for and validated by that exact
