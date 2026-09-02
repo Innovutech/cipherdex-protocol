@@ -110,11 +110,21 @@ remain unsigned and self-funded by the named vault.
 - Full `npm run verify`: passed. It reported `422` Mocha tests (`421` active
   passing and the existing funded integration test pending), `6` passing Cotiscan
   tests, matching SDK distribution and zero production/operational audit findings.
-- Focused COTI testnet lifecycle: **not run** pending a clean committed source.
-- Sanitized evidence record: pending funded execution.
-
-No funded success or gas result is inferred before the authenticated run and a
-source-bound evidence record exist.
+- Focused COTI testnet lifecycle: **passed** on chain `7082400` from exact clean
+  source commit `76848016803f2a91ca2f12922783a2880f2b92d9`.
+- Sanitized evidence record:
+  `evidence/coti-testnet-phase2c-private-lp-accounting-76848016803f2a91ca2f12922783a2880f2b92d9.json`.
+- Branchless no-borrow and borrow settlements each used exactly `7,207,269` gas.
+  Their owner-encrypted snapshots proved the expected carry/claim transition.
+- The zero-balance carry-recycling burn used `14,950,316` gas. The exited and active
+  holder reads each used `7,207,269` gas and proved zero dormant carry plus exact
+  redistribution.
+- Claims used `7,998,511` gas. Zero-supply/reinitialization burns used `14,950,328`
+  gas and the reinitialized holder inherited no allocated history.
+- All `25` receipts have status `1`; total measured lifecycle gas was `194,771,524`
+  across deployments, approval, writes, paid encrypted reads and cleanup.
+- Exact funded balances were restored. Final custody, shares, fee liability and
+  allowances are zero, and the authenticated recovery resource is closed.
 
 ## Remaining gates
 

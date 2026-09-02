@@ -608,14 +608,15 @@ evidence for deprecated contracts.
   selectors plus unchanged encrypted state. The proof implementation is intentionally
   audit-oriented; production storage must still be optimized and remeasured against
   the observed `13,581,177`-gas transfer diagnostic, `6,788,943`-gas burn diagnostic
-  and `14,405,762`-gas aggregate snapshot.
+  and `14,405,762`-gas aggregate snapshot. Phase 2C measured identical
+  `7,207,269`-gas borrow/no-borrow settlement snapshots and a `14,950,316`-gas
+  zero-balance carry-recycling burn.
 - **Arithmetic integration:** Phase 2B local and funded COTI proofs support
   `SCALE = 2^128`, `2^128 - 1` share, reserve and per-fee operands,
-  quotient/remainder growth. Phase 2C local proofs replace dormant zero-balance carry
-  with bounded global recycling and branchless MPC settlement; focused COTI evidence
-  is required before adopting that correction. Production code must retain the
-  checked bounds and receive implementation/security review; the evidence does not
-  authorize silently relaxing them.
+  quotient/remainder growth. Phase 2C local and funded COTI proofs replace dormant
+  zero-balance carry with bounded global recycling and branchless MPC settlement.
+  Production code must retain the checked bounds and receive implementation/security
+  review; the evidence does not authorize silently relaxing them.
 - **Confidential limit orders:** feasibility and keeper liveness remain unproven and
   require their own funded lifecycle; the Phase 2B private LP proof does not cover
   them. They are not part of the initial deployment.
